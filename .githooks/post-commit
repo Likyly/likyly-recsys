@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Auto-publishes docs/ to github.com/arnoweb/projects-docs (likyly-recsys/) whenever
+# a commit touches docs/*. Source of truth for this hook lives here, tracked in git;
+# it is installed by copying it to .git/hooks/post-commit (see scripts/install-hooks.sh).
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+
+if ! git rev-parse --verify -q HEAD~1 >/dev/null; then
+  # First commit in the repo - nothing to diff against, skip.
+  exit 0
+fi
+
+if git diff --name-only HEAD~1 HEAD -- docs/ | grep -q .; then
+  echo "docs/ changed - publishing to projects-docs (likyly-recsys/)..."
+  if ! "$REPO_ROOT/scripts/publish-docs.sh"; then
+    echo "publish-docs.sh failed - docs were NOT published. Run it manually to retry." >&2
+  fi
+fi

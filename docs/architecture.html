@@ -1,0 +1,971 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LIKYLY — Architecture technique</title>
+<style>
+  :root {
+    --bg: #F1F5F9;
+    --surface: #FFFFFF;
+    --surface-2: #F8FAFC;
+    --text: #0F172A;
+    --text-dim: #64748B;
+    --border: #DDE1E8;
+    --accent: #4F46E5;
+    --accent-ink: #4338CA;
+    --code-bg: #E2E8F0;
+    --chip-bg: #E8EBF0;
+    --chip-color: #334155;
+    --shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+    --cat-data: #FB923C;
+    --cat-train: #60A5FA;
+    --cat-model: #A78BFA;
+    --cat-serve: #818CF8;
+    --cat-gen: #4ADE80;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0F172A;
+      --surface: #1E293B;
+      --surface-2: #172033;
+      --text: #F1F5F9;
+      --text-dim: #94A3B8;
+      --border: #334155;
+      --accent: #818CF8;
+      --accent-ink: #A5B4FC;
+      --code-bg: #273549;
+      --chip-bg: #273549;
+      --chip-color: #94A3B8;
+      --shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0F172A;
+    --surface: #1E293B;
+    --surface-2: #172033;
+    --text: #F1F5F9;
+    --text-dim: #94A3B8;
+    --border: #334155;
+    --accent: #818CF8;
+    --accent-ink: #A5B4FC;
+    --code-bg: #273549;
+    --chip-bg: #273549;
+    --chip-color: #94A3B8;
+    --shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  }
+  :root[data-theme="light"] {
+    --bg: #F1F5F9;
+    --surface: #FFFFFF;
+    --surface-2: #F8FAFC;
+    --text: #0F172A;
+    --text-dim: #64748B;
+    --border: #DDE1E8;
+    --accent: #4F46E5;
+    --accent-ink: #4338CA;
+    --code-bg: #E2E8F0;
+    --chip-bg: #E8EBF0;
+    --chip-color: #334155;
+    --shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 16px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .mono {
+    font-family: ui-monospace, "Cascadia Code", "Fira Code", "SF Mono", Menlo, Consolas, monospace;
+  }
+
+  a { color: var(--accent); text-decoration-color: color-mix(in srgb, var(--accent) 40%, transparent); }
+  a:hover { text-decoration-thickness: 2px; }
+  a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+
+  .page {
+    max-width: 1000px;
+    margin: 0 auto;
+    padding: 0 1.5rem 5rem;
+  }
+
+  /* ---------- Header ---------- */
+  header.hero {
+    padding: 3.25rem 0 2rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .eyebrow {
+    font-family: ui-monospace, "Cascadia Code", "Fira Code", "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.72rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 0.9rem;
+  }
+  h1 {
+    font-size: clamp(1.7rem, 3.4vw, 2.5rem);
+    line-height: 1.15;
+    letter-spacing: -0.01em;
+    margin: 0 0 0.75rem;
+    text-wrap: balance;
+    max-width: 26ch;
+  }
+  h1 em {
+    font-style: normal;
+    color: var(--accent);
+  }
+  .subtitle {
+    color: var(--text-dim);
+    font-size: 1.05rem;
+    max-width: 64ch;
+    margin: 0 0 1.4rem;
+  }
+  .chips { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+  .chip {
+    font-family: ui-monospace, "Cascadia Code", "Fira Code", "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.76rem;
+    padding: 0.28rem 0.6rem;
+    border-radius: 100px;
+    background: var(--chip-bg);
+    color: var(--chip-color);
+  }
+
+  /* tags colorés par techno */
+  .chip-python     { background: #3776AB; color: #FFFFFF; }
+  .chip-fastapi    { background: #009688; color: #FFFFFF; }
+  .chip-pytorch    { background: #EE4C2C; color: #FFFFFF; }
+  .chip-postgres   { background: #336791; color: #FFFFFF; }
+  .chip-pgvector   { background: #4F46E5; color: #FFFFFF; }
+  .chip-mlflow     { background: #0194E2; color: #FFFFFF; }
+  .chip-implicit   { background: #7C3AED; color: #FFFFFF; }
+  .chip-dvc        { background: #945DD6; color: #FFFFFF; }
+  .chip-solara     { background: #FF9800; color: #1A1A1A; }
+  .chip-docker     { background: #2496ED; color: #FFFFFF; }
+
+  /* ---------- Nav ---------- */
+  nav.toc {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: color-mix(in srgb, var(--bg) 88%, transparent);
+    backdrop-filter: blur(6px);
+    border-bottom: 1px solid var(--border);
+    margin: 0 -1.5rem 2.5rem;
+    padding: 0 1.5rem;
+  }
+  nav.toc .inner {
+    max-width: 1000px;
+    margin: 0 auto;
+    display: flex;
+    gap: 1.3rem;
+    overflow-x: auto;
+    padding: 0.75rem 0;
+    font-size: 0.83rem;
+  }
+  nav.toc a {
+    color: var(--text-dim);
+    text-decoration: none;
+    white-space: nowrap;
+  }
+  nav.toc a:hover { color: var(--accent); }
+
+  /* ---------- Sections ---------- */
+  section.block { padding: 2.6rem 0; border-bottom: 1px solid var(--border); scroll-margin-top: 4rem; }
+  section.block:last-of-type { border-bottom: none; }
+  .block-head { display: flex; align-items: baseline; gap: 0.7rem; margin-bottom: 0.4rem; }
+  .block-num {
+    font-family: ui-monospace, "Cascadia Code", "Fira Code", "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.8rem;
+    color: var(--text-dim);
+  }
+  h2 { font-size: 1.35rem; margin: 0; letter-spacing: -0.01em; }
+  .block-desc { color: var(--text-dim); max-width: 66ch; margin: 0.6rem 0 1.6rem; }
+
+  code {
+    font-family: ui-monospace, "Cascadia Code", "Fira Code", "SF Mono", Menlo, Consolas, monospace;
+    background: var(--code-bg);
+    padding: 0.1rem 0.35rem;
+    border-radius: 4px;
+    font-size: 0.85em;
+  }
+
+  /* ==================================================================
+     DIAGRAM CARD (schema)
+     ================================================================== */
+  .diagram-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    box-shadow: var(--shadow);
+    overflow: hidden;
+  }
+  .diagram-card-head {
+    padding: 1rem 1.4rem;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+  .diagram-card-head .legend {
+    display: flex;
+    gap: 0.9rem;
+    flex-wrap: wrap;
+    font-size: 0.72rem;
+    color: var(--text-dim);
+  }
+  .legend-item { display: flex; align-items: center; gap: 0.35rem; }
+  .legend-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+
+  .diagram {
+    display: grid;
+    grid-template-columns: 170px 34px 1fr 34px 170px;
+    align-items: stretch;
+    padding: 1.4rem 1.2rem;
+    gap: 0;
+    overflow-x: auto;
+  }
+
+  .zone {
+    border-radius: 10px;
+    padding: 0.9rem 0.95rem 0.8rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    border: 1.5px solid;
+  }
+  .zone-eyebrow {
+    font-family: ui-monospace, "Cascadia Code", "Fira Code", monospace;
+    font-size: 0.6rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+  .zone-title { font-size: 0.88rem; font-weight: 700; line-height: 1.25; }
+  .zone-desc { font-size: 0.74rem; line-height: 1.45; }
+  .zone hr.zdivider { border: none; margin: 0.15rem 0; }
+
+  .zchips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
+  .zchip {
+    font-family: ui-monospace, "Cascadia Code", "Fira Code", monospace;
+    font-size: 0.62rem;
+    font-weight: 500;
+    padding: 2px 7px;
+    border-radius: 4px;
+    white-space: nowrap;
+  }
+  .zone-note {
+    font-size: 0.6rem;
+    font-family: ui-monospace, "Cascadia Code", "Fira Code", monospace;
+    color: var(--text-dim);
+    text-align: center;
+    border-top: 1px dashed var(--border);
+    padding-top: 6px;
+    margin-top: 4px;
+  }
+
+  /* category colorways */
+  .z-data { background: #FFF7ED; border-color: #FB923C; }
+  .z-data .zone-eyebrow { color: #9A3412; }
+  .z-data .zone-title   { color: #7C2D12; }
+  .z-data .zone-desc    { color: #92400E; }
+  .z-data .zchip        { background: #FFEDD5; color: #7C2D12; }
+  .z-data hr.zdivider   { border-top: 1px solid #FED7AA; }
+
+  .z-train { background: #EFF6FF; border-color: #60A5FA; }
+  .z-train .zone-eyebrow { color: #1E40AF; }
+  .z-train .zone-title   { color: #1E3A8A; }
+  .z-train .zone-desc    { color: #1D4ED8; }
+  .z-train .zchip        { background: #DBEAFE; color: #1E3A8A; }
+
+  .z-model { background: #F5F3FF; border-color: #A78BFA; }
+  .z-model .zone-eyebrow { color: #5B21B6; }
+  .z-model .zone-title   { color: #4C1D95; }
+  .z-model .zone-desc    { color: #6D28D9; }
+  .z-model .zchip        { background: #EDE9FE; color: #4C1D95; }
+
+  .z-serve { background: #EEF2FF; border-color: #818CF8; }
+  .z-serve .zone-eyebrow { color: #3730A3; }
+  .z-serve .zone-title   { color: #312E81; }
+  .z-serve .zone-desc    { color: #4338CA; }
+  .z-serve .zchip        { background: #E0E7FF; color: #312E81; }
+
+  .z-gen { background: #F0FDF4; border-color: #4ADE80; }
+  .z-gen .zone-eyebrow { color: #15803D; }
+  .z-gen .zone-title   { color: #14532D; }
+  .z-gen .zone-desc    { color: #166534; }
+  .z-gen .zchip        { background: #DCFCE7; color: #14532D; }
+
+  .z-output { background: var(--surface-2); border-color: #94A3B8; }
+  .z-output .zone-eyebrow { color: var(--text-dim); }
+  .z-output .zone-title   { color: var(--text); }
+  .z-output .zone-desc    { color: var(--text-dim); }
+  .z-output .zchip        { background: var(--code-bg); color: var(--chip-color); }
+
+  /* arrows */
+  .arrow-col {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    padding: 0 2px;
+  }
+  .arrow-label {
+    font-family: ui-monospace, "Cascadia Code", "Fira Code", monospace;
+    font-size: 0.52rem;
+    color: var(--text-dim);
+    text-align: center;
+    writing-mode: vertical-lr;
+    white-space: nowrap;
+    letter-spacing: 0.04em;
+  }
+  .arrow-shaft { flex: 1; width: 1.5px; background: #94A3B8; min-height: 60px; }
+  .arrow-tip {
+    width: 0; height: 0;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-top: 7px solid #94A3B8;
+  }
+
+  /* system column */
+  .system-col { display: flex; flex-direction: column; gap: 0.7rem; padding: 0 0.6rem; }
+  .sys-top { display: grid; grid-template-columns: 1fr 1fr; gap: 0.7rem; }
+
+  .inspector-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 6px;
+    margin-top: 2px;
+  }
+  .inspector-item {
+    background: rgba(255, 255, 255, 0.65);
+    border: 1px solid #C7D2FE;
+    border-radius: 6px;
+    padding: 8px 9px 7px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+  .inspector-item-label { font-size: 0.66rem; font-weight: 700; color: #3730A3; }
+  .inspector-item-chips { display: flex; flex-wrap: wrap; gap: 3px; }
+  .inspector-item .zchip { font-size: 0.58rem; padding: 1px 5px; }
+
+  .ai-pipeline { display: flex; align-items: stretch; gap: 0; margin-top: 2px; }
+  .pipeline-step {
+    flex: 1;
+    background: rgba(255, 255, 255, 0.6);
+    border: 1px solid #86EFAC;
+    border-radius: 7px;
+    padding: 8px 9px 7px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .pipeline-step-optional { border-style: dashed; background: rgba(255, 255, 255, 0.35); }
+  .pipeline-step-header { display: flex; align-items: center; gap: 5px; }
+  .pipeline-num {
+    font-size: 0.58rem; font-weight: 800; color: #15803D;
+    background: #fff; width: 16px; height: 16px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0; border: 1px solid #86EFAC;
+  }
+  .pipeline-title { font-size: 0.68rem; font-weight: 700; color: #14532D; line-height: 1.2; }
+  .pipeline-sub { font-size: 0.6rem; color: #166534; line-height: 1.35; flex: 1; }
+  .pipeline-step-chips { display: flex; flex-wrap: wrap; gap: 3px; margin-top: auto; padding-top: 3px; }
+  .pipeline-step-chips .zchip { font-size: 0.56rem; padding: 1px 5px; }
+  .pipeline-arrow { display: flex; align-items: center; padding: 0 4px; font-size: 0.7rem; color: #4ADE80; flex-shrink: 0; font-weight: 700; }
+
+  .ai-details { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 2px; }
+  .ai-detail-panel {
+    background: rgba(255, 255, 255, 0.6);
+    border: 1px solid #86EFAC;
+    border-radius: 7px;
+    padding: 8px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .ai-detail-label { font-size: 0.58rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.1em; color: #15803D; }
+  .ai-detail-schema { font-family: ui-monospace, "Cascadia Code", monospace; font-size: 0.6rem; color: #166534; line-height: 1.5; }
+  .ai-detail-panel .zchips { margin-top: 2px; }
+  .ai-detail-panel .zchip { font-size: 0.56rem; padding: 1px 5px; }
+
+  .compat-grid { display: flex; flex-direction: column; gap: 6px; margin-top: 2px; }
+  .compat-category { display: flex; flex-direction: column; gap: 3px; }
+  .compat-cat-label { font-size: 0.58rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-dim); }
+  .compat-items { display: flex; flex-wrap: wrap; gap: 3px; }
+  .compat-item {
+    font-family: ui-monospace, "Cascadia Code", monospace;
+    font-size: 0.62rem; font-weight: 500; padding: 2px 6px; border-radius: 4px;
+    background: var(--code-bg); color: var(--chip-color);
+    max-width: 100%; overflow-wrap: break-word;
+  }
+  .compat-universal .compat-item { background: var(--text); color: var(--surface); }
+  .output-note { margin-top: auto; padding-top: 10px; border-top: 1px solid var(--border); font-size: 0.68rem; color: var(--text-dim); line-height: 1.4; }
+  .output-note strong { color: var(--text); }
+
+  .diagram-card-foot {
+    border-top: 1px solid var(--border);
+    padding: 0.75rem 1.4rem;
+    background: var(--surface-2);
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+  }
+  .diagram-card-foot .footer-label {
+    font-size: 0.6rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.12em;
+    color: var(--text-dim); margin-right: 2px; white-space: nowrap;
+  }
+  .diagram-card-foot .chip { font-size: 0.65rem; }
+
+  @media (max-width: 760px) {
+    .diagram { grid-template-columns: 1fr; }
+    .arrow-col { display: none; }
+    .sys-top { grid-template-columns: 1fr; }
+  }
+
+  @media (prefers-color-scheme: dark) {
+    .inspector-item, .pipeline-step, .ai-detail-panel { background: rgba(255, 255, 255, 0.06); }
+    .pipeline-step-optional { background: rgba(255, 255, 255, 0.03); }
+    .pipeline-num { background: #0f172a; }
+  }
+  :root[data-theme="dark"] .inspector-item,
+  :root[data-theme="dark"] .pipeline-step,
+  :root[data-theme="dark"] .ai-detail-panel { background: rgba(255, 255, 255, 0.06); }
+  :root[data-theme="dark"] .pipeline-step-optional { background: rgba(255, 255, 255, 0.03); }
+  :root[data-theme="dark"] .pipeline-num { background: #0f172a; }
+
+  /* ==================================================================
+     Reused components (tables, node cards, flow list, deploy grid)
+     ================================================================== */
+  .node-row { display: flex; gap: 0.75rem; flex-wrap: wrap; overflow-x: auto; padding-bottom: 0.15rem; }
+  .node {
+    flex: 1 1 220px; min-width: 200px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-left: 3px solid var(--cat-color, var(--accent));
+    border-radius: 8px; padding: 0.85rem 1rem; box-shadow: var(--shadow);
+  }
+  .node h4 { margin: 0 0 0.3rem; font-size: 0.86rem; font-family: ui-monospace, "Cascadia Code", monospace; color: var(--text); }
+  .node p { margin: 0; font-size: 0.83rem; color: var(--text-dim); line-height: 1.45; }
+  .node p + p { margin-top: 0.3rem; }
+
+  ol.flow {
+    list-style: none; margin: 0; padding: 0; counter-reset: step;
+    border-left: 1px solid var(--border); margin-left: 0.55rem;
+  }
+  ol.flow li { counter-increment: step; position: relative; padding: 0 0 1.3rem 1.6rem; }
+  ol.flow li:last-child { padding-bottom: 0; }
+  ol.flow li::before {
+    content: counter(step);
+    position: absolute; left: -0.72rem; top: 0;
+    width: 1.4rem; height: 1.4rem; border-radius: 50%;
+    background: var(--surface); border: 1px solid var(--accent); color: var(--accent);
+    font-family: ui-monospace, "Cascadia Code", monospace; font-size: 0.72rem;
+    display: flex; align-items: center; justify-content: center;
+  }
+  ol.flow .step-title { font-weight: 600; margin: 0 0 0.15rem; font-size: 0.95rem; }
+  ol.flow .step-body { color: var(--text-dim); font-size: 0.88rem; margin: 0; max-width: 64ch; }
+
+  .table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.87rem; min-width: 560px; }
+  th, td { text-align: left; padding: 0.65rem 0.9rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+  thead th {
+    font-family: ui-monospace, "Cascadia Code", monospace; font-size: 0.72rem;
+    letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-dim); background: var(--surface-2);
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  td.dim { color: var(--text-dim); }
+
+  .deploy-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 0.9rem; }
+  .deploy-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 1rem 1.1rem; box-shadow: var(--shadow); }
+  .deploy-card h4 { margin: 0 0 0.4rem; font-size: 0.92rem; }
+  .deploy-card p { margin: 0; color: var(--text-dim); font-size: 0.85rem; }
+
+  footer {
+    padding-top: 2.5rem; color: var(--text-dim); font-size: 0.85rem;
+    display: flex; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem;
+  }
+
+  @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+  html { scroll-behavior: smooth; }
+</style>
+</head>
+<body>
+
+<div class="page">
+
+  <header class="hero">
+    <p class="eyebrow">Architecture technique</p>
+    <h1>LIKYLY <em>Recsys</em> — Ingestion, entraînement &amp; service multi-tenant</h1>
+    <p class="subtitle">
+      Comment un catalogue et des événements d'achat/vue, poussés via <code>application/api/app.py</code>,
+      deviennent des recommandations content-based, collaboratives (ALS) et hybrides — servies en Postgres/
+      pgvector, versionnées et suivies dans MLflow, consommées par les SDKs Python/JS/PHP.
+    </p>
+    <div class="chips">
+      <span class="chip chip-python">Python 3.11</span>
+      <span class="chip chip-fastapi">FastAPI 0.115</span>
+      <span class="chip chip-pytorch">implicit (ALS)</span>
+      <span class="chip chip-postgres">PostgreSQL</span>
+      <span class="chip chip-pgvector">pgvector</span>
+      <span class="chip chip-mlflow">MLflow</span>
+      <span class="chip chip-dvc">DVC</span>
+      <span class="chip chip-solara">Solara</span>
+      <span class="chip chip-docker">Docker</span>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <div class="inner">
+      <a href="#overview">Schéma</a>
+      <a href="#data">Données &amp; multi-tenant</a>
+      <a href="#content">Content-based</a>
+      <a href="#collaborative">Collaboratif (ALS)</a>
+      <a href="#hybrid">Hybride &amp; session</a>
+      <a href="#versioning">Versioning &amp; auto-retrain</a>
+      <a href="#api">API &amp; SDKs</a>
+      <a href="#stack">Stack</a>
+      <a href="#deploy">Déploiement</a>
+    </div>
+  </nav>
+
+  <section class="block" id="overview">
+    <div class="block-head"><span class="block-num">00</span><h2>Schéma d'architecture</h2></div>
+    <p class="block-desc">
+      Trois temps, de gauche à droite : les données catalogue/événements sont ingérées et cloisonnées par
+      client, un pipeline interne calcule et sert les recommandations, puis un résultat classé et expliqué
+      est renvoyé à l'appelant.
+    </p>
+
+    <div class="diagram-card">
+      <div class="diagram-card-head">
+        <div class="legend">
+          <span class="legend-item"><span class="legend-dot" style="background:#FB923C"></span>Data / ingestion</span>
+          <span class="legend-item"><span class="legend-dot" style="background:#60A5FA"></span>Entraînement (ALS)</span>
+          <span class="legend-item"><span class="legend-dot" style="background:#A78BFA"></span>Registre de modèles</span>
+          <span class="legend-item"><span class="legend-dot" style="background:#818CF8"></span>Service (API)</span>
+          <span class="legend-item"><span class="legend-dot" style="background:#4ADE80"></span>Scoring &amp; blend</span>
+        </div>
+      </div>
+
+      <div class="diagram">
+
+        <!-- ── Data (input) ── -->
+        <div class="zone z-data">
+          <div class="zone-eyebrow">Données · Postgres + pgvector</div>
+          <div class="zone-title">Catalogue &amp; événements par client</div>
+          <div class="zone-desc">Tables scopées (client_id, product_type) : clients, produits, interactions, embeddings</div>
+          <div class="zchips">
+            <span class="zchip">PUT /products/{id}/profile</span>
+            <span class="zchip">POST /events/purchase</span>
+            <span class="zchip">POST /events/view</span>
+          </div>
+          <hr class="zdivider">
+          <div class="zone-title" style="font-size:.78rem;">db.py</div>
+          <div class="zone-desc" style="font-size:.68rem;">Résout la clé API en client_id, isole chaque requête ; upsert du profil déclenche le calcul d'embedding</div>
+          <div class="zchips">
+            <span class="zchip">clients (api_key_hash)</span>
+            <span class="zchip">product_embeddings (pgvector)</span>
+          </div>
+        </div>
+
+        <!-- Arrow 1 -->
+        <div class="arrow-col">
+          <div class="arrow-label">ingestion + embedding</div>
+          <div class="arrow-shaft"></div>
+          <div class="arrow-tip"></div>
+        </div>
+
+        <!-- ── System ── -->
+        <div class="system-col">
+
+          <div class="sys-top">
+            <div class="zone z-train">
+              <div class="zone-eyebrow">Entraînement · implicit ALS</div>
+              <div class="zone-title">Pipeline de fine-tuning collaboratif</div>
+              <div class="zone-desc">modelData.py, matrice user-item pondérée achats/vues, split train/test pour precision@10</div>
+              <div class="zchips">
+                <span class="zchip">factors 64</span>
+                <span class="zchip">20 itérations</span>
+                <span class="zchip">reg 0.01</span>
+                <span class="zchip">precision@10</span>
+              </div>
+              <div class="zone-note">→ promotion conditionnelle</div>
+            </div>
+
+            <div class="zone z-model">
+              <div class="zone-eyebrow">Registre · Postgres + fichiers .npz + MLflow</div>
+              <div class="zone-title">Modèles versionnés par client</div>
+              <div class="zone-desc">model_versions (Postgres) référence le fichier ; MLflow trace params/métriques et l'alias "production"</div>
+              <div class="zchips">
+                <span class="zchip">model/client_&lcub;id&rcub;/*_v&lcub;n&rcub;.npz</span>
+                <span class="zchip">dvc_push()</span>
+                <span class="zchip">MLflow registry alias</span>
+              </div>
+              <div class="zone-note">↓ chargé par load_model()</div>
+            </div>
+          </div>
+
+          <div class="zone z-serve">
+            <div class="zone-eyebrow">Service · FastAPI, application/api/app.py</div>
+            <div class="zone-title">Endpoints de recommandation, un par stratégie</div>
+            <div class="inspector-grid">
+              <div class="inspector-item">
+                <div class="inspector-item-label">/getRec/content, /getRec/popular</div>
+                <div class="inspector-item-chips">
+                  <span class="zchip">TF-IDF + pgvector</span>
+                  <span class="zchip">diversify_by_genre</span>
+                </div>
+              </div>
+              <div class="inspector-item">
+                <div class="inspector-item-label">/getRec/collaborative, /getRec/hybrid</div>
+                <div class="inspector-item-chips">
+                  <span class="zchip">ALS</span>
+                  <span class="zchip">alpha réglable</span>
+                </div>
+              </div>
+              <div class="inspector-item">
+                <div class="inspector-item-label">/getRec/session, /getRec/sessionForUser</div>
+                <div class="inspector-item-chips">
+                  <span class="zchip">sans compte</span>
+                  <span class="zchip">pondéré par récence</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="zone z-gen">
+            <div class="zone-eyebrow">Scoring &amp; blend · commun à plusieurs endpoints</div>
+            <div class="zone-title">Du candidat brut au score final, expliqué</div>
+
+            <div class="ai-pipeline">
+              <div class="pipeline-step">
+                <div class="pipeline-step-header">
+                  <div class="pipeline-num">1</div>
+                  <div class="pipeline-title">Pool de candidats</div>
+                </div>
+                <div class="pipeline-sub">TF-IDF (5×count) union embeddings sémantiques les plus proches, ou ALS restreint au pool contenu pour l'hybride</div>
+                <div class="pipeline-step-chips">
+                  <span class="zchip">cosine_similarity</span>
+                  <span class="zchip">find_similar_by_embedding</span>
+                </div>
+              </div>
+              <div class="pipeline-arrow">→</div>
+              <div class="pipeline-step">
+                <div class="pipeline-step-header">
+                  <div class="pipeline-num">2</div>
+                  <div class="pipeline-title">Normalisation &amp; blend</div>
+                </div>
+                <div class="pipeline-sub">normalize_scores() min-max chaque signal avant de les pondérer (SEMANTIC_BLEND_WEIGHT, alpha hybride)</div>
+                <div class="pipeline-step-chips">
+                  <span class="zchip">min-max [0,1]</span>
+                </div>
+              </div>
+              <div class="pipeline-arrow">→</div>
+              <div class="pipeline-step">
+                <div class="pipeline-step-header">
+                  <div class="pipeline-num">3</div>
+                  <div class="pipeline-title">Diversification par genre</div>
+                </div>
+                <div class="pipeline-sub">diversify_by_genre() garantit au moins la moitié des résultats sur un genre déjà consulté</div>
+                <div class="pipeline-step-chips">
+                  <span class="zchip">quota 50%</span>
+                </div>
+              </div>
+              <div class="pipeline-arrow">→</div>
+              <div class="pipeline-step pipeline-step-optional">
+                <div class="pipeline-step-header">
+                  <div class="pipeline-num">4</div>
+                  <div class="pipeline-title">Explication</div>
+                </div>
+                <div class="pipeline-sub">Chaque enregistrement reçoit un objet explanation (motif + scores individuels), jamais une boîte noire</div>
+                <div class="pipeline-step-chips">
+                  <span class="zchip">reason</span>
+                  <span class="zchip">scores détaillés</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="ai-details">
+              <div class="ai-detail-panel">
+                <div class="ai-detail-label">Réentraînement automatique</div>
+                <div class="ai-detail-schema">maybe_trigger_auto_retrain() →<br><strong>déclenché par volume d'interactions</strong></div>
+                <div class="zchips">
+                  <span class="zchip">seuil 50 interactions</span>
+                  <span class="zchip">1 job actif par (client, type)</span>
+                </div>
+              </div>
+              <div class="ai-detail-panel">
+                <div class="ai-detail-label">Promotion contrôlée</div>
+                <div class="ai-detail-schema">train_and_maybe_promote_model() →<br><strong>promue seulement si precision@10 ≥ active</strong></div>
+                <div class="zchips">
+                  <span class="zchip">promote_model_version()</span>
+                  <span class="zchip">MLflow alias "production"</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- Arrow 2 -->
+        <div class="arrow-col">
+          <div class="arrow-label">requête → réponse</div>
+          <div class="arrow-shaft"></div>
+          <div class="arrow-tip"></div>
+        </div>
+
+        <!-- ── Output ── -->
+        <div class="zone z-output">
+          <div class="zone-eyebrow">Résultat</div>
+          <div class="zone-title">Liste de produits recommandés, classée</div>
+
+          <div class="compat-grid">
+            <div class="compat-category">
+              <div class="compat-cat-label">Réponse JSON</div>
+              <div class="compat-items">
+                <span class="compat-item">work_id, title, score</span>
+                <span class="compat-item">explanation (reason + scores)</span>
+              </div>
+            </div>
+            <div class="compat-category">
+              <div class="compat-cat-label">Consommateurs</div>
+              <div class="compat-items">
+                <span class="compat-item">SDK Python</span>
+                <span class="compat-item">SDK JS/TS</span>
+                <span class="compat-item">SDK PHP</span>
+              </div>
+            </div>
+            <div class="compat-category compat-universal">
+              <div class="compat-cat-label">Isolation</div>
+              <div class="compat-items">
+                <span class="compat-item">Scopé client_id</span>
+                <span class="compat-item">Auth X-API-Key</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="output-note">Aucune requête n'accède aux données d'un autre client —<br><strong>cloisonnement au niveau requête</strong>.</div>
+        </div>
+
+      </div>
+
+      <div class="diagram-card-foot">
+        <span class="footer-label">Stack</span>
+        <span class="chip chip-fastapi">FastAPI</span>
+        <span class="chip chip-pytorch">implicit</span>
+        <span class="chip chip-postgres">PostgreSQL</span>
+        <span class="chip chip-pgvector">pgvector</span>
+        <span class="chip chip-mlflow">MLflow</span>
+        <span class="chip chip-dvc">DVC</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="block" id="data">
+    <div class="block-head"><span class="block-num">01</span><h2>Données &amp; multi-tenant</h2></div>
+    <p class="block-desc">
+      <code>application/utils/db.py</code> porte tout le stockage Postgres. Chaque table est scopée par
+      <code>client_id</code> en plus de <code>product_type</code> : deux clients peuvent tous deux appeler
+      leur catalogue "shop" sans collision, car la vraie clé de partition est <code>(client_id,
+      product_type)</code>. La clé API (hashée) est l'unique moyen de résoudre un <code>client_id</code>.
+    </p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Table / composant</th><th>Rôle</th><th>Écrit par</th></tr></thead>
+        <tbody>
+          <tr><td><code>clients</code></td><td class="dim">id, nom, hash de clé API, statut actif</td><td class="dim">create_client.py</td></tr>
+          <tr><td>Profil produit (title, description, genre_1, ...)</td><td class="dim">Contenu léger — prix/stock/images restent dans le système du client</td><td class="dim">PUT/DELETE /products/&lcub;id&rcub;/profile</td></tr>
+          <tr><td><code>interactions</code></td><td class="dim">Événements purchase/view, quantité, horodatage</td><td class="dim">POST /events/purchase, /events/view</td></tr>
+          <tr><td><code>product_embeddings</code> (pgvector)</td><td class="dim">Embedding sentence-transformers (384 dim, all-MiniLM-L12-v2) par produit</td><td class="dim">compute_and_store_product_embedding(), backfill_embeddings.py</td></tr>
+          <tr><td><code>model_versions</code></td><td class="dim">Historique d'entraînement ALS : hyperparamètres, precision@10, version active</td><td class="dim">train_and_maybe_promote_model()</td></tr>
+          <tr><td>migrate_csv_to_postgres.py</td><td class="dim">Bascule le jeu de données CSV historique (movies/books/shoes) vers Postgres</td><td class="dim">exécuté manuellement, une fois par migration</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="block" id="content">
+    <div class="block-head"><span class="block-num">02</span><h2>Content-based : TF-IDF + similarité sémantique</h2></div>
+    <p class="block-desc">
+      <code>/getRec/content</code> combine deux signaux plutôt qu'un seul : le TF-IDF capture le vocabulaire
+      partagé, les embeddings sémantiques rattrapent les synopsis reformulés ou thématiquement proches sans
+      mot commun. Les deux pools de candidats sont fusionnés (union), pas intersectés, pour ne perdre ni
+      une forte correspondance sémantique seule, ni une forte correspondance TF-IDF seule.
+    </p>
+    <div class="node-row">
+      <div class="node" style="--cat-color:#FB923C">
+        <h4>get_cosine_similarities_cached()</h4>
+        <p>Vectorise le "bag of words" (titre + description + genre) via CountVectorizer/TfidfVectorizer, mis en cache par (client_id, product_type) pour éviter de revectoriser à chaque requête.</p>
+      </div>
+      <div class="node" style="--cat-color:#4ADE80">
+        <h4>find_similar_by_embedding()</h4>
+        <p>Recherche de plus proches voisins en pgvector sur <code>product_embeddings</code> — même modèle d'embedding que celui utilisé à l'ingestion (all-MiniLM-L12-v2, 384 dimensions).</p>
+      </div>
+      <div class="node" style="--cat-color:#818CF8">
+        <h4>diversify_by_genre()</h4>
+        <p>Corrige un mode de défaillance réel : un candidat peut scorer anormalement haut sur les deux signaux à cause d'une coïncidence textuelle isolée (ex. deux titres qui partagent une phrase sans rapport thématique) et écraser toute alternative pertinente du bon genre.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="block" id="collaborative">
+    <div class="block-head"><span class="block-num">03</span><h2>Collaboratif : implicit ALS</h2></div>
+    <p class="block-desc">
+      <code>build_user_item_matrix()</code> construit une matrice de confiance à partir des événements bruts
+      — pas une note fabriquée de 1 à 5 : un achat pèse plus qu'une vue dans le feedback implicite qu'ALS
+      entraîne et prédit.
+    </p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Paramètre</th><th>Valeur</th></tr></thead>
+        <tbody>
+          <tr><td class="dim">Algorithme</td><td><code>implicit.cpu.als.AlternatingLeastSquares</code></td></tr>
+          <tr><td class="dim">factors / regularization / iterations</td><td><code>64</code> / <code>0.01</code> / <code>20</code></td></tr>
+          <tr><td class="dim">Poids de confiance</td><td>achat &gt; vue (feedback implicite pondéré, pas une note explicite)</td></tr>
+          <tr><td class="dim">Évaluation</td><td>precision@10 sur un split train/test (<code>implicit.evaluation</code>)</td></tr>
+          <tr><td class="dim">Suivi</td><td>MLflow — params, métriques, artefact du modèle, alias "production"</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="block" id="hybrid">
+    <div class="block-head"><span class="block-num">04</span><h2>Hybride &amp; recommandations de session</h2></div>
+    <p class="block-desc">
+      <code>/getRec/hybrid</code> part du pool content-based puis y superpose le score ALS restreint aux
+      mêmes candidats, combinés via <code>alpha</code> (poids collaboratif) réglable par requête ; si aucun
+      modèle n'est encore entraîné pour ce client, l'endpoint dégrade proprement vers le contenu seul plutôt
+      que d'échouer. <code>/getRec/session</code> et <code>/getRec/sessionForUser</code> partagent
+      <code>compute_session_recs()</code> : recommandations pondérées par récence à partir des derniers
+      produits consultés, sans compte requis pour la première, sourcées de l'historique persistant en base
+      pour la seconde — les deux classent les résultats de façon identique.
+    </p>
+    <div class="node-row">
+      <div class="node" style="--cat-color:#818CF8">
+        <h4>normalize_scores()</h4>
+        <p>Min-max normalise chaque signal indépendamment avant blend — nécessaire car un score cosinus TF-IDF et un score ALS ne vivent pas sur la même échelle.</p>
+      </div>
+      <div class="node" style="--cat-color:#818CF8">
+        <h4>compute_session_recs()</h4>
+        <p>Pondère chaque produit récemment consulté par sa position dans la liste (le plus récent compte le plus), combine les similarités, puis applique la même diversification par genre.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="block" id="versioning">
+    <div class="block-head"><span class="block-num">05</span><h2>Versioning &amp; réentraînement automatique</h2></div>
+    <p class="block-desc">
+      <code>train_and_maybe_promote_model()</code> entraîne toujours un nouveau candidat, l'évalue sur un
+      split tenu à l'écart, puis ne le promeut en production que s'il égale ou dépasse la precision@10 de la
+      version actuellement active — un run rejeté reste enregistré dans l'historique plutôt que de
+      disparaître. Le réentraînement automatique (<code>maybe_trigger_auto_retrain</code>) se déclenche
+      quand le nombre d'interactions nouvelles depuis le dernier entraînement dépasse un seuil, plutôt que
+      sur un cron aveugle sans notion de "y a-t-il un signal nouveau à apprendre".
+    </p>
+    <ol class="flow">
+      <li>
+        <p class="step-title">Détection du seuil</p>
+        <p class="step-body">Chaque événement purchase/view appelle <code>maybe_trigger_auto_retrain()</code> ; si les interactions nouvelles depuis le dernier entraînement dépassent <code>AUTO_RETRAIN_INTERACTION_THRESHOLD = 50</code>, un job est mis en file.</p>
+      </li>
+      <li>
+        <p class="step-title">Entraînement candidat</p>
+        <p class="step-body">Un nouveau modèle ALS est entraîné sur 100% des données disponibles ; sa precision@10 est mesurée séparément sur un split de validation.</p>
+      </li>
+      <li>
+        <p class="step-title">Décision de promotion</p>
+        <p class="step-body">Promu seulement si sa precision@10 égale ou dépasse la version active — sinon la version précédente continue d'être servie sans interruption.</p>
+      </li>
+      <li>
+        <p class="step-title">Persistance versionnée</p>
+        <p class="step-body">Le fichier modèle est écrit sous <code>model/client_&lcub;id&rcub;/&lcub;type&rcub;_users_rating_model_v&lcub;n&rcub;.npz</code> (jamais écrasé) et suivi par DVC (<code>dvc_push</code>).</p>
+      </li>
+      <li>
+        <p class="step-title">Trace MLflow</p>
+        <p class="step-body">Params, métriques et artefact sont journalisés dans MLflow ; si promu, l'alias "production" du Model Registry est réassigné de façon atomique. Une panne MLflow ne bloque jamais la promotion elle-même, déjà actée en Postgres.</p>
+      </li>
+    </ol>
+  </section>
+
+  <section class="block" id="api">
+    <div class="block-head"><span class="block-num">06</span><h2>API &amp; SDKs</h2></div>
+    <p class="block-desc">
+      Toute requête s'authentifie via l'en-tête <code>X-API-Key</code>, résolu en <code>client_id</code> par
+      <code>get_current_client_id()</code> — c'est ce qui garantit qu'aucune requête ne peut lire ou écrire
+      les données d'un autre client, même en cas de nom de catalogue identique. Trois SDKs officiels
+      partagent la même surface d'API.
+    </p>
+    <div class="node-row">
+      <div class="node" style="--cat-color:#3776AB">
+        <h4>sdk/python — likyly-recsys-sdk</h4>
+        <p><code>RecsysClient</code> (sync) et <code>AsyncRecsysClient</code>, basés sur httpx, Python 3.9+.</p>
+      </div>
+      <div class="node" style="--cat-color:#F7DF1E">
+        <h4>sdk/js — @likyly/recsys-sdk</h4>
+        <p>Zéro dépendance (fetch natif) — Node 18+, bundlers front, ou <code>&lt;script type="module"&gt;</code>. <code>trackView()</code> gère la liste de produits consultés en localStorage.</p>
+      </div>
+      <div class="node" style="--cat-color:#777BB4">
+        <h4>sdk/php — RecsysClient</h4>
+        <p>Client PHP pour les stacks Laravel/Symfony/WordPress existantes.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="block" id="stack">
+    <div class="block-head"><span class="block-num">07</span><h2>Stack technique</h2></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Couche</th><th>Technologie</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td>API</td><td class="dim">FastAPI 0.115, Uvicorn</td><td class="dim">multi-tenant via X-API-Key, tâches d'arrière-plan pour l'entraînement</td></tr>
+          <tr><td>Collaboratif</td><td class="dim">implicit (ALS), scipy sparse matrices</td><td class="dim">feedback implicite pondéré achats/vues</td></tr>
+          <tr><td>Contenu</td><td class="dim">scikit-learn (TF-IDF/CountVectorizer), sentence-transformers</td><td class="dim">embeddings all-MiniLM-L12-v2, 384 dimensions</td></tr>
+          <tr><td>Stockage</td><td class="dim">PostgreSQL + pgvector, SQLAlchemy</td><td class="dim">catalogue, événements, embeddings et versions de modèles, tout scopé par client_id</td></tr>
+          <tr><td>MLOps</td><td class="dim">MLflow (tracking + model registry), DVC</td><td class="dim">MLflow suit chaque run ; DVC versionne les artefacts modèle (.npz) hors Git</td></tr>
+          <tr><td>UI de démonstration</td><td class="dim">Solara (React/Python), demo/ (HTML/CSS/JS statique)</td><td class="dim">app.py sert 3 pages Solara ; demo/ est une vitrine front indépendante consommant l'API</td></tr>
+          <tr><td>Legacy (gelé)</td><td class="dim">Pinecone</td><td class="dim">endpoints vectoriels historiques conservés fonctionnels, remplacés par pgvector pour toute nouvelle intégration</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="block" id="deploy">
+    <div class="block-head"><span class="block-num">08</span><h2>Environnements &amp; déploiement</h2></div>
+    <div class="deploy-grid">
+      <div class="deploy-card">
+        <h4>Conteneur Docker</h4>
+        <p><code>Dockerfile</code> — image Python 3.11-slim, installe PyTorch CPU puis <code>requirements-docker.txt</code>, orchestré par Supervisor + Nginx.</p>
+      </div>
+      <div class="deploy-card">
+        <h4>Routage Nginx</h4>
+        <p><code>nginx.conf</code> — <code>/</code> vers l'app Solara (port 6060), <code>/recsys-api/</code> vers l'API FastAPI (port 6061), le tout exposé sur le port 80.</p>
+      </div>
+      <div class="deploy-card">
+        <h4>Supervision des process</h4>
+        <p><code>supervisord.conf</code> démarre et redémarre automatiquement <code>recsys-explore</code> (Solara) et <code>recsys-api</code> (FastAPI/Uvicorn) côte à côte.</p>
+      </div>
+      <div class="deploy-card">
+        <h4>Séparation entraînement / service</h4>
+        <p>Le réentraînement s'exécute en tâche d'arrière-plan dans le même process API (background_tasks) ; seul le fichier modèle versionné et sa ligne MLflow sont produits, le service continue de répondre pendant l'entraînement.</p>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <span>LIKYLY — Moteur de recommandations produits</span>
+    <span>Référence d'architecture · générée le 2026-08-31</span>
+  </footer>
+
+</div>
+</body>
+</html>

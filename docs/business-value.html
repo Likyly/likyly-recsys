@@ -1,0 +1,586 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LIKYLY — Un moteur de recommandations qui apprend de vos utilisateurs</title>
+<style>
+  :root {
+    --bg: #F1F5F9;
+    --surface: #FFFFFF;
+    --surface-2: #F8FAFC;
+    --text: #0F172A;
+    --text-dim: #64748B;
+    --border: #DDE1E8;
+    --accent: #4F46E5;
+    --accent-ink: #4338CA;
+    --code-bg: #E2E8F0;
+    --chip-bg: #E8EBF0;
+    --chip-color: #334155;
+    --shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+    --good-bg: #F0FDF4; --good-border: #4ADE80; --good-text: #14532D;
+    --bad-bg: #FEF2F2; --bad-border: #FCA5A5; --bad-text: #7F1D1D;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0F172A; --surface: #1E293B; --surface-2: #172033;
+      --text: #F1F5F9; --text-dim: #94A3B8; --border: #334155;
+      --accent: #818CF8; --accent-ink: #A5B4FC;
+      --code-bg: #273549; --chip-bg: #273549; --chip-color: #94A3B8;
+      --shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+      --good-bg: #0F2A1A; --good-border: #22C55E; --good-text: #86EFAC;
+      --bad-bg: #2A1414; --bad-border: #EF4444; --bad-text: #FCA5A5;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0F172A; --surface: #1E293B; --surface-2: #172033;
+    --text: #F1F5F9; --text-dim: #94A3B8; --border: #334155;
+    --accent: #818CF8; --accent-ink: #A5B4FC;
+    --code-bg: #273549; --chip-bg: #273549; --chip-color: #94A3B8;
+    --shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+    --good-bg: #0F2A1A; --good-border: #22C55E; --good-text: #86EFAC;
+    --bad-bg: #2A1414; --bad-border: #EF4444; --bad-text: #FCA5A5;
+  }
+  :root[data-theme="light"] {
+    --bg: #F1F5F9; --surface: #FFFFFF; --surface-2: #F8FAFC;
+    --text: #0F172A; --text-dim: #64748B; --border: #DDE1E8;
+    --accent: #4F46E5; --accent-ink: #4338CA;
+    --code-bg: #E2E8F0; --chip-bg: #E8EBF0; --chip-color: #334155;
+    --shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+    --good-bg: #F0FDF4; --good-border: #4ADE80; --good-text: #14532D;
+    --bad-bg: #FEF2F2; --bad-border: #FCA5A5; --bad-text: #7F1D1D;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 16px; line-height: 1.55; -webkit-font-smoothing: antialiased;
+  }
+  code, .mono {
+    font-family: ui-monospace, "Cascadia Code", "Fira Code", "SF Mono", Menlo, Consolas, monospace;
+  }
+  code { background: var(--code-bg); padding: 0.1rem 0.35rem; border-radius: 4px; font-size: 0.85em; }
+  a { color: var(--accent); }
+  a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+
+  .page { max-width: 1000px; margin: 0 auto; padding: 0 1.5rem 5rem; }
+
+  header.hero { padding: 3.5rem 0 2.2rem; border-bottom: 1px solid var(--border); }
+  .eyebrow {
+    font-family: ui-monospace, "Cascadia Code", monospace; font-size: 0.72rem;
+    letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent); margin: 0 0 0.9rem;
+  }
+  h1 {
+    font-size: clamp(1.9rem, 4.2vw, 2.9rem); line-height: 1.12; letter-spacing: -0.015em;
+    margin: 0 0 1rem; text-wrap: balance; max-width: 20ch;
+  }
+  h1 em { font-style: normal; color: var(--accent); }
+  .subtitle { color: var(--text-dim); font-size: 1.12rem; max-width: 62ch; margin: 0 0 1.5rem; }
+  .chips { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+  .chip {
+    font-family: ui-monospace, "Cascadia Code", monospace; font-size: 0.76rem;
+    padding: 0.28rem 0.6rem; border-radius: 100px; background: var(--chip-bg); color: var(--chip-color);
+  }
+  .hero-cta { margin-top: 1.5rem; display: flex; gap: 1.2rem; flex-wrap: wrap; font-size: 0.88rem; }
+  .hero-cta a { font-weight: 600; text-decoration: none; }
+  .hero-cta a:hover { text-decoration: underline; }
+  .hero-cta a.secondary { color: var(--text-dim); font-weight: 500; }
+
+  nav.toc {
+    position: sticky; top: 0; z-index: 10;
+    background: color-mix(in srgb, var(--bg) 88%, transparent);
+    backdrop-filter: blur(6px); border-bottom: 1px solid var(--border);
+    margin: 0 -1.5rem 2.5rem; padding: 0 1.5rem;
+  }
+  nav.toc .inner {
+    max-width: 1000px; margin: 0 auto; display: flex; gap: 1.2rem;
+    overflow-x: auto; padding: 0.75rem 0; font-size: 0.8rem;
+  }
+  nav.toc a { color: var(--text-dim); text-decoration: none; white-space: nowrap; }
+  nav.toc a:hover { color: var(--accent); }
+
+  section.block { padding: 2.8rem 0; border-bottom: 1px solid var(--border); scroll-margin-top: 4rem; }
+  section.block:last-of-type { border-bottom: none; }
+  .block-head { display: flex; align-items: baseline; gap: 0.7rem; margin-bottom: 0.4rem; }
+  .block-num { font-family: ui-monospace, "Cascadia Code", monospace; font-size: 0.8rem; color: var(--text-dim); }
+  h2 { font-size: 1.4rem; margin: 0; letter-spacing: -0.01em; }
+  h3 { font-size: 1rem; margin: 0 0 0.35rem; }
+  .block-desc { color: var(--text-dim); max-width: 66ch; margin: 0.6rem 0 1.6rem; }
+  .block-desc.center { margin-left: auto; margin-right: auto; text-align: center; }
+
+  /* ---------- Problem framing ---------- */
+  .framing { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  .framing-card { border-radius: 10px; padding: 1.1rem 1.2rem; border: 1.5px solid; }
+  .framing-card.bad { background: var(--bad-bg); border-color: var(--bad-border); }
+  .framing-card.good { background: var(--good-bg); border-color: var(--good-border); }
+  .framing-card .label {
+    font-family: ui-monospace, "Cascadia Code", monospace; font-size: 0.65rem; font-weight: 800;
+    text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 0.5rem;
+  }
+  .framing-card.bad .label { color: var(--bad-text); }
+  .framing-card.good .label { color: var(--good-text); }
+  .framing-card ul { margin: 0; padding-left: 1.1rem; font-size: 0.87rem; }
+  .framing-card.bad li { color: var(--bad-text); }
+  .framing-card.good li { color: var(--good-text); }
+  .framing-card li + li { margin-top: 0.4rem; }
+
+  /* ---------- Metrics strip ---------- */
+  .metrics-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.8rem; margin-top: 1.5rem; }
+  .metric { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 0.9rem 1rem; box-shadow: var(--shadow); }
+  .metric .m-label { font-size: 0.68rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.08em; }
+  .metric .m-value { font-family: ui-monospace, "Cascadia Code", monospace; font-size: 1.3rem; font-weight: 700; margin: 0.25rem 0; color: var(--text); font-variant-numeric: tabular-nums; }
+  .metric .m-delta { font-size: 0.76rem; color: var(--good-text); font-weight: 600; }
+  .metric p.m-explain { margin: 0.35rem 0 0; font-size: 0.78rem; color: var(--text-dim); font-family: ui-sans-serif, system-ui, sans-serif; }
+
+  /* ---------- Use case cards ---------- */
+  .usecases { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1rem; }
+  .usecase { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 1.2rem 1.3rem; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 0.55rem; }
+  .usecase .uc-tag {
+    font-family: ui-monospace, "Cascadia Code", monospace; font-size: 0.62rem; font-weight: 800;
+    text-transform: uppercase; letter-spacing: 0.1em; color: var(--accent-ink); align-self: flex-start;
+    background: var(--chip-bg); padding: 0.2rem 0.55rem; border-radius: 100px;
+  }
+  .usecase h3 { font-size: 1.02rem; margin-top: 0.2rem; }
+  .uc-detail { display: flex; gap: 0.6rem; font-size: 0.82rem; }
+  .uc-detail .uc-k { flex: none; width: 76px; font-weight: 700; color: var(--text-dim); font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.06em; padding-top: 0.15rem; }
+  .uc-detail .uc-v { color: var(--text-dim); line-height: 1.4; }
+  .usecase .uc-value { margin-top: auto; padding-top: 0.6rem; border-top: 1px dashed var(--border); font-size: 0.8rem; color: var(--text); }
+  .usecase .uc-value strong { color: var(--accent-ink); }
+
+  /* ---------- Tables ---------- */
+  .table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.87rem; min-width: 560px; }
+  th, td { text-align: left; padding: 0.65rem 0.9rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+  thead th { font-family: ui-monospace, "Cascadia Code", monospace; font-size: 0.72rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-dim); background: var(--surface-2); }
+  tbody tr:last-child td { border-bottom: none; }
+  td.dim { color: var(--text-dim); }
+  td.hl { color: var(--accent-ink); font-weight: 600; }
+
+  /* ---------- Fit card ---------- */
+  .fit-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 1rem 1.1rem; box-shadow: var(--shadow); }
+  .fit-card .label { font-family: ui-monospace, "Cascadia Code", monospace; font-size: 0.62rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-dim); margin-bottom: 0.5rem; }
+  .fit-card ul { margin: 0; padding-left: 1.1rem; font-size: 0.86rem; color: var(--text-dim); }
+  .fit-card li + li { margin-top: 0.35rem; }
+
+  /* ---------- Callout ---------- */
+  .callout { background: var(--surface-2); border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 8px; padding: 1rem 1.2rem; font-size: 0.88rem; color: var(--text-dim); }
+  .callout strong { color: var(--text); }
+  .callout ul { margin: 0.5rem 0 0; padding-left: 1.1rem; }
+  .callout li + li { margin-top: 0.3rem; }
+
+  /* ---------- Hero blobs ---------- */
+  header.hero { position: relative; overflow: hidden; }
+  header.hero > * { position: relative; z-index: 1; }
+  .hero-blobs { position: absolute; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; }
+  .blob { position: absolute; border-radius: 50%; filter: blur(60px); opacity: 0.28; }
+  .blob-a { width: 340px; height: 340px; background: var(--accent); top: -100px; left: -70px; }
+  .blob-b { width: 300px; height: 300px; background: #22D3EE; top: -60px; right: -60px; }
+  @media (prefers-color-scheme: dark) { .blob { opacity: 0.16; } }
+  :root[data-theme="dark"] .blob { opacity: 0.16; }
+  :root[data-theme="light"] .blob { opacity: 0.28; }
+
+  /* ---------- Trust pills ---------- */
+  .trust-pills { display: flex; flex-wrap: wrap; gap: 0.6rem; margin: 0.2rem 0 1.3rem; }
+  .trust-pill {
+    display: inline-flex; align-items: center; gap: 0.4rem; background: var(--good-bg); color: var(--good-text);
+    border: 1px solid var(--good-border); border-radius: 100px; padding: 0.4rem 0.9rem; font-size: 0.82rem; font-weight: 600;
+  }
+  .trust-pill .tp-check { font-weight: 800; }
+
+  /* ---------- Nav brand ---------- */
+  .nav-brand { display: flex; flex-direction: column; line-height: 1.15; margin-right: 0.4rem; flex: none; }
+  .nav-brand .nb-name { font-weight: 800; color: var(--accent); font-size: 0.88rem; white-space: nowrap; }
+  .nav-brand .nb-tag { font-size: 0.64rem; color: var(--text-dim); white-space: nowrap; }
+  .nav-sep { width: 1px; align-self: stretch; background: var(--border); flex: none; margin: 0.3rem 0; }
+
+  /* ---------- Step tracker ---------- */
+  .steps-tracker { display: flex; align-items: flex-start; justify-content: center; gap: 0; flex-wrap: wrap; margin-bottom: 2rem; }
+  .step-item { display: flex; flex-direction: column; align-items: center; gap: 0.5rem; width: 120px; text-align: center; }
+  .step-bubble {
+    position: relative; width: 50px; height: 50px; border-radius: 50%; background: var(--surface);
+    border: 2px solid var(--border); display: flex; align-items: center; justify-content: center;
+    color: var(--text-dim); box-shadow: var(--shadow);
+  }
+  .step-bubble svg { width: 22px; height: 22px; }
+  .step-item.done .step-bubble { border-color: var(--accent); color: var(--accent); }
+  .step-check {
+    position: absolute; bottom: -3px; right: -3px; width: 17px; height: 17px; border-radius: 50%;
+    background: var(--good-border); color: #fff; font-size: 10px; font-weight: 800;
+    display: flex; align-items: center; justify-content: center; border: 2px solid var(--surface);
+  }
+  .step-label { font-size: 0.76rem; font-weight: 600; color: var(--text); line-height: 1.3; }
+  .step-line { flex: 1; height: 2px; background: var(--border); margin-top: 25px; min-width: 20px; }
+
+  /* ---------- Demo sequence ---------- */
+  .demo-flow { display: flex; flex-direction: column; align-items: center; gap: 0; max-width: 480px; margin: 0 auto; }
+  .v-connector { width: 2px; height: 26px; background: var(--border); position: relative; flex: none; }
+  .v-connector::after { content: ""; position: absolute; bottom: -1px; left: 50%; transform: translateX(-50%); border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 6px solid var(--border); }
+  .demo-bubble { align-self: flex-end; background: var(--accent); color: #fff; border-radius: 14px 14px 4px 14px; padding: 0.85rem 1.1rem; font-size: 0.95rem; max-width: 88%; box-shadow: var(--shadow); }
+  .demo-tag { font-family: ui-monospace, "Cascadia Code", monospace; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-dim); background: var(--surface-2); border: 1px solid var(--border); border-radius: 100px; padding: 0.32rem 0.85rem; }
+  .demo-card { width: 100%; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 1rem 1.2rem; box-shadow: var(--shadow); }
+  .demo-card .dc-label { font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--accent-ink); font-weight: 800; margin-bottom: 0.45rem; }
+  .demo-card .dc-q { font-weight: 600; margin-bottom: 0.3rem; font-size: 0.92rem; }
+  .demo-card .dc-a { color: var(--text-dim); font-size: 0.86rem; line-height: 1.5; }
+  .demo-score { display: inline-block; margin-top: 0.65rem; font-family: ui-monospace, "Cascadia Code", monospace; font-size: 0.78rem; background: var(--good-bg); color: var(--good-text); border: 1px solid var(--good-border); padding: 0.22rem 0.65rem; border-radius: 100px; }
+  .demo-final { text-align: center; font-size: 0.82rem; color: var(--text-dim); margin-top: 0.4rem; }
+
+  /* ---------- Features ---------- */
+  .features-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 0.9rem; }
+  .feature-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 1rem 1.1rem; box-shadow: var(--shadow); }
+  .feature-card .f-title { font-weight: 600; font-size: 0.92rem; margin-bottom: 0.35rem; }
+  .feature-card p { margin: 0; font-size: 0.82rem; color: var(--text-dim); line-height: 1.45; }
+
+  /* ---------- Comparison progression ---------- */
+  .compare-steps { display: flex; align-items: center; gap: 0.7rem; flex-wrap: wrap; justify-content: center; margin-bottom: 1.4rem; }
+  .compare-chip { font-family: ui-monospace, "Cascadia Code", monospace; font-size: 0.82rem; font-weight: 700; padding: 0.55rem 1.1rem; border-radius: 100px; border: 1.5px solid var(--border); background: var(--surface); color: var(--text-dim); }
+  .compare-chip.mid { border-color: var(--accent); color: var(--accent-ink); background: var(--surface); box-shadow: var(--shadow); }
+  .compare-arrow { color: var(--text-dim); font-size: 1rem; }
+
+  /* ---------- Evolutions ---------- */
+  .evolutions-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 0.7rem; }
+  .evo-item { display: flex; gap: 0.65rem; align-items: flex-start; font-size: 0.86rem; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 0.7rem 0.9rem; color: var(--text-dim); }
+  .evo-item .evo-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); margin-top: 0.55rem; flex: none; }
+
+  footer { padding-top: 2.5rem; color: var(--text-dim); font-size: 0.85rem; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem; }
+
+  @media (max-width: 700px) {
+    .framing { grid-template-columns: 1fr; }
+  }
+  html { scroll-behavior: smooth; }
+  @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+</style>
+</head>
+<body>
+
+<div class="page">
+
+  <header class="hero">
+    <div class="hero-blobs"><span class="blob blob-a"></span><span class="blob blob-b"></span></div>
+    <p class="eyebrow">Moteur de recommandations produits — API multi-tenant</p>
+    <h1>Un moteur de recommandations qui <em>apprend</em> de vos utilisateurs — pas seulement de leurs clics</h1>
+    <p class="subtitle">
+      Sur une fiche produit, une page d'accueil ou un catalogue, une recommandation pertinente augmente
+      directement le taux de conversion — c'est ce qui fait qu'Amazon annonce jusqu'à 35% de ses ventes
+      générées par son moteur de recommandations. LIKYLY expose cette capacité en API : contenu (TF-IDF +
+      similarité sémantique), collaboratif (ALS sur achats/vues) et hybride, branchables sur n'importe
+      quel catalogue existant sans changer de plateforme e-commerce.
+    </p>
+    <div class="trust-pills">
+      <span class="trust-pill"><span class="tp-check">✓</span> Auto-hébergeable, vos données restent chez vous</span>
+      <span class="trust-pill"><span class="tp-check">✓</span> Isolation stricte par client (multi-tenant)</span>
+      <span class="trust-pill"><span class="tp-check">✓</span> Fonctionne dès le premier visiteur (cold start)</span>
+      <span class="trust-pill"><span class="tp-check">✓</span> Réentraînement automatique, sans intervention manuelle</span>
+      <span class="trust-pill"><span class="tp-check">✓</span> SDKs Python, JS/TS et PHP prêts à l'emploi</span>
+    </div>
+    <div class="chips">
+      <span class="chip">Content-based (TF-IDF + embeddings)</span>
+      <span class="chip">Collaboratif (ALS)</span>
+      <span class="chip">Hybride pondéré</span>
+      <span class="chip">Session sans compte</span>
+    </div>
+    <div class="hero-cta">
+      <a href="#demo">Voir la démonstration ↓</a>
+      <a href="architecture.html">Voir l'architecture technique →</a>
+    </div>
+  </header>
+
+  <nav class="toc">
+    <div class="inner">
+      <div class="nav-brand"><span class="nb-name">LIKYLY</span><span class="nb-tag">Recommandations qui comprennent</span></div>
+      <div class="nav-sep"></div>
+      <a href="#usages">Cas d'usage</a>
+      <a href="#demo">Démo</a>
+      <a href="#fonctionnalites">Fonctionnalités</a>
+      <a href="#valeur">Valeur métier</a>
+      <a href="#comparaison">Comparaison</a>
+      <a href="#agent">Pourquoi pas un LLM par requête</a>
+      <a href="#performances">Performances</a>
+      <a href="#evolutions">Évolutions</a>
+      <div class="nav-sep"></div>
+      <a href="architecture.html">Architecture technique →</a>
+    </div>
+  </nav>
+
+  <section class="block" id="usages">
+    <div class="block-head"><span class="block-num">01</span><h2>Cas d'usage</h2></div>
+    <p class="block-desc">Le catalogue produit est un nom de namespace libre — le même moteur sert n'importe quel type de produit ou d'œuvre.</p>
+    <div class="usecases">
+      <div class="usecase">
+        <span class="uc-tag">E-commerce</span>
+        <h3>« Vous aimerez aussi » sur la fiche produit</h3>
+        <div class="uc-detail"><span class="uc-k">Contexte</span><span class="uc-v">Une boutique en ligne veut augmenter le panier moyen sans recruter d'équipe data.</span></div>
+        <div class="uc-detail"><span class="uc-k">Problème</span><span class="uc-v">Le cross-sell actuel est une liste éditoriale figée, jamais mise à jour avec le comportement réel des visiteurs.</span></div>
+        <div class="uc-detail"><span class="uc-k">Solution</span><span class="uc-v">Recommandations hybrides (contenu + achats/vues) branchées via le SDK JS sur la fiche produit existante.</span></div>
+        <div class="uc-value">Valeur : <strong>panier moyen et taux de clic en hausse</strong>, sans réécrire le front.</div>
+      </div>
+      <div class="usecase">
+        <span class="uc-tag">Streaming &amp; contenu éditorial</span>
+        <h3>Catalogue de films, séries ou articles</h3>
+        <div class="uc-detail"><span class="uc-k">Contexte</span><span class="uc-v">Une plateforme de contenu veut personnaliser sa page d'accueil dès la première visite, compte ou non.</span></div>
+        <div class="uc-detail"><span class="uc-k">Problème</span><span class="uc-v">Sans historique de compte, la personnalisation classique ne démarre qu'après plusieurs sessions.</span></div>
+        <div class="uc-detail"><span class="uc-k">Solution</span><span class="uc-v">Recommandations de session basées sur les derniers contenus consultés, sans connexion requise.</span></div>
+        <div class="uc-value">Valeur : <strong>personnalisation dès la première visite</strong>, temps passé en hausse.</div>
+      </div>
+      <div class="usecase">
+        <span class="uc-tag">Marketplace multi-vendeur</span>
+        <h3>Nouveaux produits sans historique</h3>
+        <div class="uc-detail"><span class="uc-k">Contexte</span><span class="uc-v">Des centaines de nouvelles références sont ajoutées chaque semaine, sans aucun achat encore enregistré.</span></div>
+        <div class="uc-detail"><span class="uc-k">Problème</span><span class="uc-v">Le collaboratif seul ignore systématiquement tout produit qui n'a pas encore été acheté ("cold start item").</span></div>
+        <div class="uc-detail"><span class="uc-k">Solution</span><span class="uc-v">Contenu (titre, description, catégorie) et popularité prennent le relais jusqu'à ce que le produit accumule des interactions.</span></div>
+        <div class="uc-value">Valeur : <strong>tout le catalogue est recommandable dès sa mise en ligne</strong>.</div>
+      </div>
+      <div class="usecase">
+        <span class="uc-tag">Headless commerce / JAMstack</span>
+        <h3>Storefront découplé (Shopify Hydrogen, Strapi, Next.js)</h3>
+        <div class="uc-detail"><span class="uc-k">Contexte</span><span class="uc-v">Un storefront entièrement en JS, sans backend monolithique capable d'héberger un moteur ML.</span></div>
+        <div class="uc-detail"><span class="uc-k">Problème</span><span class="uc-v">Les moteurs de recommandation classiques supposent un CMS ou une plateforme e-commerce précise.</span></div>
+        <div class="uc-detail"><span class="uc-k">Solution</span><span class="uc-v">API REST agnostique du CMS, consommée directement depuis le front via le SDK JS (fetch natif, zéro dépendance).</span></div>
+        <div class="uc-value">Valeur : <strong>intégration en quelques appels API</strong>, quel que soit le stack front.</div>
+      </div>
+      <div class="usecase">
+        <span class="uc-tag">SaaS B2B avec plusieurs clients</span>
+        <h3>Un moteur, plusieurs catalogues isolés</h3>
+        <div class="uc-detail"><span class="uc-k">Contexte</span><span class="uc-v">Une agence ou un éditeur SaaS veut proposer des recommandations à plusieurs clients finaux depuis une seule infrastructure.</span></div>
+        <div class="uc-detail"><span class="uc-k">Problème</span><span class="uc-v">Faire tourner un moteur ML séparé par client ne passe pas à l'échelle opérationnellement.</span></div>
+        <div class="uc-detail"><span class="uc-k">Solution</span><span class="uc-v">Chaque client s'authentifie par sa propre clé API ; catalogue, événements et modèles restent cloisonnés par client_id.</span></div>
+        <div class="uc-value">Valeur : <strong>une seule infrastructure à opérer</strong>, isolation garantie entre clients.</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block" id="demo">
+    <div class="block-head"><span class="block-num">02</span><h2>Comment ça marche</h2></div>
+    <p class="block-desc">Un exemple réel de recommandation de session, tel que servi par l'endpoint <code>/getRec/session</code> — aucun compte requis.</p>
+
+    <div class="steps-tracker">
+      <div class="step-item done">
+        <span class="step-bubble">
+          <svg viewBox="0 0 24 24" fill="none"><rect x="4" y="4" width="16" height="16" rx="2" stroke="currentColor" stroke-width="1.8"/><path d="M8 12h8M8 16h5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+          <span class="step-check">✓</span>
+        </span>
+        <span class="step-label">Produit consulté</span>
+      </div>
+      <div class="step-line"></div>
+      <div class="step-item done">
+        <span class="step-bubble">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3z" fill="currentColor"/></svg>
+          <span class="step-check">✓</span>
+        </span>
+        <span class="step-label">Contenu + sémantique</span>
+      </div>
+      <div class="step-line"></div>
+      <div class="step-item done">
+        <span class="step-bubble">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M4 20l1-4L16 5l3 3L8 19l-4 1z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/></svg>
+          <span class="step-check">✓</span>
+        </span>
+        <span class="step-label">Diversification par genre</span>
+      </div>
+      <div class="step-line"></div>
+      <div class="step-item">
+        <span class="step-bubble">
+          <svg viewBox="0 0 24 24" fill="none"><rect x="5" y="3" width="14" height="18" rx="2" stroke="currentColor" stroke-width="1.8"/><path d="M8 8h8M8 12h8M8 16h5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        </span>
+        <span class="step-label">Recommandations affichées</span>
+      </div>
+    </div>
+
+    <div class="demo-flow">
+      <div class="demo-bubble">Visiteur anonyme consulte « Jurassic World Rebirth » puis « The Avengers »</div>
+      <div class="v-connector"></div>
+      <div class="demo-card">
+        <div class="dc-label">Recommandation retournée</div>
+        <div class="dc-q">Jurassic Park</div>
+        <div class="dc-a">Similaire à « Jurassic World Rebirth », consulté récemment — combinaison TF-IDF + similarité sémantique, pondérée par la récence de consultation.</div>
+        <span class="demo-score">Score combiné : 0.82</span>
+      </div>
+      <div class="v-connector"></div>
+      <div class="demo-card">
+        <div class="dc-label">Garde-fou appliqué</div>
+        <div class="dc-a">Au moins la moitié des résultats partage un genre déjà consulté (diversification par genre) — évite qu'une correspondance de texte anecdotique (deux titres qui partagent une phrase, sans rapport thématique réel) n'écrase des candidats pertinents.</div>
+      </div>
+      <p class="demo-final">Réponse en quelques dizaines de millisecondes, sans compte utilisateur — la liste des produits consultés reste côté navigateur (SDK), l'API reste sans état.</p>
+    </div>
+  </section>
+
+  <section class="block" id="fonctionnalites">
+    <div class="block-head"><span class="block-num">03</span><h2>Fonctionnalités</h2></div>
+    <p class="block-desc">Ce que l'API fait, concrètement, pour chaque catalogue client.</p>
+    <div class="features-grid">
+      <div class="feature-card"><div class="f-title">Content-based (TF-IDF + sémantique)</div><p>Similarité de texte classique, enrichie d'embeddings sentence-transformers stockés en pgvector pour capter les correspondances thématiques sans mot commun.</p></div>
+      <div class="feature-card"><div class="f-title">Collaboratif (ALS, feedback implicite)</div><p>Achats et vues pondérés par confiance (un achat compte plus qu'une vue), entraînés avec implicit ALS — pas de note 1-5 fabriquée.</p></div>
+      <div class="feature-card"><div class="f-title">Hybride pondéré</div><p>Combine contenu et collaboratif selon un paramètre <code>alpha</code> réglable par requête, avec repli automatique sur le contenu seul si aucun modèle n'est encore entraîné.</p></div>
+      <div class="feature-card"><div class="f-title">Recommandations de session</div><p>Basées sur les derniers produits consultés, sans compte ni connexion — le vrai point d'entrée pour un visiteur anonyme.</p></div>
+      <div class="feature-card"><div class="f-title">Cold start pur popularité</div><p>Filet de sécurité final quand ni contenu ni historique ne sont disponibles : classement par popularité (nombre d'achats).</p></div>
+      <div class="feature-card"><div class="f-title">Explication de chaque recommandation</div><p>Chaque résultat inclut un score et un motif lisible ("Similaire à X", "Populaire (N achats)") — pas de boîte noire.</p></div>
+      <div class="feature-card"><div class="f-title">Versioning &amp; promotion contrôlée</div><p>Un nouveau modèle n'est mis en production que s'il égale ou dépasse la precision@10 de la version active — un réentraînement raté ne dégrade jamais la production.</p></div>
+      <div class="feature-card"><div class="f-title">Réentraînement automatique</div><p>Déclenché par le volume d'interactions accumulées depuis le dernier entraînement, pas par un cron aveugle — inutile d'y penser au quotidien.</p></div>
+      <div class="feature-card"><div class="f-title">Multi-tenant par clé API</div><p>Chaque requête s'authentifie via <code>X-API-Key</code> ; catalogue, événements et modèles restent cloisonnés par client, même en cas de nom de catalogue identique.</p></div>
+    </div>
+  </section>
+
+  <section class="block" id="valeur">
+    <div class="block-head"><span class="block-num">04</span><h2>Valeur métier</h2></div>
+    <p class="block-desc">
+      Un catalogue trié manuellement ou par règles fixes ("nouveautés", "top ventes") ne s'adapte ni au
+      visiteur qui navigue en ce moment, ni aux nouveaux produits qui n'ont pas encore d'historique.
+    </p>
+    <div class="framing">
+      <div class="framing-card bad">
+        <div class="label">Tri manuel / règles fixes</div>
+        <ul>
+          <li>Même sélection pour tous les visiteurs, quel que soit leur comportement</li>
+          <li>Mise à jour manuelle, vite obsolète dès que le catalogue bouge</li>
+          <li>Un nouveau produit sans avis ni vente reste invisible</li>
+          <li>Aucune mesure objective de la pertinence des recommandations</li>
+        </ul>
+      </div>
+      <div class="framing-card good">
+        <div class="label">Recommandations hybrides (LIKYLY)</div>
+        <ul>
+          <li>S'adapte à ce que le visiteur consulte, en temps réel, avec ou sans compte</li>
+          <li>Se met à jour automatiquement à mesure que le catalogue et les interactions évoluent</li>
+          <li>Les nouveaux produits sont recommandables dès leur mise en ligne (contenu + popularité)</li>
+          <li>Chaque recommandation est mesurée (precision@10) avant d'être mise en production</li>
+        </ul>
+      </div>
+    </div>
+
+    <h3 style="margin-top:2rem;">Ce que ça change concrètement</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Situation</th><th>Catalogue statique</th><th>Ce système</th></tr></thead>
+        <tbody>
+          <tr><td>Nouveau produit sans historique</td><td class="dim">Invisible tant qu'il n'est pas ajouté manuellement à une sélection</td><td class="dim">Recommandable dès la mise en ligne via contenu + popularité</td></tr>
+          <tr><td>Visiteur anonyme, sans compte</td><td class="dim">Aucune personnalisation possible</td><td class="dim">Recommandations de session basées sur la navigation en cours</td></tr>
+          <tr><td>Qualité des recommandations</td><td class="dim">Jugée à l'œil, jamais mesurée</td><td class="dim">Precision@10 mesurée à chaque entraînement, promotion conditionnelle</td></tr>
+          <tr><td>Plusieurs catalogues/clients</td><td class="dim">Une sélection à maintenir par catalogue</td><td class="dim">Un seul moteur, isolation stricte par client_id</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="block" id="comparaison">
+    <div class="block-head"><span class="block-num">05</span><h2>Comparaison</h2></div>
+    <p class="block-desc">Ce projet se positionne délibérément entre plusieurs extrêmes.</p>
+    <div class="compare-steps">
+      <span class="compare-chip">Tri manuel / éditorial</span>
+      <span class="compare-arrow">→</span>
+      <span class="compare-chip">Règles business ("top ventes")</span>
+      <span class="compare-arrow">→</span>
+      <span class="compare-chip mid">LIKYLY (ce projet)</span>
+      <span class="compare-arrow">→</span>
+      <span class="compare-chip">Agent IA générique par requête</span>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Dimension</th><th>Tri manuel</th><th>Règles business</th><th>LIKYLY (ce projet)</th><th>Agent IA générique</th></tr></thead>
+        <tbody>
+          <tr><td>Personnalisation</td><td class="dim">Aucune</td><td class="dim">Segmentée, pas individuelle</td><td class="hl">Par visiteur, avec ou sans compte</td><td class="dim">Par visiteur</td></tr>
+          <tr><td>Coût par recommandation</td><td class="dim">Temps humain</td><td class="dim">Gratuit (calcul simple)</td><td class="hl">Gratuit (calcul local)</td><td class="dim">Facturé (appel LLM)</td></tr>
+          <tr><td>Latence</td><td class="dim">Instantané (précalculé)</td><td class="dim">Instantané</td><td class="hl">Quelques dizaines de ms</td><td class="dim">Plusieurs secondes</td></tr>
+          <tr><td>Nouveau produit sans historique</td><td class="dim">Ajout manuel requis</td><td class="dim">Souvent ignoré</td><td class="hl">Couvert (contenu + popularité)</td><td class="dim">Dépend du prompt/contexte fourni</td></tr>
+          <tr><td>Reproductibilité</td><td class="dim">Totale</td><td class="dim">Totale</td><td class="hl">Totale</td><td class="dim">Variable</td></tr>
+          <tr><td>Confidentialité des données</td><td class="dim">Totale</td><td class="dim">Totale</td><td class="hl">Totale (auto-hébergé)</td><td class="dim">Dépend du fournisseur LLM</td></tr>
+          <tr><td>Explication de la recommandation</td><td class="dim">Aucune</td><td class="dim">Implicite (la règle elle-même)</td><td class="hl">Motif + scores exposés par l'API</td><td class="dim">Variable, non garantie</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="block" id="agent">
+    <div class="block-head"><span class="block-num">06</span><h2>Pourquoi des modèles spécialisés plutôt qu'un LLM à chaque requête ?</h2></div>
+    <p class="block-desc">
+      Il serait possible de demander à un LLM générique "quels produits recommander à cet utilisateur ?"
+      à chaque requête. Ce projet fait un choix différent, volontairement : des modèles spécialisés
+      (TF-IDF, embeddings sémantiques, ALS) pour le calcul, avec MLflow et un système de versions pour
+      suivre et gouverner leur qualité dans le temps.
+    </p>
+    <div class="framing">
+      <div class="framing-card bad">
+        <div class="label">LLM générique pour chaque recommandation</div>
+        <ul>
+          <li>Un appel LLM par requête — coût et latence de plusieurs secondes, à l'échelle du trafic e-commerce</li>
+          <li>Résultat non reproductible : deux appels identiques peuvent donner deux réponses différentes</li>
+          <li>Aucune mesure objective de qualité (pas de precision@10 comparable)</li>
+          <li>Le catalogue et les données de comportement transitent systématiquement par un tiers</li>
+        </ul>
+      </div>
+      <div class="framing-card good">
+        <div class="label">Modèles spécialisés (ce projet)</div>
+        <ul>
+          <li>Calcul en local, quelques dizaines de millisecondes, sans appel réseau externe</li>
+          <li>Résultat reproductible et mesurable (precision@10, suivi dans MLflow)</li>
+          <li>Une nouvelle version n'est promue en production que si elle égale ou dépasse la précédente</li>
+          <li>Aucune donnée envoyée à un tiers pour le calcul de recommandation lui-même</li>
+        </ul>
+      </div>
+    </div>
+
+    <p class="block-desc" style="margin-top:1.4rem;">
+      <strong style="color:var(--text);">Faut-il réentraîner à chaque nouveau produit ou événement ?</strong><br>
+      Non. Un nouveau produit devient recommandable immédiatement via le contenu (TF-IDF + embedding calculé
+      à l'ingestion) et la popularité — pas besoin d'attendre un réentraînement. Le réentraînement ALS
+      répond à un besoin différent : affiner le signal collaboratif à mesure que le volume d'interactions
+      augmente, déclenché automatiquement une fois un seuil d'interactions nouvelles atteint.
+    </p>
+    <div class="table-wrap" style="margin-top:1rem;">
+      <table>
+        <thead><tr><th>Mécanisme</th><th>Déclencheur</th><th>Rôle</th></tr></thead>
+        <tbody>
+          <tr><td>Profil produit + embedding sémantique</td><td class="dim">À chaque ingestion produit (PUT)</td><td class="dim">Rend le nouveau produit immédiatement recommandable par le contenu</td></tr>
+          <tr><td>Réentraînement ALS</td><td class="dim">Volume d'interactions accumulées depuis le dernier entraînement</td><td class="dim">Affine le signal collaboratif, avec promotion conditionnelle à la precision@10</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="callout" style="margin-top:1rem; border-left-color: var(--good-border);">
+      <strong>Garantie de non-régression :</strong> un réentraînement automatique déclenché par le trafic ne
+      peut jamais dégrader la production — la nouvelle version n'est promue que si sa precision@10 mesurée
+      égale ou dépasse celle actuellement servie ; sinon elle reste enregistrée dans l'historique, non promue.
+    </div>
+  </section>
+
+  <section class="block" id="performances">
+    <div class="block-head"><span class="block-num">07</span><h2>Performances</h2></div>
+    <p class="block-desc">
+      La qualité du collaboratif est mesurée par precision@10 sur un découpage entraînement/test des
+      interactions (implicit ALS), recalculée à chaque entraînement — pas une estimation ponctuelle figée
+      dans cette page, mais une mesure vivante, suivie dans le temps.
+    </p>
+    <div class="framing">
+      <div class="framing-card good" style="grid-column: 1 / -1;">
+        <div class="label">Ce qui est mesuré à chaque entraînement</div>
+        <ul>
+          <li><strong>Precision@10</strong> — proportion de recommandations pertinentes dans le top 10, sur un jeu de test tenu à l'écart de l'entraînement</li>
+          <li><strong>Volume</strong> — nombre d'utilisateurs, de produits et d'interactions ayant servi à entraîner la version</li>
+          <li><strong>Décision de promotion</strong> — la version n'est servie en production que si sa precision@10 égale ou dépasse la version active</li>
+        </ul>
+      </div>
+    </div>
+    <p class="block-desc" style="margin-top:1rem; font-size:0.85rem;">
+      Historique complet interrogeable via <code>GET /models/versions</code> (hyperparamètres, precision@10,
+      version actuellement active) et visualisable dans MLflow, avec le run rejeté encore visible en cas de
+      non-promotion — rien ne disparaît silencieusement.
+    </p>
+  </section>
+
+  <section class="block" id="evolutions">
+    <div class="block-head"><span class="block-num">08</span><h2>Évolutions possibles</h2></div>
+    <p class="block-desc">Le socle actuel est pensé pour grandir dans ces directions.</p>
+    <div class="evolutions-grid">
+      <div class="evo-item"><span class="evo-dot"></span>Connecteurs CMS/e-commerce : ingestion automatique depuis Shopify, WooCommerce, Prismic</div>
+      <div class="evo-item"><span class="evo-dot"></span>Embeddings d'images produit, en complément du texte, pour la similarité visuelle</div>
+      <div class="evo-item"><span class="evo-dot"></span>A/B testing intégré entre versions de modèles, au-delà de la simple gate precision@10</div>
+      <div class="evo-item"><span class="evo-dot"></span>SDKs publiés (PyPI, npm, Packagist) pour une installation en une commande</div>
+    </div>
+  </section>
+
+  <footer>
+    <span>LIKYLY — Moteur de recommandations produits</span>
+    <span>Généré le 2026-08-31 · <a href="architecture.html">Architecture technique complète</a></span>
+  </footer>
+
+</div>
+</body>
+</html>
