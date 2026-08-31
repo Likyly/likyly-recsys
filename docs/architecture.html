@@ -241,6 +241,7 @@
     flex-direction: column;
     gap: 0.5rem;
     border: 1.5px solid;
+    min-width: 0;
   }
   .zone-eyebrow {
     font-family: ui-monospace, "Cascadia Code", "Fira Code", monospace;
@@ -260,7 +261,10 @@
     font-weight: 500;
     padding: 2px 7px;
     border-radius: 4px;
-    white-space: nowrap;
+    white-space: normal;
+    overflow-wrap: break-word;
+    word-break: break-word;
+    max-width: 100%;
   }
   .zone-note {
     font-size: 0.6rem;
@@ -566,16 +570,17 @@
           <div class="zone-title">Catalogue &amp; événements par client</div>
           <div class="zone-desc">Tables scopées (client_id, product_type) : clients, produits, interactions, embeddings</div>
           <div class="zchips">
-            <span class="zchip">PUT /products/{id}/profile</span>
-            <span class="zchip">POST /events/purchase</span>
-            <span class="zchip">POST /events/view</span>
+            <span class="zchip">PUT profile</span>
+            <span class="zchip">POST purchase</span>
+            <span class="zchip">POST view</span>
           </div>
           <hr class="zdivider">
           <div class="zone-title" style="font-size:.78rem;">db.py</div>
           <div class="zone-desc" style="font-size:.68rem;">Résout la clé API en client_id, isole chaque requête ; upsert du profil déclenche le calcul d'embedding</div>
           <div class="zchips">
-            <span class="zchip">clients (api_key_hash)</span>
-            <span class="zchip">product_embeddings (pgvector)</span>
+            <span class="zchip">clients</span>
+            <span class="zchip">api_key_hash</span>
+            <span class="zchip">embeddings</span>
           </div>
         </div>
 
@@ -608,7 +613,7 @@
               <div class="zone-title">Modèles versionnés par client</div>
               <div class="zone-desc">model_versions (Postgres) référence le fichier ; MLflow trace params/métriques et l'alias "production"</div>
               <div class="zchips">
-                <span class="zchip">model/client_&lcub;id&rcub;/*_v&lcub;n&rcub;.npz</span>
+                <span class="zchip">client_&lcub;id&rcub;/*_v&lcub;n&rcub;.npz</span>
                 <span class="zchip">dvc_push()</span>
                 <span class="zchip">MLflow registry alias</span>
               </div>
