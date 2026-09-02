@@ -1114,5 +1114,10 @@ async def metrics():
 
 
 if __name__ == "__main__":
-    #uvicorn.run('app:app', host='127.0.0.1', port=80)
-    uvicorn.run('app:app', host='0.0.0.0', port=6061)
+    # Pass the app object directly, not the "app:app" string form: the string form makes
+    # uvicorn re-import this module by path, and since this file is already running as
+    # __main__, that re-import executes everything in it a second time in the same
+    # process - harmless for route definitions, but fatal for prometheus_client's Counter/
+    # Histogram above, which register into a single process-wide registry and raise on a
+    # second registration of the same metric name.
+    uvicorn.run(app, host='0.0.0.0', port=6061)
