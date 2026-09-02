@@ -4,8 +4,6 @@ import os
 sys.path.append('//application/utils')
 from tools import *
 
-import solara
-
 import numpy as np
 import pandas as pd
 
@@ -164,9 +162,6 @@ def get_data_users_page_views(product_type, user_id, count, client_id=DEMO_CLIEN
     return data.rename(columns={'quantity': 'total_page_views', 'occurred_at': 'timestamp'})
 
 
-def display_data(df):
-    solara.DataFrame(df, items_per_page=5)
-
 def get_work_default(product_type='movies'):
     if product_type == 'movies':
         return 'Interstellar'
@@ -287,70 +282,3 @@ def get_data_with_score(data, data_items_merge):
                                     'price_x': 'price',
                                     'bag_of_words_x': 'bag_of_words'}, inplace=True)
     return data_with_score
-
-@solara.component
-def exploreData(product_type='movies'):
-
-    data = get_data(product_type=product_type, product_id=None, count=None)
-    display_data(data)
-
-    solara.Markdown(
-        f"""
-         ## Les oeuvres - spectacles ou films - création d'un ensemble de mots pour caractériser les oeuvres
-     """
-    )
-
-    data_similarities = get_data_similarities(data)
-    # we'll try to find similarities based on the Description Words of a show
-    data_similarities = data_similarities['bag_of_words']
-
-    X = np.array(data_similarities)
-
-    data_for_display_only = pd.DataFrame(data_similarities)
-    display_data(data_for_display_only)
-
-    solara.Markdown(
-        f"""
-        ## Les ventes des oeuvres spectacles ou films (fictif)
-    """
-    )
-
-    data_purchase = get_data_users_purchases(product_type=product_type, user_id=None, count=None)
-    display_data(data_purchase)
-
-    solara.Markdown(
-        f"""
-        ## Les oeuvres spectacles ou films vus sur le site (fictif)
-    """
-    )
-
-    data_views = get_data_users_page_views(product_type=product_type, user_id=None, count=None)
-    display_data(data_views)
-
-    solara.Markdown(
-        f"""
-        ## Les utilisateurs avec données démographiques et géographiques du site (fictif)
-    """
-    )
-
-    data_users = get_data_users(product_type=product_type, user_id=None, count=None)
-    display_data(data_users)
-
-
-    solara.Markdown(
-        f"""
-        ## Les scores calculés en fonction du rating qui est basé sur les ventes des oeuvres spectacles ou films (fictif)
-    """
-    )
-
-    # Application du Rating sur les spectacles (fictif)
-    data_ratings = get_data_ratings(data_purchase, product_type)
-
-    data_items_merge = get_data_item_score(data, data_ratings)
-    display_data(data_items_merge)
-
-    #data_with_score = get_data_with_score(data, data_items_merge)
-    #display_data(data_with_score)
-
-    #data_for_display_only = pd.DataFrame(data_with_score['score'])
-    #display_data(data_for_display_only)
