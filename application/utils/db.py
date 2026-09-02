@@ -614,7 +614,8 @@ def set_client_active(client_id: int, is_active: bool) -> bool:
 
 def delete_client(client_id: int) -> bool:
     """Permanently deletes a client and everything scoped to it (catalog, users,
-    interactions, model version history, usage counters) - there is no undo. Rows are
+    interactions, model version history, usage counters, event type definitions) - there
+    is no undo. Rows are
     deleted table-by-table in application code rather than via an ON DELETE CASCADE
     constraint, so the full blast radius stays visible here instead of hidden in a
     schema-level constraint. Trained model artifact files on disk (model_versions.
@@ -629,6 +630,7 @@ def delete_client(client_id: int) -> bool:
         session.query(ProductModel).filter_by(client_id=client_id).delete()
         session.query(UserModel).filter_by(client_id=client_id).delete()
         session.query(ModelVersionModel).filter_by(client_id=client_id).delete()
+        session.query(ClientEventTypeModel).filter_by(client_id=client_id).delete()
         session.delete(client)
         session.commit()
         return True
