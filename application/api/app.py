@@ -608,6 +608,16 @@ async def admin_update_client(client_id: int, payload: ClientRename, admin_user_
 async def admin_client_usage(client_id: int, days: int = 30, admin_user_id: str = Depends(get_current_admin_user_id)):
     return get_client_usage_by_day(client_id, days)
 
+@app.get("/admin/clients/{client_id}/models", tags=["admin"], response_model=List[ModelStatus])
+async def admin_client_models(client_id: int, admin_user_id: str = Depends(get_current_admin_user_id)):
+    """One entry per catalog (product_type) this client has pushed products for - the
+    active model's training date and whether it came from a manual call or an automatic
+    retrain, plus today's quota usage. Reuses build_model_status (see the self-service
+    /clients/me/models/status route for the customer-facing equivalent)."""
+    if get_client_admin_row(client_id) is None:
+        raise HTTPException(status_code=404, detail="Client not found")
+    return [build_model_status(client_id, product_type) for product_type in list_product_types_for_client(client_id)]
+
 @app.post("/admin/clients/{client_id}/disable", tags=["admin"], response_model=Message)
 async def admin_disable_client(client_id: int, admin_user_id: str = Depends(get_current_admin_user_id)):
     """Suspends a client: both its keys stop authenticating immediately (see
