@@ -5,27 +5,57 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
+# Serializes deploys - two overlapping runs used to race (one's `docker rm -f
+# recsys-api` killing the container the other had just built and started),
+# causing a real production outage on 2026-09-02. A queued run waits instead of
+# running concurrently; cancel-in-progress stays false so a build never gets cut
+# off mid-way.
+concurrency:
+  group: deploy-recsys-api
+  cancel-in-progress: false
+
 jobs:
-  deploy:
+  build-and-push:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v4.2.2
 
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ghcr.io/likyly/recsys-api:latest
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    permissions:
+      packages: read
+    steps:
       - name: Setup SSH
         uses: webfactory/ssh-agent@v0.9.0
         with:
           ssh-private-key: ${{ secrets.DIGITALOCEAN_DEPLOY_KEY }}
 
-      - name: Rsync recsys repo to droplet
-        run: |
-          ssh -o StrictHostKeyChecking=no deployer@${{ secrets.DIGITALOCEAN_HOST }} "mkdir -p ~/app/recsys"
-          rsync -avz --delete --exclude '.DS_Store' --exclude '.git' --exclude '.github' ./ deployer@${{ secrets.DIGITALOCEAN_HOST }}:~/app/recsys/
-
       - name: Write recsys .env (remote)
         run: |
-          ssh -o StrictHostKeyChecking=no deployer@${{ secrets.DIGITALOCEAN_HOST }} "mkdir -p ~/app/recsys/application/api"
-          ssh -o StrictHostKeyChecking=no deployer@${{ secrets.DIGITALOCEAN_HOST }} 'cat > ~/app/recsys/application/api/.env' <<ENV
+          # Lives outside ~/app/recsys (no longer rsynced - the image is built in CI
+          # now) and is bind-mounted into the container at runtime by docker-compose.yml,
+          # not baked into the image - keeps secrets out of the pushed image layers.
+          ssh -o StrictHostKeyChecking=no deployer@${{ secrets.DIGITALOCEAN_HOST }} "mkdir -p ~/app/recsys-env/application/api"
+          ssh -o StrictHostKeyChecking=no deployer@${{ secrets.DIGITALOCEAN_HOST }} 'cat > ~/app/recsys-env/application/api/.env' <<ENV
           PINECONE_API_KEY=${{ secrets.PINECONE_API_KEY }}
           DATABASE_URL=${{ secrets.DATABASE_URL }}
           SUPABASE_URL=${{ secrets.SUPABASE_URL }}
@@ -33,36 +63,25 @@ jobs:
           SENTRY_ENVIRONMENT=production
           ENV
 
-      - name: Rebuild only recsys service (remote)
+      - name: Pull and restart recsys-api (remote)
         run: |
           ssh -o StrictHostKeyChecking=no deployer@${{ secrets.DIGITALOCEAN_HOST }} 'bash -se' <<'EOF'
           set -euo pipefail
 
-          # Install Docker if missing
-          command -v docker >/dev/null 2>&1 || curl -fsSL https://get.docker.com | sh
+          # ghcr.io/likyly/recsys-api is private - log in with this job's own
+          # GITHUB_TOKEN (packages: read is enough, no long-lived PAT to create/rotate).
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
-          # The actual compose project lives in ~/app/licenses (it defines the `recsys`
-          # service building from the ../recsys context rsynced above) - NOT ~/app/recsys,
-          # which only holds the build context, no docker-compose.yml of its own.
+          # Built on GitHub Actions' runner and pulled here, not built on the droplet
+          # itself - this box has a small disk (25GB) shared with several other
+          # services, and building recsys-api's heavy ML deps (torch, sentence-
+          # transformers) locally repeatedly filled it, causing both a rsync failure
+          # and a production outage on 2026-09-02.
           cd ~/app/licenses
-
-          if [ -n "$(docker ps -aq -f name=recsys-api)" ]; then
-            docker rm -f recsys-api
-          else
-            echo "Container recsys-api not present"
-          fi
-
-          docker compose build recsys-api
+          docker compose pull recsys-api
           docker compose up -d recsys-api
           docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}"
 
-          # This droplet has a small disk (25GB) and recsys-api builds *on* it every
-          # deploy - the build cache and superseded image layers pile up fast enough to
-          # fill it within a couple dozen deploys (this is what caused the "No space
-          # left on device" rsync failure on 2026-09-02). Safe to run unconditionally
-          # right after the new container is up: -a only removes images/cache not
-          # referenced by any container, running or stopped.
           docker image prune -af
-          docker builder prune -af
           df -h /
           EOF
