@@ -45,8 +45,6 @@ COPY supervisord.conf /etc/supervisord.conf
 
 COPY . /srv
 
-VOLUME ["/srv"]
-
 RUN ln -s /srv/venv-docker/share/solara /usr/share/nginx/html/_solara
 
 EXPOSE 80
