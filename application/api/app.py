@@ -488,7 +488,7 @@ class Item(BaseModel):
 
 @app.get("/")
 async def root():
-    return {"message": "API- Recommandation System based either on Machine Learning Model Spotlight TfidfVectorizer or Pinecone with encoding model all-MiniLM-L12-v2"}
+    return {"message": "LIKYLY recsys API - content-based (TF-IDF + pgvector semantic embeddings) and collaborative filtering (implicit ALS) recommendations"}
 
 @app.post("/clients/me", tags=["selfServiceClient"], response_model=ClientSelf)
 async def get_or_create_my_client(identity: tuple[str, Optional[str]] = Depends(get_current_supabase_identity)):
