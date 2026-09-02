@@ -1,8 +1,5 @@
-from spotlight.cross_validation import user_based_train_test_split
-from spotlight.interactions import Interactions
-from spotlight.evaluation import rmse_score
-from spotlight.factorization.explicit import ExplicitFactorizationModel
-from spotlight.factorization.implicit import ImplicitFactorizationModel
+from implicit.cpu.als import AlternatingLeastSquares
+from implicit.evaluation import train_test_split as als_train_test_split, precision_at_k
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
@@ -10,21 +7,74 @@ from pinecone import Pinecone, ServerlessSpec
 from sentence_transformers import SentenceTransformer
 from dotenv import load_dotenv
 from datetime import datetime
+from scipy.sparse import csr_matrix
 import torch
 import numpy as np
 import pandas as pd
+import re
 import subprocess
 import time
-
+import json
 
 import sys
 import os
 
-import torch
+from exploreData import get_data_users_purchases, get_data_users_page_views, get_data_users
+from db import (
+    DEMO_CLIENT_ID, MANUAL, record_model_version, update_model_version_file_path,
+    get_active_model_version, promote_model_version,
+    update_product_embedding, find_similar_by_embedding,
+)
 
-#from exploreData import DATA_WORK
+import mlflow
+from mlflow.tracking import MlflowClient
+
+# MLflow is a visibility/governance layer on top of the model_versions table + .npz files,
+# which stay the actual source of truth for serving (load_model never depends on MLflow).
+# A logging failure here (server down, network hiccup) must never block a real training
+# run - see the try/except around _log_training_run_to_mlflow below.
+mlflow.set_tracking_uri(os.environ.get("MLFLOW_TRACKING_URI", "http://127.0.0.1:5555"))
 
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+# Confidence weighting for implicit feedback: a purchase is a much stronger signal of
+# interest than a page view, so it counts for more in the interaction matrix ALS trains on.
+ALS_FACTORS = 64
+ALS_REGULARIZATION = 0.01
+ALS_ITERATIONS = 20
+PURCHASE_WEIGHT = 3.0
+VIEW_WEIGHT = 0.2
+
+# How much weight the semantic embedding signal gets versus TF-IDF when blending content
+# scores in get_rec_content - see app.py. Equal weight by default: TF-IDF stays valuable
+# for its explainability (literal shared vocabulary), embeddings add genuine paraphrase/
+# semantic matching TF-IDF structurally can't do - neither fully replaces the other yet.
+SEMANTIC_BLEND_WEIGHT = 0.5
+
+_SENTENCE_TRANSFORMER = None
+
+
+def _get_cached_sentence_transformer():
+    # Loading this model from disk takes a real 1-3s - caching it once per process avoids
+    # paying that cost on every single product upsert or recommendation request.
+    global _SENTENCE_TRANSFORMER
+    if _SENTENCE_TRANSFORMER is None:
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        _SENTENCE_TRANSFORMER = SentenceTransformer('sentence-transformers/all-MiniLM-L12-v2').to(device)
+    return _SENTENCE_TRANSFORMER
+
+
+def compute_embedding(text: str) -> list:
+    model = _get_cached_sentence_transformer()
+    return model.encode(text).tolist()
+
+
+def compute_and_store_product_embedding(client_id, product_type, work_id, title, description=None, genre_1=None):
+    text = " ".join(filter(None, [title, description, genre_1]))
+    embedding = compute_embedding(text)
+    update_product_embedding(client_id, product_type, work_id, embedding)
+    return embedding
+
 
 def dvc_push(file_path=None):
 
@@ -41,209 +91,330 @@ def dvc_push(file_path=None):
     except subprocess.CalledProcessError as e:
         print(f"An error occurred while pushing with DVC: {e}", file=sys.stderr)
 
-def load_model(data_work_type):
 
+def build_user_item_matrix(product_type, client_id=DEMO_CLIENT_ID):
+    """Sparse (user_id x work_id) confidence matrix built directly from purchase/view
+    counts - no fabricated 1-5 rating. This is what implicit's ALS trains and predicts on."""
+    purchases = get_data_users_purchases(product_type, user_id=None, count=None, client_id=client_id)
+    views = get_data_users_page_views(product_type, user_id=None, count=None, client_id=client_id)
+
+    weighted_frames = []
+    if not purchases.empty:
+        weighted_frames.append(pd.DataFrame({
+            'user_id': purchases['user_id'],
+            'work_id': purchases['work_id'],
+            'weight': purchases['total_purchases'] * PURCHASE_WEIGHT,
+        }))
+    if not views.empty:
+        weighted_frames.append(pd.DataFrame({
+            'user_id': views['user_id'],
+            'work_id': views['work_id'],
+            'weight': views['total_page_views'] * VIEW_WEIGHT,
+        }))
+
+    if not weighted_frames:
+        return csr_matrix((1, 1), dtype=np.float32)
+
+    confidence = pd.concat(weighted_frames, ignore_index=True)
+    confidence = confidence.groupby(['user_id', 'work_id'], as_index=False)['weight'].sum()
+
+    max_user_id = int(confidence['user_id'].max())
+    max_work_id = int(confidence['work_id'].max())
+
+    return csr_matrix(
+        (confidence['weight'].astype(np.float32),
+         (confidence['user_id'].astype(int), confidence['work_id'].astype(int))),
+        shape=(max_user_id + 1, max_work_id + 1),
+    )
+
+
+def create_model(interactions_matrix, factors=ALS_FACTORS, regularization=ALS_REGULARIZATION, iterations=ALS_ITERATIONS):
+    model = AlternatingLeastSquares(
+        factors=factors, regularization=regularization, iterations=iterations, random_state=42
+    )
+    model.fit(interactions_matrix)
+    return model
+
+
+def evaluate_model(interactions_matrix, factors=ALS_FACTORS, regularization=ALS_REGULARIZATION, iterations=ALS_ITERATIONS, k=10):
+    """Held-out precision@k - the implicit-feedback analog of the RMSE evaluation the
+    previous explicit Spotlight model used, since RMSE doesn't apply to ranking models."""
+    train, test = als_train_test_split(interactions_matrix, train_percentage=0.8, random_state=42)
+    model = AlternatingLeastSquares(
+        factors=factors, regularization=regularization, iterations=iterations, random_state=42
+    )
+    model.fit(train)
+    precision = precision_at_k(model, train, test, K=k, show_progress=False)
+    return model, precision
+
+
+def _model_path(data_work_type, client_id):
+    # Legacy fixed path used before per-version tracking existed. Kept only as a
+    # one-time fallback in load_model, for models trained before this migration.
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    relative_path_model = "../../model/" + data_work_type + '_users_rating_model.pth'
-    absolute_path_model = os.path.abspath(os.path.join(current_dir, relative_path_model))
-    sys.path.insert(0, absolute_path_model)
-
-    try:
-        if os.path.exists(absolute_path_model):
-            rec_model = torch.load(absolute_path_model)
-            #, weights_only=True
-        else:
-            rec_model = 'Path error: model can not be loaded'
-    except Exception as e:
-        # Gérer les erreurs potentielles
-        return f"Error of model file path : {e}"
-
-    return rec_model
-
-def create_dataset_interactions(data_ratings):
-
-    user_ids = data_ratings['user_id'].values.astype(np.int32)
-    item_ids = data_ratings['work_id'].values.astype(np.int32)
-    ratings_values = data_ratings['rating'].values.astype(np.int32)
-
-    # Create Spotlight Interactions
-    dataset = Interactions(user_ids, item_ids, ratings=ratings_values)
-
-    return dataset
-
-def get_best_iteration_for_model(dataset):
-
-    # Define a range of iteration on model to get best Scores or lowest RMSE
-    #n_iter_values = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
-    n_iter_values = [1, 10, 20, 30, 40, 50, 60]
-
-    # Track the best n_iter and corresponding RMSE
-    best_rmse = np.inf  # Best RMSE for this specific n_iter
-    patience_counter = 0  # Reset patience counter
-
-    # Paramètres pour le suivi du RMSE et l'arrêt anticipé
-    # n_epochs = 100
-    patience = 5  # Nombre d'itérations à attendre avant d'arrêter si aucune amélioration
-    tolerance = 1e-4  # Tolérance minimale d'amélioration du RMSE - 0,0001
-
-    best_epochs = []
-    rmse_scores = []
-
-    for n_iter in n_iter_values:
-
-        print(f"Testing model with maximum n_iter={n_iter}")
-
-        train, test, model = create_model(dataset, type="explicit", test_percentage=0.2, n_iter=n_iter,
-                                          with_model_fit=1)
-
-        rmse = score_model(model, test)
-        rmse_scores.append(rmse)
-        best_epochs.append(n_iter)
-
-        # On s'assure que toute première valeur de RMSE calculée sera inférieure à best_rmse, car tout nombre fini est inférieur à l'infini
-        if rmse < best_rmse - tolerance:
-            best_rmse = rmse
-            patience_counter = 0  # Réinitialiser le compteur si amélioration
-            print(f"New best RMSE for n_iter={n_iter}: {best_rmse:.4f}")
-        else:
-            patience_counter += 1  # Incrémenter si pas d'amélioration
-            print(f"No improvement for {patience_counter} epochs.")
-
-        # Arrêter si aucune amélioration après "patience" itérations
-        if patience_counter >= patience:
-            print(f'Early stopping at epoch {n_iter + 1}, best RMSE: {best_rmse}')
-            break
-
-    # Get the best RMSE score (lowest)
-    data_rmse = {'Nombre Iterations - Epoch': best_epochs, 'RMSE': rmse_scores}
-    df_rmse = pd.DataFrame(data_rmse)
-    best_rmse = df_rmse['RMSE'].min()
-    best_rmse_row = df_rmse[df_rmse['RMSE'] == best_rmse]
-    best_iteration_number = int(best_rmse_row['Nombre Iterations - Epoch'])
-
-    return best_iteration_number
+    relative_path_model = f"../../model/client_{client_id}/{data_work_type}_users_rating_model.npz"
+    return os.path.abspath(os.path.join(current_dir, relative_path_model))
 
 
-def save_model(users_rating_model, data_work_type):
-
-    #if Gdrive Auth Error, delete files in /Library/Caches/pydrive2fs
+def _versioned_model_path(data_work_type, client_id, version_id):
+    # Namespaced by client (so two clients can't collide) and suffixed by version id (so
+    # a new training run never overwrites a previous artifact still referenced by the
+    # model_versions table - a rollback needs the old file to still exist on disk).
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    relative_path_model = "../../model/" + data_work_type + '_users_rating_model.pth'
-    absolute_path_model = os.path.abspath(os.path.join(current_dir, relative_path_model))
-    sys.path.insert(0, absolute_path_model)
+    relative_path_model = f"../../model/client_{client_id}/{data_work_type}_users_rating_model_v{version_id}.npz"
+    return os.path.abspath(os.path.join(current_dir, relative_path_model))
 
 
-    relative_path_model_dvc = "../../model/" + data_work_type + '_users_rating_model.pth.dvc'
-    absolute_path_model_dvc = os.path.abspath(os.path.join(current_dir, relative_path_model_dvc))
-    sys.path.insert(1, absolute_path_model_dvc)
+def load_model(data_work_type, client_id=DEMO_CLIENT_ID):
 
-    #try:
-    #    # Pull model from DVC
-    #    dvc_result = subprocess.run(["dvc", "pull", "--force", absolute_path_model], check=True)
-    #    process_msg = f"OK"
-    #except subprocess.CalledProcessError as e:
-    #    process_msg = f"Default Machine Learning model load failed with error:{e}"
-    #except FileNotFoundError as e:
-    #    process_msg = f"Default Machine Learning model load failed with:{e}"
-    #print(process_msg)
-
-    #if process_msg == "OKKO":
-    #    return pd.DataFrame({'message': ['The existing model was successfully loaded from DVC - google drive, no need to regenerate one model']})
-    #else:
-
-    try:
-
-        # Pull model from DVC
-        dvc_result = subprocess.run(["dvc", "remove", absolute_path_model_dvc], check=True)
-        process_msg = f"Default Machine Learning model has been removed and can now be updated"
-
-        # Save model
-        torch.save(users_rating_model, absolute_path_model)
-
-        # Add and Push it to DVC - Google Drive
-        dvc_push(absolute_path_model)
-
-    except subprocess.CalledProcessError as e:
-        process_msg = f"Default Machine Learning model removed failed with error:{e}"
-    except FileNotFoundError as e:
-        process_msg = f"Default Machine Learning model removed failed with:{e}"
-
-    print(process_msg)
-
-    return pd.DataFrame({'message': ['The model was successfully saved locally and push via DVC to the server']})
-
-
-def create_model(dataset, type='explicit', test_percentage=0.2, n_iter=1, with_model_fit=0):
-    # Split the dataset into train and test sets
-    train, test = user_based_train_test_split(dataset, test_percentage=test_percentage)
-
-    # Training an implicit factorization model, use of Adam optimizer
-    if type == "implicit":
-        model = ImplicitFactorizationModel(n_iter=n_iter, loss='bpr')
-    elif type == "explicit":
-        model = ExplicitFactorizationModel(n_iter=n_iter, loss='regression')
+    active = get_active_model_version(client_id, data_work_type)
+    if active is not None:
+        absolute_path_model = active["file_path"]
     else:
-        model = ExplicitFactorizationModel(n_iter=n_iter, loss='regression')
+        # No tracked version yet - fall back to a model trained before version tracking
+        # was introduced, so this change doesn't break anything already being served.
+        absolute_path_model = _model_path(data_work_type, client_id)
 
-    if with_model_fit == 1:
-        model.fit(train, verbose=True)
+    if not os.path.exists(absolute_path_model):
+        raise FileNotFoundError(f"No trained model found for '{data_work_type}' at {absolute_path_model}")
 
-    return train, test, model
-
-
-def score_model(model, test):
-    rmse = rmse_score(model, test)
-    print(f"Validation RMSE: {rmse:.4f}")
-    return rmse
+    return AlternatingLeastSquares.load(absolute_path_model)
 
 
-def predict_items_from_user(model, data, user_id, count: int = 3):
-    # Predicting X items for user by apply model
-    scores = model.predict(user_id)
-    print('Scores:', scores)
+def train_and_maybe_promote_model(
+    product_type,
+    client_id=DEMO_CLIENT_ID,
+    factors=ALS_FACTORS,
+    regularization=ALS_REGULARIZATION,
+    iterations=ALS_ITERATIONS,
+    k=10,
+    triggered_by=MANUAL,
+):
+    """Trains a new ALS model, evaluates it against a held-out split, and only promotes
+    it to be the one actually served if it's at least as good as the currently active
+    version - so a bad retrain (e.g. after a burst of noisy interactions) never silently
+    degrades production. Every run is recorded regardless of outcome, so a rejected
+    candidate stays visible in the version history instead of disappearing."""
+    interactions = build_user_item_matrix(product_type, client_id=client_id)
 
-    predict_top_items_id_works = np.argsort(scores)[-count:][::-1]
-    print('predict_top_items_id_works:', predict_top_items_id_works)
+    _, candidate_precision = evaluate_model(
+        interactions, factors=factors, regularization=regularization, iterations=iterations, k=k,
+    )
 
-    # Filter the data to get the top predicted items
-    rec_predict_works = data[data['work_id'].isin(predict_top_items_id_works)].copy()
-    print('rec_predict_works:', rec_predict_works)
+    # The held-out split above is only for an honest precision@k figure - the artifact we
+    # actually serve is trained on 100% of the available data.
+    final_model = create_model(interactions, factors=factors, regularization=regularization, iterations=iterations)
 
-    # Add the scores to the DataFrame
-    rec_predict_works['score'] = rec_predict_works['work_id'].map(lambda x: scores[x])
+    active = get_active_model_version(client_id, product_type)
+    is_improvement = (
+        active is None
+        or active["precision_at_k"] is None
+        or (candidate_precision is not None and candidate_precision >= active["precision_at_k"])
+    )
 
-    # Sort the DataFrame by higher score (descending order)
-    rec_predict_works_sorted = rec_predict_works.sort_values(by='score', ascending=False)
+    version_id = record_model_version(
+        client_id=client_id, product_type=product_type, file_path="pending",
+        factors=factors, regularization=regularization, iterations=iterations,
+        precision_at_k=candidate_precision,
+        num_users=interactions.shape[0], num_items=interactions.shape[1],
+        num_interactions=int(interactions.nnz),
+        triggered_by=triggered_by,
+    )
 
-    return rec_predict_works_sorted
+    file_path = _versioned_model_path(product_type, client_id, version_id)
+    os.makedirs(os.path.dirname(file_path), exist_ok=True)
+    final_model.save(file_path)
+    update_model_version_file_path(version_id, file_path)
+    dvc_push(file_path)
+
+    if is_improvement:
+        promote_model_version(version_id, client_id, product_type)
+
+    _log_training_run_to_mlflow(
+        client_id=client_id, product_type=product_type, version_id=version_id, file_path=file_path,
+        factors=factors, regularization=regularization, iterations=iterations,
+        precision_at_k=candidate_precision, num_users=interactions.shape[0],
+        num_items=interactions.shape[1], num_interactions=int(interactions.nnz),
+        promoted=is_improvement,
+    )
+
+    return {
+        "version_id": version_id,
+        "precision_at_k": candidate_precision,
+        "promoted": is_improvement,
+        "previous_precision_at_k": active["precision_at_k"] if active else None,
+    }
 
 
-def predict_items_from_user_api(product_type, data_works, data_purchases, user_id, count: int = 3):
+def _log_training_run_to_mlflow(
+    client_id, product_type, version_id, file_path,
+    factors, regularization, iterations, precision_at_k,
+    num_users, num_items, num_interactions, promoted,
+):
+    """Logs this training run to MLflow for visual/historical inspection - params,
+    metrics, the model artifact, and (if promoted) a Model Registry version transitioned
+    to the Production stage, with the previous Production version auto-archived. This is
+    purely a visibility layer: serving (load_model) never depends on MLflow, so a
+    logging failure here (server down, network hiccup) must never block or fail the
+    actual training/promotion decision already made and persisted in Postgres above."""
+    try:
+        registered_name = f"client_{client_id}_{product_type}"
+        mlflow.set_experiment(registered_name)
 
-    # We don't want to propose works that the user has already buy
+        with mlflow.start_run(run_name=f"v{version_id}") as run:
+            mlflow.log_params({
+                "factors": factors, "regularization": regularization, "iterations": iterations,
+                "version_id": version_id,
+            })
+            metrics = {"num_users": num_users, "num_items": num_items, "num_interactions": num_interactions}
+            if precision_at_k is not None:
+                metrics["precision_at_k"] = precision_at_k
+            mlflow.log_metrics(metrics)
+            mlflow.set_tag("promoted", str(promoted))
+            mlflow.log_artifact(file_path)
+
+            client = MlflowClient()
+            try:
+                client.create_registered_model(registered_name)
+            except Exception:
+                pass  # already exists, fine
+
+            # await_creation_for=0: skip MLflow's post-creation polling loop, which hits a
+            # broken query against this Postgres/psycopg setup (integer/varchar comparison
+            # error) - the version is already created synchronously by the call above this
+            # wait step, so there's nothing to actually wait for.
+            model_version = client.create_model_version(
+                name=registered_name,
+                source=f"{run.info.artifact_uri}/{os.path.basename(file_path)}",
+                run_id=run.info.run_id,
+                await_creation_for=0,
+            )
+            if promoted:
+                # Aliases (not the deprecated stage-transition API) are MLflow's current
+                # recommended way to mark "the one in production" - reassigning the alias
+                # is a single atomic pointer move, no separate archive step needed.
+                client.set_registered_model_alias(registered_name, "production", model_version.version)
+    except Exception as error:
+        print(f"MLflow logging skipped (non-fatal): {error}")
+
+
+def predict_items_from_user(model, data, user_id, count: int = 3, exclude_work_ids=None, user_items_row=None):
+    # Restrict candidates to the given catalog slice (optionally excluding already-owned
+    # items), then let ALS rank only within that subset instead of the whole catalog.
+    candidate_ids = data['work_id'].to_numpy()
+    if exclude_work_ids:
+        candidate_ids = candidate_ids[~np.isin(candidate_ids, list(exclude_work_ids))]
+
+    if len(candidate_ids) == 0:
+        return data.iloc[0:0].assign(score=pd.Series(dtype=float))
+
+    # recalculate_user=True re-solves this single user's latent factors on the fly from
+    # their current interaction row, instead of using the factors frozen at last training
+    # time - so a purchase/view made after training is reflected immediately, without
+    # waiting for the next full retrain. Only safe when we actually have a row to
+    # recalculate from; a user with zero interactions falls back to the trained factors.
+    item_ids, scores = model.recommend(
+        int(user_id), user_items_row, N=min(count, len(candidate_ids)),
+        filter_already_liked_items=False, items=candidate_ids,
+        recalculate_user=user_items_row is not None,
+    )
+
+    rec = data[data['work_id'].isin(item_ids)].copy()
+    score_map = dict(zip(item_ids, scores))
+    rec['score'] = rec['work_id'].map(score_map)
+
+    return rec.sort_values(by='score', ascending=False)
+
+
+def predict_items_from_user_api(product_type, data_works, data_purchases, user_id, count: int = 3, client_id=DEMO_CLIENT_ID):
+
+    user_id = int(user_id)
+
+    # We don't want to propose works that the user has already bought
     data_works_purchased_by_user = data_purchases[data_purchases['user_id'] == user_id]
+    purchased_work_ids = (
+        set(data_works_purchased_by_user['work_id'].unique())
+        if not data_works_purchased_by_user.empty else set()
+    )
 
-    if not data_works_purchased_by_user.empty:
+    rec_model = load_model(product_type, client_id=client_id)
+    interactions = build_user_item_matrix(product_type, client_id=client_id)
+    user_items_row = interactions[user_id] if user_id < interactions.shape[0] else None
 
-        data_ids_works_purchased_by_user = data_works_purchased_by_user['work_id'].unique()
-        data_works_filtered = data_works[~data_works['work_id'].isin(data_ids_works_purchased_by_user)]
+    rec_df_rating = predict_items_from_user(
+        rec_model, data_works, user_id, count,
+        exclude_work_ids=purchased_work_ids, user_items_row=user_items_row,
+    )
 
-        #example: we display 5 shows with count=5, if user bought 2 shows, we increment count+2 shows coz data less of 2 shows
-        #if data_shows_purchased_by_user.shape[0] > 0:
-        #    count += data_shows_purchased_by_user.shape[0]
+    similar_users = find_similar_users(product_type, user_id, top_n=2, client_id=client_id)
+    reason = "Recommandé par filtrage collaboratif : apprécié par des utilisateurs aux goûts proches"
+    if similar_users:
+        reason += " (dont " + ", ".join(su["name"] for su in similar_users) + ")"
 
-    else:
-        data_works_filtered = data_works
+    records = json.loads(rec_df_rating.to_json(orient='records'))
+    for record in records:
+        record['explanation'] = {
+            "reason": reason,
+            "collaborative_score": record.get('score'),
+            "similar_users": similar_users or None,
+        }
 
-    # Use of the Torch model loaded
-    rec_model = load_model(product_type)
+    return records
 
-    rec_df_rating = predict_items_from_user(rec_model, data_works_filtered, int(user_id), count)
 
-    ## Transform to JSON
-    rec_df_rating_json = rec_df_rating.to_json(orient='records')
+def compute_popularity_scores(product_type, client_id=DEMO_CLIENT_ID):
+    """Bayesian-smoothed popularity score computed directly from purchase counts (same
+    shrinkage idea as the classic IMDB weighted rating, but no fabricated 1-5 rating):
+    v = number of distinct buyers, R = total units bought, C = catalog average."""
+    purchases = get_data_users_purchases(product_type, user_id=None, count=None, client_id=client_id)
+    if purchases.empty:
+        return pd.DataFrame(columns=['work_id', 'purchase_count', 'popularity_score'])
 
-    return rec_df_rating_json
+    grouped = purchases.groupby('work_id')['total_purchases'].agg(
+        buyer_count='count', purchase_count='sum'
+    ).reset_index()
+
+    m = grouped['buyer_count'].quantile(0.80)
+    C = grouped['purchase_count'].mean()
+
+    grouped['popularity_score'] = (
+        grouped['buyer_count'] / (grouped['buyer_count'] + m) * grouped['purchase_count']
+        + m / (m + grouped['buyer_count']) * C
+    )
+
+    return grouped[['work_id', 'purchase_count', 'popularity_score']]
+
+
+def find_similar_users(product_type, user_id, top_n=2, client_id=DEMO_CLIENT_ID):
+    """Users whose purchase history overlaps with this user's - used to explain a
+    collaborative recommendation in plain terms (same heuristic as the Solara demo)."""
+    purchases = get_data_users_purchases(product_type, user_id=None, count=None, client_id=client_id)
+    if purchases.empty:
+        return []
+
+    users = get_data_users(product_type, user_id=None, count=None, client_id=client_id)
+    name_map = dict(zip(users['user_id'], users['user_firstlastname']))
+
+    user_id = int(user_id)
+    user_history = purchases[purchases['user_id'] == user_id]
+    selected_set = set(user_history['work_id'].dropna().astype(int))
+    if not selected_set:
+        return []
+
+    overlaps = []
+    for uid, grp in purchases.dropna(subset=['user_id']).groupby('user_id'):
+        if int(uid) == user_id:
+            continue
+        shared = sorted(selected_set.intersection(set(grp['work_id'].dropna().astype(int))))
+        if shared:
+            overlaps.append((int(uid), shared))
+
+    overlaps.sort(key=lambda x: len(x[1]), reverse=True)
+
+    return [
+        {"user_id": uid, "name": name_map.get(uid, f"User {uid}"), "shared_work_ids": shared}
+        for uid, shared in overlaps[:top_n]
+    ]
 
 
 def add_ratings_from_purchases(data, data_purchase):
@@ -320,6 +491,34 @@ def model_vectorization_cosine_similarities(data_works, data_similarities, stopw
     return cosine_sim, indices
 
 
+# In-memory cache for the (expensive) vectorization + full pairwise cosine similarity
+# computation, which was previously recomputed from scratch on every single recommendation
+# request - O(n^2) in catalog size. Keyed by (client_id, product_type); invalidated
+# automatically whenever the underlying bag-of-words content changes (product added,
+# edited or removed), by comparing against a hash of that content rather than relying on
+# a manually-maintained version counter that could drift out of sync with actual writes.
+_COSINE_SIM_CACHE: dict[tuple, dict] = {}
+
+
+def get_cosine_similarities_cached(data_works, data_similarities, stopwords_terms, typeOfVec, client_id, product_type):
+    cache_key = (client_id, product_type)
+    signature = hash(tuple(data_similarities.tolist()))
+
+    cached = _COSINE_SIM_CACHE.get(cache_key)
+    if cached is not None and cached["signature"] == signature:
+        return cached["cosine_sim"], cached["indices"]
+
+    cosine_sim, indices = model_vectorization_cosine_similarities(
+        data_works, data_similarities, stopwords_terms, typeOfVec=typeOfVec
+    )
+    _COSINE_SIM_CACHE[cache_key] = {
+        "signature": signature,
+        "cosine_sim": cosine_sim,
+        "indices": indices,
+    }
+    return cosine_sim, indices
+
+
 
 # Function that takes in shows title as input and gives recommendations
 def model_content_recommender(title, cosine_sim, df, indices, limit=4,
@@ -340,8 +539,10 @@ def model_content_recommender(title, cosine_sim, df, indices, limit=4,
     # Get the show indices
     show_indices = [i[0] for i in sim_scores]
 
-    # Return the top most similar show
-    rec = df.iloc[show_indices]
+    # Return the top most similar show, with its actual cosine similarity value attached
+    # (previously computed but discarded, so callers had no way to explain the ranking)
+    rec = df.iloc[show_indices].copy()
+    rec['content_similarity'] = [s for _, s in sim_scores]
 
     # Sort by score based on purchase - popularity
     if (with_score):
@@ -361,11 +562,22 @@ def model_vector_db_init():
 
     return pc
 
-def model_vector_create_index(product_type):
+def pinecone_index_name(product_type, client_id=DEMO_CLIENT_ID):
+    """Pinecone index names must be lowercase alphanumeric/hyphens, <=45 chars - our
+    product_type allows uppercase/underscores, so it can't be used as-is. Each client
+    also gets its own dedicated index (not just a shared-index namespace): a client's
+    catalog can be fully deleted/rebuilt by dropping one index, with no risk of ever
+    touching another client's vectors even if both pick the same product_type name."""
+    slug = re.sub(r'[^a-z0-9-]+', '-', product_type.lower()).strip('-')
+    name = f"client-{client_id}-{slug}"
+    return name[:45].rstrip('-')
+
+
+def model_vector_create_index(product_type, client_id=DEMO_CLIENT_ID):
 
     pc = model_vector_db_init()
 
-    index_name = product_type
+    index_name = pinecone_index_name(product_type, client_id)
 
     if not pc.has_index(index_name):
         pc.create_index(
@@ -403,10 +615,11 @@ def model_generate_embeddings(data_similarities):
     return model, embeddings
 
 
-def model_vector_indexing(data_works, data_similarities_prepared_for_vectors, product_type):
+def model_vector_indexing(data_works, data_similarities_prepared_for_vectors, product_type, client_id=DEMO_CLIENT_ID):
 
-    # Select Index
-    index = model_vector_create_index(product_type)
+    # Select Index - dedicated to this client, so no cross-tenant mixing is possible
+    # even before the namespace below is considered.
+    index = model_vector_create_index(product_type, client_id=client_id)
 
     # Create embeddings
     model, embeddings = model_generate_embeddings(data_similarities_prepared_for_vectors)
@@ -440,10 +653,10 @@ def model_vector_indexing(data_works, data_similarities_prepared_for_vectors, pr
     return index, model, total_vectors
 
 
-def model_content_recommender_vectors(data_works, data_similarities, title, count, product_type):
+def model_content_recommender_vectors(data_works, data_similarities, title, count, product_type, client_id=DEMO_CLIENT_ID):
 
-    # Select Index
-    index = model_vector_create_index(product_type)
+    # Select Index - dedicated to this client
+    index = model_vector_create_index(product_type, client_id=client_id)
 
     # Get Model
     model = model_vector_getModel()

@@ -22,26 +22,36 @@ jobs:
           ssh -o StrictHostKeyChecking=no deployer@${{ secrets.DIGITALOCEAN_HOST }} "mkdir -p ~/app/recsys"
           rsync -avz --delete --exclude '.DS_Store' --exclude '.git' --exclude '.github' ./ deployer@${{ secrets.DIGITALOCEAN_HOST }}:~/app/recsys/
 
+      - name: Write recsys .env (remote)
+        run: |
+          ssh -o StrictHostKeyChecking=no deployer@${{ secrets.DIGITALOCEAN_HOST }} "mkdir -p ~/app/recsys/application/api"
+          ssh -o StrictHostKeyChecking=no deployer@${{ secrets.DIGITALOCEAN_HOST }} 'cat > ~/app/recsys/application/api/.env' <<ENV
+          PINECONE_API_KEY=${{ secrets.PINECONE_API_KEY }}
+          DATABASE_URL=${{ secrets.DATABASE_URL }}
+          SUPABASE_URL=${{ secrets.SUPABASE_URL }}
+          SENTRY_DSN=${{ secrets.SENTRY_DSN }}
+          SENTRY_ENVIRONMENT=production
+          ENV
+
       - name: Rebuild only recsys service (remote)
         run: |
           ssh -o StrictHostKeyChecking=no deployer@${{ secrets.DIGITALOCEAN_HOST }} 'bash -se' <<'EOF'
           set -euo pipefail
-          cd ~/app/recsys
-          
+
           # Install Docker if missing
           command -v docker >/dev/null 2>&1 || curl -fsSL https://get.docker.com | sh
-          
+
+          # The actual compose project lives in ~/app/licenses (it defines the `recsys`
+          # service building from the ../recsys context rsynced above) - NOT ~/app/recsys,
+          # which only holds the build context, no docker-compose.yml of its own.
+          cd ~/app/licenses
+
           if [ -n "$(docker ps -aq -f name=licenses-recsys-1)" ]; then
             docker rm -f licenses-recsys-1
           else
-            echo "Container  licenses-recsys-1 not present"
+            echo "Container licenses-recsys-1 not present"
           fi
 
-          # .env pour compose
-          cat > application/api/.env <<ENV
-          PINECONE_API_KEY=${{ secrets.PINECONE_API_KEY }}
-          ENV
-          
           docker compose build recsys
           docker compose up -d recsys
           docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}"
