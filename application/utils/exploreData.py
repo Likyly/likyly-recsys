@@ -101,33 +101,18 @@ if not os.path.exists(stopwords_file_path):
 with open(stopwords_file_path, 'r', encoding='utf-8') as file:
     stopwords_terms = [line.strip() for line in file if line.strip()]
 
+from db import fetch_products, fetch_users, fetch_interactions, PURCHASE, VIEW, DEMO_CLIENT_ID
+
 ######## PRODUCTS
+# client_id defaults to DEMO_CLIENT_ID so internal callers (Solara pages) that never
+# pass it keep operating on our own demo catalog, unaffected by multi-tenant isolation.
 
-def get_data(product_type, product_id, count):
+def get_data(product_type, product_id, count, client_id=DEMO_CLIENT_ID):
 
-    relative_path_products_items = f"../../data/{product_type}/products.csv"
-    absolute_path_products_items = os.path.abspath(os.path.join(current_dir, relative_path_products_items))
+    data = fetch_products(product_type, work_id=product_id, count=None, client_id=client_id)
 
-    data = pd.read_csv(absolute_path_products_items)
-    base_columns = ['work_id', 'title', 'description', 'genre_1', 'author', 'year', 'url']
-    optional_columns = []
-    if 'price' in data.columns:
-        optional_columns.append('price')
-
-    data = data[base_columns + optional_columns]
-    data['work_id'] = data['work_id'].astype(int)
-
-    if 'price' not in data.columns:
-        data['price'] = pd.NA
-
-    if product_id is not None:
-        if (data['work_id'] == product_id).any():
-            data = data[data['work_id'] == product_id]
-        else:
-            data_error = pd.DataFrame({
-                "Error": [f"This product ID {product_id} does not exist"]
-            })
-            return data_error
+    if product_id is not None and data.empty:
+        return pd.DataFrame({"Error": [f"This product ID {product_id} does not exist"]})
 
     if count is not None:
         data = data.iloc[:count]
@@ -135,102 +120,48 @@ def get_data(product_type, product_id, count):
     return data
 
 
-def get_data_users(product_type, user_id, count):
+def get_data_users(product_type, user_id, count, client_id=DEMO_CLIENT_ID):
 
-    relative_path_products_users = f"../../data/{product_type}/products_users.csv"
-    absolute_path_products_users = os.path.abspath(os.path.join(current_dir, relative_path_products_users))
+    data = fetch_users(product_type, user_id=user_id, count=None, client_id=client_id)
 
-    data = pd.read_csv(absolute_path_products_users)
+    if user_id is not None and data.empty:
+        return pd.DataFrame({"Error": [f"This user ID {user_id} does not exist"]})
+
+    data = data.copy()
     data['user_firstlastname'] = data['user_firstname'] + ' ' + data['user_lastname']
 
-    if user_id is not None:
-        if (data['user_id'] == user_id).any():
-            data = data[data['user_id'] == user_id]
-        else:
-            data_error = pd.DataFrame({
-                "Error": [f"This user ID {user_id} does not exist"]
-            })
-            return data_error
-
-    if count is not None:
-        data = data.iloc[:count]
-
-    return data
-
-def get_data_users_ratings(product_type, user_id, count):
-
-    relative_path_products_users_ratings = f"../../data/{product_type}/products_ratings.csv"
-    absolute_path_products_users_ratings = os.path.abspath(
-        os.path.join(current_dir, relative_path_products_users_ratings))
-
-    data = pd.read_csv(absolute_path_products_users_ratings)
-
-    if user_id is not None:
-        if (data['user_id'] == user_id).any():
-            data = data[data['user_id'] == user_id]
-        else:
-            data_error = pd.DataFrame({
-                "Error": [f"This user ID {user_id} does not have a rating"]
-            })
-            return data_error
-
     if count is not None:
         data = data.iloc[:count]
 
     return data
 
 
-def get_data_users_purchases(product_type, user_id, count, since_days=None):
-
-    relative_path_products_users_purchases = f"../../data/{product_type}/products_users_purchases.csv"
-    absolute_path_products_users_purchases = os.path.abspath(
-        os.path.join(current_dir, relative_path_products_users_purchases))
-
-    data = pd.read_csv(absolute_path_products_users_purchases)
-
-    if 'timestamp' in data.columns:
-        data['timestamp'] = pd.to_datetime(data['timestamp'])
-        if since_days is not None:
-            cutoff = pd.Timestamp.now() - pd.Timedelta(days=since_days)
-            data = data[data['timestamp'] >= cutoff]
-        data = data.sort_values('timestamp', ascending=False).reset_index(drop=True)
-
+def get_data_users_ratings(product_type, user_id, count, client_id=DEMO_CLIENT_ID):
+    # Deprecated: implicit ALS trains directly on purchase/view counts, no fabricated
+    # 1-5 rating. Kept only so the existing /usersRatings endpoint doesn't 404.
     if user_id is not None:
-        if (data['user_id'] == user_id).any():
-            data = data[data['user_id'] == user_id]
-        else:
-            data_error = pd.DataFrame({
-                "Error": [f"This user ID {user_id} does not have a purchase"]
-            })
-            return data_error
-
-    if count is not None:
-        data = data.iloc[:count]
-
-    return data
+        return pd.DataFrame({"Error": [f"This user ID {user_id} does not have a rating"]})
+    return pd.DataFrame(columns=['user_id', 'work_id', 'rating', 'timestamp'])
 
 
-def get_data_users_page_views(product_type, user_id, count):
+def get_data_users_purchases(product_type, user_id, count, since_days=None, client_id=DEMO_CLIENT_ID):
 
-    relative_path_products_users_page_views = f"../../data/{product_type}/products_users_page_views.csv"
-    absolute_path_products_users_page_views = os.path.abspath(
-        os.path.join(current_dir, relative_path_products_users_page_views))
+    data = fetch_interactions(product_type, PURCHASE, user_id=user_id, count=count, since_days=since_days, client_id=client_id)
 
-    data = pd.read_csv(absolute_path_products_users_page_views)
+    if user_id is not None and data.empty:
+        return pd.DataFrame({"Error": [f"This user ID {user_id} does not have a purchase"]})
 
-    if user_id is not None:
-        if (data['user_id'] == user_id).any():
-            data = data[data['user_id'] == user_id]
-        else:
-            data_error = pd.DataFrame({
-                "Error": [f"This user ID {user_id} does not have a page view"]
-            })
-            return data_error
+    return data.rename(columns={'quantity': 'total_purchases', 'occurred_at': 'timestamp'})
 
-    if count is not None:
-        data = data.iloc[:count]
 
-    return data
+def get_data_users_page_views(product_type, user_id, count, client_id=DEMO_CLIENT_ID):
+
+    data = fetch_interactions(product_type, VIEW, user_id=user_id, count=count, client_id=client_id)
+
+    if user_id is not None and data.empty:
+        return pd.DataFrame({"Error": [f"This user ID {user_id} does not have a page view"]})
+
+    return data.rename(columns={'quantity': 'total_page_views', 'occurred_at': 'timestamp'})
 
 
 def display_data(df):
@@ -250,13 +181,33 @@ def get_work_default(product_type='movies'):
 def get_data_similarities(data):
     # Création du bags of Words et de la répétition des mots sur certaines caractéristiques des spectacles
     # If no description is given in the dataset, we cannot recommand it
-    data = data.dropna(subset=['description'], how='any')
+    data = data.dropna(subset=['description'], how='any').copy()
+
+    # genre_1/author/year are optional on a lightweight ingested content profile - fill
+    # them so cleanHTML() and the int cast below don't choke on None/NaN.
+    data['genre_1'] = data['genre_1'].fillna('')
+    data['author'] = data['author'].fillna('')
+    data['year'] = data['year'].fillna(0)
 
     # Set the display options to show the full content
     pd.set_option('display.max_colwidth', None)
 
-    # To improve model, add bag_of_words with author genre or venue repeating to give more weight
-    data['genre_improved_multi'] = data['genre_1'].apply(lambda x: repeat_word(x, 2))
+    # Multi-word genres ("Science Fiction") were tokenizing into 2 separate words vs 1
+    # for single-word genres ("Adventure") - giving two-word genres roughly double the
+    # matching weight for no real reason (e.g. "Jurassic World Rebirth" ranking generic
+    # "Science Fiction" films above "Jurassic Park" itself, which shares the actual
+    # franchise name). Squash genre to a single token so every genre counts as one
+    # dimension in the vectorizer, whatever its label - this is local to similarity
+    # scoring only, the genre_1 field returned to API callers elsewhere is untouched.
+    data['genre_1'] = data['genre_1'].str.replace(' ', '', regex=False)
+
+    # Give genre a modest boost, but not too much: with one-sentence synopses, repeating
+    # it 2x (3 occurrences total incl. the raw genre_1 column) let genre alone dominate
+    # the whole similarity score - e.g. Interstellar (genre_1="Adventure") ranking an
+    # unrelated Asterix comedy above real sci-fi/exploration films, just because both
+    # happen to be tagged "Adventure". A single repeat keeps genre relevant without
+    # letting it drown out the actual synopsis content.
+    data['genre_improved_multi'] = data['genre_1'].apply(lambda x: repeat_word(x, 1))
     data['genre_improved_multi'] = data['genre_improved_multi'].apply(lambda x: ' '.join(map(str, x)))
     data.insert(4, 'genre_improved', data['genre_improved_multi'])
 
@@ -268,6 +219,14 @@ def get_data_similarities(data):
              data[data.columns[1:6]].astype(str).apply(lambda x: ' '.join(x), axis=1)
             + ' ' + data['year'].astype(int).astype(str)
     )
+
+    # Give the title itself a matching boost to genre's: a shared title (sequel,
+    # franchise entry - e.g. "The Avengers" / "Avengers: Endgame") is one of the
+    # strongest signals two products are related, often stronger than genre - but
+    # genre_1 is only "whichever genre the source listed first", so franchise entries
+    # can end up on different genre_1 values and lose to unrelated same-genre films
+    # without this. One repeat is enough to surface it without letting title dominate.
+    data['bag_of_words'] = data['bag_of_words'] + ' ' + data['title'].astype(str)
 
     # Clean HTML of bag of words
     #data['bag_of_words'] = data['bag_of_words'].apply(lambda x: cleanHTML(x))
