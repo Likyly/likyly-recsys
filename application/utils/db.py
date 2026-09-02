@@ -20,7 +20,6 @@ from dotenv import load_dotenv
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     Boolean,
-    CheckConstraint,
     Column,
     Date,
     DateTime,
@@ -88,6 +87,25 @@ def get_plan_limits(plan: str) -> dict[str, Optional[int]]:
     typo written directly in Postgres) instead of raising - fails closed to the most
     restrictive tier rather than crashing every quota check across the API."""
     return PLAN_LIMITS.get(plan, PLAN_LIMITS[PLAN_FREE])
+
+
+# A tenant's own event types ("purchase", "reservation", "watch", ...) aren't a fixed
+# enum - different verticals have different signals of interest (a library's
+# reservations, a video platform's watch time, a content site's page views). Instead of
+# exposing a raw ALS confidence weight (meaningless to a non-technical tenant), each
+# event type is tagged with one of these three tiers - matches the exact weights
+# purchase/view already used before this generalization, so existing behavior for those
+# two types is unchanged; "moyen" is the new middle tier for anything in between (e.g.
+# "add to cart", "favorited").
+EVENT_TIER_WEIGHTS = {"faible": 0.2, "moyen": 1.0, "fort": 3.0}
+DEFAULT_EVENT_TIER = "moyen"
+
+
+def get_event_tier_weight(tier: str) -> float:
+    """Falls back to the middle tier for an unrecognized tier string - same fail-safe-
+    default reasoning as get_plan_limits, but there's no obviously "safe" direction here
+    (unlike quotas), so the fallback is simply the middle of the three tiers."""
+    return EVENT_TIER_WEIGHTS.get(tier, EVENT_TIER_WEIGHTS[DEFAULT_EVENT_TIER])
 
 
 def utcnow():
@@ -194,7 +212,10 @@ class InteractionModel(Base):
     occurred_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
 
     __table_args__ = (
-        CheckConstraint(f"event_type IN ('{PURCHASE}', '{VIEW}')", name="ck_interactions_event_type"),
+        # No longer a fixed IN ('purchase', 'view') CheckConstraint - event_type is now a
+        # tenant-defined vocabulary (see ClientEventTypeModel), open-ended the same way
+        # product_type already is. Format validated at the API layer (EventTypePath's
+        # regex in app.py), not enforced in the schema.
         Index("ix_interactions_lookup", "client_id", "product_type", "event_type", "user_id", "work_id"),
     )
 
@@ -230,6 +251,23 @@ class ModelVersionModel(Base):
     )
 
 
+class ClientEventTypeModel(Base):
+    """A tenant's own vocabulary of interaction signals - not a fixed enum, since
+    different verticals have different meaningful events (a library's "reservation", a
+    video platform's "watch", an e-commerce site's "purchase"). `weight` is one of
+    EVENT_TIER_WEIGHTS' three values, chosen by the tenant via a `tier` label
+    (Faible/Moyen/Fort) rather than exposed as a raw ALS confidence number - see
+    get_event_tier_weight(). `event_type` is the string used in interactions.event_type
+    and in the POST /events/{event_type} URL."""
+    __tablename__ = "client_event_types"
+
+    client_id = Column(Integer, ForeignKey("clients.id"), primary_key=True)
+    event_type = Column(String, primary_key=True)
+    label = Column(String, nullable=False)
+    weight = Column(Float, nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+
 def init_db():
     Base.metadata.create_all(engine)
 
@@ -251,7 +289,9 @@ def create_client(name: str) -> tuple[int, str, str]:
         )
         session.add(client)
         session.commit()
-        return client.id, raw_secret_key, raw_public_key
+        client_id = client.id
+    seed_default_event_types(client_id)
+    return client_id, raw_secret_key, raw_public_key
 
 
 def ensure_client_id(client_id: int, name: str, plan: str = PLAN_UNLIMITED) -> None:
@@ -269,6 +309,87 @@ def ensure_client_id(client_id: int, name: str, plan: str = PLAN_UNLIMITED) -> N
             secret_key_hash=hash_api_key(secrets.token_urlsafe(32)), secret_key_rotated_at=utcnow(),
         ))
         session.commit()
+    seed_default_event_types(client_id)
+
+
+# ---------------------------------------------------------------------------
+# Tenant-defined event types (see EVENT_TIER_WEIGHTS above)
+# ---------------------------------------------------------------------------
+
+def _event_type_row_to_dict(row: "ClientEventTypeModel") -> dict:
+    # weight is only ever written via get_event_tier_weight(tier), so it always exactly
+    # matches one of the three canonical values - safe to reverse-map for display.
+    tier = next((t for t, w in EVENT_TIER_WEIGHTS.items() if w == row.weight), DEFAULT_EVENT_TIER)
+    return {
+        "event_type": row.event_type, "label": row.label, "tier": tier,
+        "weight": row.weight, "created_at": row.created_at,
+    }
+
+
+def seed_default_event_types(client_id: int) -> None:
+    """Every client starts with the two event types this system always had - "purchase"
+    (fort) and "view" (faible) - at their pre-existing exact weights, so nothing changes
+    by default. A tenant only needs to touch this if their vertical needs something
+    else (a reservation, a watch event, ...)."""
+    upsert_client_event_type(client_id, PURCHASE, "Achat", "fort")
+    upsert_client_event_type(client_id, VIEW, "Vue", "faible")
+
+
+def get_client_event_types(client_id: int) -> list[dict]:
+    with SessionLocal() as session:
+        rows = (
+            session.query(ClientEventTypeModel)
+            .filter_by(client_id=client_id)
+            .order_by(ClientEventTypeModel.created_at)
+            .all()
+        )
+        return [_event_type_row_to_dict(r) for r in rows]
+
+
+def upsert_client_event_type(client_id: int, event_type: str, label: str, tier: str) -> dict:
+    weight = get_event_tier_weight(tier)
+    with SessionLocal() as session:
+        obj = session.get(ClientEventTypeModel, {"client_id": client_id, "event_type": event_type})
+        if obj is None:
+            obj = ClientEventTypeModel(client_id=client_id, event_type=event_type)
+            session.add(obj)
+        obj.label = label
+        obj.weight = weight
+        session.commit()
+        return _event_type_row_to_dict(obj)
+
+
+def delete_client_event_type(client_id: int, event_type: str) -> bool:
+    with SessionLocal() as session:
+        obj = session.get(ClientEventTypeModel, {"client_id": client_id, "event_type": event_type})
+        if obj is None:
+            return False
+        session.delete(obj)
+        session.commit()
+        return True
+
+
+def get_client_event_type_weights(client_id: int) -> dict[str, float]:
+    """Used by training/popularity code to weight each interaction row by its event
+    type. An event_type present in `interactions` but never registered here shouldn't
+    normally happen (ingestion auto-registers on first use - see
+    record_interaction_event in app.py), but callers should still use dict.get with the
+    default-tier weight as a fallback rather than assume every key exists."""
+    with SessionLocal() as session:
+        rows = session.query(ClientEventTypeModel).filter_by(client_id=client_id).all()
+        return {r.event_type: r.weight for r in rows}
+
+
+def get_dominant_event_type(client_id: int) -> Optional[dict]:
+    """This client's strongest-tier event type, used to phrase a generic "Populaire (N
+    <label>)" explanation in place of the old hardcoded "achats" text - ties broken by
+    whichever was registered first (purchase/view are always seeded first, so a client
+    that hasn't customized anything gets "purchase" here, same as before this
+    generalization)."""
+    types = get_client_event_types(client_id)
+    if not types:
+        return None
+    return max(types, key=lambda t: (t["weight"], -t["created_at"].timestamp()))
 
 
 def get_client_and_scope_by_api_key(raw_key: str) -> Optional[tuple[int, str]]:
@@ -428,7 +549,9 @@ def create_client_for_supabase_user(name: str, supabase_user_id: str, email: Opt
         )
         session.add(client)
         session.commit()
-        return client.id, raw_secret_key, raw_public_key
+        client_id = client.id
+    seed_default_event_types(client_id)
+    return client_id, raw_secret_key, raw_public_key
 
 
 def regenerate_secret_key(client_id: int) -> str:
@@ -588,6 +711,22 @@ def fetch_interactions(
         df = pd.read_sql(query, conn)
 
     columns = ["user_id", "work_id", "quantity", "occurred_at"]
+    return df[columns] if not df.empty else pd.DataFrame(columns=columns)
+
+
+def fetch_all_interactions(product_type: str, client_id: int = DEMO_CLIENT_ID) -> pd.DataFrame:
+    """Every interaction row for this client/product_type, across all event types -
+    unlike fetch_interactions, which filters to one type the caller already knows, this
+    includes `event_type` in the output since callers (training/popularity - see
+    modelData.py) need to weight each row by its own type."""
+    query = select(InteractionModel).where(
+        InteractionModel.client_id == client_id,
+        InteractionModel.product_type == product_type,
+    )
+    with engine.connect() as conn:
+        df = pd.read_sql(query, conn)
+
+    columns = ["user_id", "work_id", "event_type", "quantity", "occurred_at"]
     return df[columns] if not df.empty else pd.DataFrame(columns=columns)
 
 

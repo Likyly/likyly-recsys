@@ -29,7 +29,13 @@ class Explanation(BaseModel):
     content_similarity: Optional[float] = None
     semantic_similarity: Optional[float] = None
     popularity_score: Optional[float] = None
+    # Kept for existing consumers - purchase-specific, always computed from "purchase"-
+    # typed events only. interaction_count below is the generic equivalent that works
+    # for any vertical (reservations, watch events, ...), and is what "reason" is now
+    # built from - see compute_popularity_scores in modelData.py.
     purchase_count: Optional[int] = None
+    interaction_count: Optional[int] = None
+    interaction_label: Optional[str] = None
     collaborative_score: Optional[float] = None
     similar_users: Optional[List[SimilarUser]] = None
     source_work_ids: Optional[List[int]] = None
@@ -148,6 +154,17 @@ class ViewEvent(BaseModel):
     occurred_at: Optional[datetime] = None
 
 
+class InteractionEvent(BaseModel):
+    """Body for POST /events/{event_type} - generic across purchase, view, or any
+    tenant-defined event type (a reservation, a watch, ...). `quantity` is the event's
+    magnitude in whatever unit makes sense for that type (units bought, seconds
+    watched, page count, ...) - it linearly scales the event's weight in training."""
+    user_id: int
+    work_id: int
+    quantity: int = 1
+    occurred_at: Optional[datetime] = None
+
+
 class ClientSelf(BaseModel):
     client_id: int
     name: str
@@ -204,3 +221,39 @@ class ClientRename(BaseModel):
     # "free" or "unlimited" today - see VALID_PLANS in db.py. Optional so a plain rename
     # doesn't need to resend the current plan.
     plan: Optional[str] = None
+
+
+class EventType(BaseModel):
+    event_type: str
+    label: str
+    # "faible"/"moyen"/"fort" - see EVENT_TIER_WEIGHTS in db.py. The tenant only ever
+    # picks a tier, never a raw weight - weight is included here purely for transparency
+    # (e.g. a technical integrator inspecting the API), not meant to be edited directly.
+    tier: str
+    weight: float
+    created_at: datetime
+
+
+class EventTypeCreate(BaseModel):
+    event_type: str
+    label: str
+    tier: str
+
+
+class EventTypeUpdate(BaseModel):
+    label: Optional[str] = None
+    tier: Optional[str] = None
+
+
+class ImportRowError(BaseModel):
+    row: int
+    message: str
+
+
+class ImportSummary(BaseModel):
+    """Returned by every /clients/me/import/* endpoint - a bad row (missing required
+    column, unparseable value) is skipped and reported, not fatal to the whole import,
+    since a non-technical tenant's first CSV export will rarely be perfectly clean."""
+    rows_total: int
+    rows_ok: int
+    errors: List[ImportRowError]

@@ -24,6 +24,7 @@ from db import (
     DEMO_CLIENT_ID, MANUAL, record_model_version, update_model_version_file_path,
     get_active_model_version, promote_model_version,
     update_product_embedding, find_similar_by_embedding,
+    fetch_all_interactions, get_client_event_type_weights, EVENT_TIER_WEIGHTS, DEFAULT_EVENT_TIER,
 )
 
 import mlflow
@@ -37,13 +38,12 @@ mlflow.set_tracking_uri(os.environ.get("MLFLOW_TRACKING_URI", "http://127.0.0.1:
 
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-# Confidence weighting for implicit feedback: a purchase is a much stronger signal of
-# interest than a page view, so it counts for more in the interaction matrix ALS trains on.
+# Confidence weighting for implicit feedback: each of a tenant's registered event types
+# (purchase, view, or any custom type - see EVENT_TIER_WEIGHTS/get_client_event_type_weights
+# in db.py) has its own weight, applied per-row in build_user_item_matrix below.
 ALS_FACTORS = 64
 ALS_REGULARIZATION = 0.01
 ALS_ITERATIONS = 20
-PURCHASE_WEIGHT = 3.0
-VIEW_WEIGHT = 0.2
 
 # How much weight the semantic embedding signal gets versus TF-IDF when blending content
 # scores in get_rec_content - see app.py. Equal weight by default: TF-IDF stays valuable
@@ -93,30 +93,24 @@ def dvc_push(file_path=None):
 
 
 def build_user_item_matrix(product_type, client_id=DEMO_CLIENT_ID):
-    """Sparse (user_id x work_id) confidence matrix built directly from purchase/view
-    counts - no fabricated 1-5 rating. This is what implicit's ALS trains and predicts on."""
-    purchases = get_data_users_purchases(product_type, user_id=None, count=None, client_id=client_id)
-    views = get_data_users_page_views(product_type, user_id=None, count=None, client_id=client_id)
-
-    weighted_frames = []
-    if not purchases.empty:
-        weighted_frames.append(pd.DataFrame({
-            'user_id': purchases['user_id'],
-            'work_id': purchases['work_id'],
-            'weight': purchases['total_purchases'] * PURCHASE_WEIGHT,
-        }))
-    if not views.empty:
-        weighted_frames.append(pd.DataFrame({
-            'user_id': views['user_id'],
-            'work_id': views['work_id'],
-            'weight': views['total_page_views'] * VIEW_WEIGHT,
-        }))
-
-    if not weighted_frames:
+    """Sparse (user_id x work_id) confidence matrix built from every interaction type
+    this client has registered, each weighted by its own tier (see
+    get_client_event_type_weights in db.py) - no fabricated 1-5 rating. This is what
+    implicit's ALS trains and predicts on. purchase/view keep their original 3.0/0.2
+    weights by default (seeded for every client - see seed_default_event_types), so this
+    produces the same output as before this was generalized beyond those two types."""
+    interactions = fetch_all_interactions(product_type, client_id=client_id)
+    if interactions.empty:
         return csr_matrix((1, 1), dtype=np.float32)
 
-    confidence = pd.concat(weighted_frames, ignore_index=True)
-    confidence = confidence.groupby(['user_id', 'work_id'], as_index=False)['weight'].sum()
+    weights = get_client_event_type_weights(client_id)
+    default_weight = EVENT_TIER_WEIGHTS[DEFAULT_EVENT_TIER]
+    interactions = interactions.copy()
+    interactions['weight'] = interactions['quantity'] * interactions['event_type'].map(
+        lambda et: weights.get(et, default_weight)
+    )
+
+    confidence = interactions.groupby(['user_id', 'work_id'], as_index=False)['weight'].sum()
 
     max_user_id = int(confidence['user_id'].max())
     max_work_id = int(confidence['work_id'].max())
@@ -363,46 +357,59 @@ def predict_items_from_user_api(product_type, data_works, data_purchases, user_i
 
 
 def compute_popularity_scores(product_type, client_id=DEMO_CLIENT_ID):
-    """Bayesian-smoothed popularity score computed directly from purchase counts (same
-    shrinkage idea as the classic IMDB weighted rating, but no fabricated 1-5 rating):
-    v = number of distinct buyers, R = total units bought, C = catalog average."""
-    purchases = get_data_users_purchases(product_type, user_id=None, count=None, client_id=client_id)
-    if purchases.empty:
-        return pd.DataFrame(columns=['work_id', 'purchase_count', 'popularity_score'])
+    """Bayesian-smoothed popularity score computed from every registered interaction
+    type, weighted by tier (same shrinkage idea as the classic IMDB weighted rating, but
+    no fabricated 1-5 rating): v = number of distinct interactors, R = total weighted
+    interaction volume, C = catalog average. Generalized from a purchase-only
+    computation - a client using only the default purchase/view types will see a small
+    view contribution here that didn't exist before (views are still weighted far lower,
+    0.2 vs purchase's 3.0), which is the intended behavior for a vertical (e.g. a
+    content site) that has no "purchase"-equivalent event at all."""
+    interactions = fetch_all_interactions(product_type, client_id=client_id)
+    if interactions.empty:
+        return pd.DataFrame(columns=['work_id', 'interaction_count', 'popularity_score'])
 
-    grouped = purchases.groupby('work_id')['total_purchases'].agg(
-        buyer_count='count', purchase_count='sum'
-    ).reset_index()
-
-    m = grouped['buyer_count'].quantile(0.80)
-    C = grouped['purchase_count'].mean()
-
-    grouped['popularity_score'] = (
-        grouped['buyer_count'] / (grouped['buyer_count'] + m) * grouped['purchase_count']
-        + m / (m + grouped['buyer_count']) * C
+    weights = get_client_event_type_weights(client_id)
+    default_weight = EVENT_TIER_WEIGHTS[DEFAULT_EVENT_TIER]
+    interactions = interactions.copy()
+    interactions['weighted_quantity'] = interactions['quantity'] * interactions['event_type'].map(
+        lambda et: weights.get(et, default_weight)
     )
 
-    return grouped[['work_id', 'purchase_count', 'popularity_score']]
+    grouped = interactions.groupby('work_id')['weighted_quantity'].agg(
+        interactor_count='count', interaction_count='sum'
+    ).reset_index()
+
+    m = grouped['interactor_count'].quantile(0.80)
+    C = grouped['interaction_count'].mean()
+
+    grouped['popularity_score'] = (
+        grouped['interactor_count'] / (grouped['interactor_count'] + m) * grouped['interaction_count']
+        + m / (m + grouped['interactor_count']) * C
+    )
+
+    return grouped[['work_id', 'interaction_count', 'popularity_score']]
 
 
 def find_similar_users(product_type, user_id, top_n=2, client_id=DEMO_CLIENT_ID):
-    """Users whose purchase history overlaps with this user's - used to explain a
-    collaborative recommendation in plain terms (same heuristic as the Solara demo)."""
-    purchases = get_data_users_purchases(product_type, user_id=None, count=None, client_id=client_id)
-    if purchases.empty:
+    """Users whose interaction history overlaps with this user's, across every
+    registered event type (not just purchases) - used to explain a collaborative
+    recommendation in plain terms."""
+    interactions = fetch_all_interactions(product_type, client_id=client_id)
+    if interactions.empty:
         return []
 
     users = get_data_users(product_type, user_id=None, count=None, client_id=client_id)
     name_map = dict(zip(users['user_id'], users['user_firstlastname']))
 
     user_id = int(user_id)
-    user_history = purchases[purchases['user_id'] == user_id]
+    user_history = interactions[interactions['user_id'] == user_id]
     selected_set = set(user_history['work_id'].dropna().astype(int))
     if not selected_set:
         return []
 
     overlaps = []
-    for uid, grp in purchases.dropna(subset=['user_id']).groupby('user_id'):
+    for uid, grp in interactions.dropna(subset=['user_id']).groupby('user_id'):
         if int(uid) == user_id:
             continue
         shared = sorted(selected_set.intersection(set(grp['work_id'].dropna().astype(int))))

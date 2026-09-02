@@ -21,7 +21,7 @@ if _SENTRY_DSN:
         traces_sample_rate=0.0,
     )
 
-from fastapi import FastAPI, Request, Form, HTTPException, BackgroundTasks, Security, Depends, Query, Header
+from fastapi import FastAPI, Request, Form, HTTPException, BackgroundTasks, Security, Depends, Query, Header, Path, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import APIKeyHeader
 from fastapi.responses import Response
@@ -47,8 +47,9 @@ import pandas as pd
 from schemas import (
     Product, RecommendedProduct, VectorRecommendation, User, Purchase,
     Rating, PageView, Message, GenerateModelJobStatus, ModelVersion, ModelStatus,
-    ProductProfileUpsert, PurchaseEvent, ViewEvent, ClientSelf,
+    ProductProfileUpsert, PurchaseEvent, ViewEvent, InteractionEvent, ClientSelf,
     ClientAdminView, DailyUsage, ClientRename, ClientUsageSummary,
+    EventType, EventTypeCreate, EventTypeUpdate, ImportSummary, ImportRowError,
 )
 
 
@@ -70,7 +71,9 @@ from db import (
     set_client_active, delete_client, get_client_admin_row, rename_client,
     touch_client_usage, list_all_clients_with_usage, get_client_usage_by_day,
     get_active_model_version, count_products_for_client, product_exists, count_trainings_today,
-    list_product_types_for_client, get_client_plan, set_client_plan,
+    list_product_types_for_client, get_client_plan, set_client_plan, upsert_user,
+    get_client_event_types, upsert_client_event_type, delete_client_event_type,
+    get_dominant_event_type, EVENT_TIER_WEIGHTS, DEFAULT_EVENT_TIER,
     MANUAL, AUTO, VALID_PLANS, get_plan_limits, utcnow,
 )
 
@@ -84,6 +87,18 @@ ensure_client_id(DEMO_CLIENT_ID, "LIKYLY Demo")
 ProductType = Annotated[str, Query(
     min_length=1, max_length=64, pattern=r'^[a-zA-Z0-9_-]+$',
     description="Catalog namespace, e.g. 'movies' or a customer's own catalog name",
+)]
+
+# A tenant's own event vocabulary ("purchase", "reservation", "watch", ...) - same
+# conservative format as ProductType, since it's also used as a partition key
+# (interactions.event_type) and, here, directly in a URL path segment.
+EventTypePath = Annotated[str, Path(
+    min_length=1, max_length=64, pattern=r'^[a-zA-Z0-9_-]+$',
+    description="Interaction type, e.g. 'purchase', 'reservation', 'watch'",
+)]
+EventTypeQuery = Annotated[str, Query(
+    min_length=1, max_length=64, pattern=r'^[a-zA-Z0-9_-]+$',
+    description="Interaction type, e.g. 'purchase', 'reservation', 'watch'",
 )]
 
 #Stopwords dir
@@ -572,6 +587,186 @@ async def get_my_usage(supabase_user_id: str = Depends(get_current_supabase_user
         "product_limit": get_plan_limits(plan)["product_limit"],
     }
 
+@app.get("/clients/me/event-types", tags=["selfServiceClient"], response_model=List[EventType])
+async def list_my_event_types(supabase_user_id: str = Depends(get_current_supabase_user_id)):
+    """Every event type this tenant has registered - "purchase"/"view" always exist
+    (seeded at client creation, see seed_default_event_types in db.py); others appear
+    either because the tenant added them here or because an integration auto-registered
+    them by calling POST /events/{event_type} for a new type."""
+    client_id = await _resolve_my_client_id(supabase_user_id)
+    return get_client_event_types(client_id)
+
+@app.post("/clients/me/event-types", tags=["selfServiceClient"], response_model=EventType)
+async def create_my_event_type(payload: EventTypeCreate, supabase_user_id: str = Depends(get_current_supabase_user_id)):
+    if payload.tier not in EVENT_TIER_WEIGHTS:
+        raise HTTPException(status_code=422, detail=f"Unknown tier '{payload.tier}' - must be one of {sorted(EVENT_TIER_WEIGHTS)}")
+    client_id = await _resolve_my_client_id(supabase_user_id)
+    return upsert_client_event_type(client_id, payload.event_type, payload.label, payload.tier)
+
+@app.patch("/clients/me/event-types/{event_type}", tags=["selfServiceClient"], response_model=EventType)
+async def update_my_event_type(event_type: EventTypePath, payload: EventTypeUpdate, supabase_user_id: str = Depends(get_current_supabase_user_id)):
+    if payload.tier is not None and payload.tier not in EVENT_TIER_WEIGHTS:
+        raise HTTPException(status_code=422, detail=f"Unknown tier '{payload.tier}' - must be one of {sorted(EVENT_TIER_WEIGHTS)}")
+    client_id = await _resolve_my_client_id(supabase_user_id)
+    existing = next((e for e in get_client_event_types(client_id) if e["event_type"] == event_type), None)
+    if existing is None:
+        raise HTTPException(status_code=404, detail=f"No event type '{event_type}' registered for this client")
+    return upsert_client_event_type(
+        client_id, event_type,
+        payload.label if payload.label is not None else existing["label"],
+        payload.tier if payload.tier is not None else existing["tier"],
+    )
+
+@app.delete("/clients/me/event-types/{event_type}", tags=["selfServiceClient"], response_model=Message)
+async def delete_my_event_type(event_type: EventTypePath, supabase_user_id: str = Depends(get_current_supabase_user_id)):
+    """Deleting the definition doesn't touch past interactions already recorded under
+    this event_type - they fall back to the default tier's weight in training (see
+    get_client_event_type_weights in db.py) rather than vanish or error."""
+    client_id = await _resolve_my_client_id(supabase_user_id)
+    if not delete_client_event_type(client_id, event_type):
+        raise HTTPException(status_code=404, detail=f"No event type '{event_type}' registered for this client")
+    return {"message": f"Event type '{event_type}' deleted"}
+
+
+def _clean_cell(row, column: str):
+    """None for a missing/empty/NaN CSV cell - pandas represents an empty cell as NaN
+    (a float), which every downstream Optional field here expects as None instead."""
+    if column not in row.index:
+        return None
+    value = row[column]
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return None
+    return value
+
+
+def _read_import_csv(file: UploadFile) -> pd.DataFrame:
+    try:
+        return pd.read_csv(file.file)
+    except Exception as error:
+        raise HTTPException(status_code=422, detail=f"Could not parse CSV: {error}")
+
+
+def _import_summary(rows_total: int, errors: list[dict]) -> dict:
+    return {"rows_total": rows_total, "rows_ok": rows_total - len(errors), "errors": errors}
+
+
+@app.post("/clients/me/import/products", tags=["selfServiceClient"], response_model=ImportSummary)
+async def import_my_products(
+    data_product_type: ProductType, file: UploadFile = File(...),
+    supabase_user_id: str = Depends(get_current_supabase_user_id),
+):
+    """Bulk equivalent of PUT /products/{id}/profile - columns:
+    work_id,title,description,genre_1,author,year,url,price (only work_id/title
+    required). A bad row is skipped and reported, not fatal to the whole import."""
+    client_id = await _resolve_my_client_id(supabase_user_id)
+    df = _read_import_csv(file)
+    product_limit = get_plan_limits(get_client_plan(client_id))["product_limit"]
+
+    errors = []
+    for i, row in df.iterrows():
+        try:
+            work_id = int(row["work_id"])
+            title = _clean_cell(row, "title")
+            if not title:
+                raise ValueError("title is required")
+
+            is_new_product = not product_exists(client_id, data_product_type, work_id)
+            if is_new_product and product_limit is not None and count_products_for_client(client_id) >= product_limit:
+                raise ValueError(f"Free plan limit reached: {product_limit} products max")
+
+            description = _clean_cell(row, "description")
+            genre_1 = _clean_cell(row, "genre_1")
+            year_cell = _clean_cell(row, "year")
+            price_cell = _clean_cell(row, "price")
+            upsert_product_profile(
+                product_type=data_product_type, work_id=work_id, title=str(title),
+                description=str(description) if description is not None else None,
+                genre_1=str(genre_1) if genre_1 is not None else None,
+                author=(lambda a: str(a) if a is not None else None)(_clean_cell(row, "author")),
+                year=int(year_cell) if year_cell is not None else None,
+                url=(lambda u: str(u) if u is not None else None)(_clean_cell(row, "url")),
+                price=float(price_cell) if price_cell is not None else None,
+                client_id=client_id,
+            )
+            try:
+                compute_and_store_product_embedding(
+                    client_id=client_id, product_type=data_product_type, work_id=work_id,
+                    title=str(title),
+                    description=str(description) if description is not None else None,
+                    genre_1=str(genre_1) if genre_1 is not None else None,
+                )
+            except Exception:
+                pass  # non-fatal, same as the single-item endpoint
+        except Exception as error:
+            errors.append({"row": i + 2, "message": str(error)})
+
+    return _import_summary(len(df), errors)
+
+
+@app.post("/clients/me/import/users", tags=["selfServiceClient"], response_model=ImportSummary)
+async def import_my_users(
+    data_product_type: ProductType, file: UploadFile = File(...),
+    supabase_user_id: str = Depends(get_current_supabase_user_id),
+):
+    """Bulk equivalent of a user profile upsert - columns:
+    user_id,user_gender,user_age,user_zip,user_firstname,user_lastname (only user_id
+    required - user profiles are optional enrichment, interactions work with bare
+    user_ids alone)."""
+    client_id = await _resolve_my_client_id(supabase_user_id)
+    df = _read_import_csv(file)
+
+    errors = []
+    for i, row in df.iterrows():
+        try:
+            user_id = int(row["user_id"])
+            age_cell = _clean_cell(row, "user_age")
+            zip_cell = _clean_cell(row, "user_zip")
+            upsert_user(
+                product_type=data_product_type, user_id=user_id,
+                user_gender=(lambda g: str(g) if g is not None else None)(_clean_cell(row, "user_gender")),
+                user_age=int(age_cell) if age_cell is not None else None,
+                user_zip=int(zip_cell) if zip_cell is not None else None,
+                user_firstname=(lambda f: str(f) if f is not None else None)(_clean_cell(row, "user_firstname")),
+                user_lastname=(lambda l: str(l) if l is not None else None)(_clean_cell(row, "user_lastname")),
+                client_id=client_id,
+            )
+        except Exception as error:
+            errors.append({"row": i + 2, "message": str(error)})
+
+    return _import_summary(len(df), errors)
+
+
+@app.post("/clients/me/import/interactions", tags=["selfServiceClient"], response_model=ImportSummary)
+async def import_my_interactions(
+    data_product_type: ProductType, event_type: EventTypeQuery, background_tasks: BackgroundTasks,
+    file: UploadFile = File(...), supabase_user_id: str = Depends(get_current_supabase_user_id),
+):
+    """Bulk equivalent of POST /events/{event_type} - columns:
+    user_id,work_id,quantity,occurred_at (only user_id/work_id required; quantity
+    defaults to 1). Goes through the same record_interaction_event path as single-event
+    ingestion, so it auto-registers a new event_type and can trigger an auto-retrain."""
+    client_id = await _resolve_my_client_id(supabase_user_id)
+    df = _read_import_csv(file)
+
+    errors = []
+    for i, row in df.iterrows():
+        try:
+            user_id = int(row["user_id"])
+            work_id = int(row["work_id"])
+            quantity_cell = _clean_cell(row, "quantity")
+            quantity = int(quantity_cell) if quantity_cell is not None else 1
+            occurred_at_cell = _clean_cell(row, "occurred_at")
+            occurred_at = pd.to_datetime(occurred_at_cell) if occurred_at_cell is not None else None
+            record_interaction_event(
+                client_id, data_product_type, event_type, user_id, work_id,
+                quantity, occurred_at, background_tasks,
+            )
+        except Exception as error:
+            errors.append({"row": i + 2, "message": str(error)})
+
+    return _import_summary(len(df), errors)
+
+
 @app.get("/admin/clients", tags=["admin"], response_model=List[ClientAdminView])
 async def admin_list_clients(admin_user_id: str = Depends(get_current_admin_user_id)):
     """Operator-only: every client across the whole system, not scoped to the caller's
@@ -763,21 +958,42 @@ async def delete_product_profile_endpoint(data_product_type: ProductType, produc
         raise HTTPException(status_code=404, detail=f"No product profile {product_id} for data_product_type={data_product_type}")
     return {"message": f"Product profile {product_id} deleted for data_product_type={data_product_type}"}
 
+_AUTO_REGISTERED_EVENT_TYPES: set[tuple[int, str]] = set()
+
+
+def record_interaction_event(
+    client_id: int, product_type: str, event_type: str, user_id: int, work_id: int,
+    quantity: int, occurred_at, background_tasks: BackgroundTasks,
+) -> None:
+    """Shared by every /events/* route (the two backward-compatible purchase/view routes
+    and the generic /events/{event_type}) - records the interaction, auto-registers the
+    event type for this client on first use (in-memory cache to avoid a DB round trip on
+    every single event once it's known - a client's set of event types is small and
+    changes rarely), and checks for an auto-retrain."""
+    key = (client_id, event_type)
+    if key not in _AUTO_REGISTERED_EVENT_TYPES:
+        existing_types = {e["event_type"] for e in get_client_event_types(client_id)}
+        if event_type not in existing_types:
+            upsert_client_event_type(client_id, event_type, event_type.replace("_", " ").title(), DEFAULT_EVENT_TIER)
+        _AUTO_REGISTERED_EVENT_TYPES.add(key)
+
+    insert_interaction(
+        product_type=product_type, work_id=work_id, user_id=user_id,
+        event_type=event_type, quantity=quantity, occurred_at=occurred_at,
+        client_id=client_id,
+    )
+    maybe_trigger_auto_retrain(client_id, product_type, background_tasks)
+
+
 @app.post("/events/purchase", tags=["eventsIngestion"], response_model=Message)
 async def record_purchase_event(
     data_product_type: ProductType, payload: PurchaseEvent, background_tasks: BackgroundTasks,
     client_id: int = Depends(get_current_client_id_public_ok),
 ):
-    insert_interaction(
-        product_type=data_product_type,
-        work_id=payload.work_id,
-        user_id=payload.user_id,
-        event_type=PURCHASE,
-        quantity=payload.quantity,
-        occurred_at=payload.occurred_at,
-        client_id=client_id,
+    record_interaction_event(
+        client_id, data_product_type, PURCHASE, payload.user_id, payload.work_id,
+        payload.quantity, payload.occurred_at, background_tasks,
     )
-    maybe_trigger_auto_retrain(client_id, data_product_type, background_tasks)
     return {"message": "Purchase event recorded"}
 
 @app.post("/events/view", tags=["eventsIngestion"], response_model=Message)
@@ -785,17 +1001,28 @@ async def record_view_event(
     data_product_type: ProductType, payload: ViewEvent, background_tasks: BackgroundTasks,
     client_id: int = Depends(get_current_client_id_public_ok),
 ):
-    insert_interaction(
-        product_type=data_product_type,
-        work_id=payload.work_id,
-        user_id=payload.user_id,
-        event_type=VIEW,
-        quantity=1,
-        occurred_at=payload.occurred_at,
-        client_id=client_id,
+    record_interaction_event(
+        client_id, data_product_type, VIEW, payload.user_id, payload.work_id,
+        1, payload.occurred_at, background_tasks,
     )
-    maybe_trigger_auto_retrain(client_id, data_product_type, background_tasks)
     return {"message": "View event recorded"}
+
+@app.post("/events/{event_type}", tags=["eventsIngestion"], response_model=Message)
+async def record_generic_event(
+    event_type: EventTypePath, data_product_type: ProductType, payload: InteractionEvent,
+    background_tasks: BackgroundTasks, client_id: int = Depends(get_current_client_id_public_ok),
+):
+    """For any interaction type beyond purchase/view - a library's reservation, a video
+    platform's watch, a content site's page view. The type is auto-registered on first
+    use (default "moyen" tier) so an integrator can start sending events without
+    configuring anything first; the tenant can retune the label/tier from the dashboard
+    afterwards. Routing purchase/view here too would work identically, but the two
+    dedicated routes above stay for backward compatibility with existing integrations."""
+    record_interaction_event(
+        client_id, data_product_type, event_type, payload.user_id, payload.work_id,
+        payload.quantity, payload.occurred_at, background_tasks,
+    )
+    return {"message": f"{event_type} event recorded"}
 
 def trigger_manual_training(client_id: int, product_type: str, background_tasks: BackgroundTasks) -> dict:
     """Shared by GET /generateModel (secret-key, for the customer's own backend) and
@@ -915,6 +1142,24 @@ async def get_my_model_status(data_product_type: ProductType, supabase_user_id: 
     client_id = await _resolve_my_client_id(supabase_user_id)
     return build_model_status(client_id, data_product_type)
 
+@app.get("/clients/me/models/versions", tags=["selfServiceClient"], response_model=List[ModelVersion])
+async def get_my_model_versions(data_product_type: ProductType, supabase_user_id: str = Depends(get_current_supabase_user_id)):
+    """Full training history for this catalog, not just the currently active version -
+    self-service equivalent of the secret-key GET /models/versions, so a tenant can see
+    from their own account when their model was created or last retrained."""
+    client_id = await _resolve_my_client_id(supabase_user_id)
+    return list_model_versions(client_id, data_product_type)
+
+def _popularity_label(client_id: int) -> str:
+    """Plural-ish label for the popularity explanation text - "achats" for the default
+    purchase type (matches the exact pre-generalization copy), the tenant's own label
+    lowercased for any other dominant (highest-tier) event type."""
+    dominant = get_dominant_event_type(client_id)
+    if dominant is None or dominant["event_type"] == PURCHASE:
+        return "achats"
+    return dominant["label"].lower()
+
+
 @app.get("/getRec/popular/{count}", tags=["getRecContent"], response_model=List[RecommendedProduct])
 async def get_rec_popular(data_product_type: ProductType, count: int, client_id: int = Depends(get_current_client_id_public_ok)):
     """Pure popularity ranking, no anchor product or user history needed - the true
@@ -928,15 +1173,18 @@ async def get_rec_popular(data_product_type: ProductType, count: int, client_id:
     merged = data_works.merge(popularity, on='work_id', how='inner')
     merged = merged.sort_values('popularity_score', ascending=False).head(count)
 
+    label = _popularity_label(client_id)
     records = json.loads(merged.to_json(orient='records', date_format='iso'))
     for record in records:
-        purchase_count = record.get('purchase_count')
-        purchase_count = int(purchase_count) if purchase_count is not None else None
+        interaction_count = record.get('interaction_count')
+        interaction_count = int(interaction_count) if interaction_count is not None else None
         record['score'] = record.get('popularity_score')
         record['explanation'] = {
-            "reason": f"Populaire ({purchase_count} achats)" if purchase_count else "Recommandation populaire",
+            "reason": f"Populaire ({interaction_count} {label})" if interaction_count else "Recommandation populaire",
             "popularity_score": record.get('popularity_score'),
-            "purchase_count": purchase_count,
+            "purchase_count": interaction_count if label == "achats" else None,
+            "interaction_count": interaction_count,
+            "interaction_label": label,
         }
     return records
 
@@ -984,19 +1232,22 @@ async def get_rec_content(data_product_type: ProductType, product_id: int, count
         popularity = compute_popularity_scores(product_type, client_id=client_id)
         merged = candidates.merge(popularity, on='work_id', how='left')
 
+        label = _popularity_label(client_id)
         records = json.loads(merged.to_json(orient='records', date_format='iso'))
         for record in records:
-            purchase_count = record.get('purchase_count')
-            purchase_count = int(purchase_count) if purchase_count is not None else None
+            interaction_count = record.get('interaction_count')
+            interaction_count = int(interaction_count) if interaction_count is not None else None
             record['explanation'] = {
                 "reason": (
                     f"Similaire à « {title} » par le contenu (texte + similarité sémantique)"
-                    + (f", populaire ({purchase_count} achats)" if purchase_count else "")
+                    + (f", populaire ({interaction_count} {label})" if interaction_count else "")
                 ),
                 "content_similarity": record.get('content_similarity'),
                 "semantic_similarity": record.get('semantic_similarity'),
                 "popularity_score": record.get('popularity_score'),
-                "purchase_count": purchase_count,
+                "purchase_count": interaction_count if label == "achats" else None,
+                "interaction_count": interaction_count,
+                "interaction_label": label,
             }
         return records
 
