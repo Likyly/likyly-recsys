@@ -61,13 +61,33 @@ AUTO = "auto"
 # per-client API key auth entirely - they always operate as this one client.
 DEMO_CLIENT_ID = 1
 
-# Free-tier limits, enforced everywhere except for DEMO_CLIENT_ID - the demo is meant to
-# stay unrestricted, as the showcase of what the paid plan unlocks. There's no real
-# "plan" concept yet (paid tiers are a follow-up); until then, "is this the demo client"
-# is the only distinction between free and unlimited.
-FREE_TIER_PRODUCT_LIMIT = 50
-FREE_TIER_MANUAL_TRAINING_DAILY_LIMIT = 1
-FREE_TIER_AUTO_RETRAIN_DAILY_LIMIT = 1
+# Plan names are the only vocabulary PLAN_LIMITS understands. "free" is the only plan a
+# self-service signup can reach today; "unlimited" is what the demo client gets, and what
+# an admin can manually grant a client via PATCH /admin/clients/{id} (e.g. a pilot
+# customer) - paid tiers are a placeholder for future work, not wired to billing yet.
+PLAN_FREE = "free"
+PLAN_UNLIMITED = "unlimited"
+VALID_PLANS = {PLAN_FREE, PLAN_UNLIMITED}
+
+PLAN_LIMITS: dict[str, dict[str, Optional[int]]] = {
+    PLAN_FREE: {
+        "product_limit": 50,
+        "manual_training_daily_limit": 1,
+        "auto_retrain_daily_limit": 1,
+    },
+    PLAN_UNLIMITED: {
+        "product_limit": None,
+        "manual_training_daily_limit": None,
+        "auto_retrain_daily_limit": None,
+    },
+}
+
+
+def get_plan_limits(plan: str) -> dict[str, Optional[int]]:
+    """Falls back to the free tier's limits for any unrecognized plan string (e.g. a
+    typo written directly in Postgres) instead of raising - fails closed to the most
+    restrictive tier rather than crashing every quota check across the API."""
+    return PLAN_LIMITS.get(plan, PLAN_LIMITS[PLAN_FREE])
 
 
 def utcnow():
@@ -100,6 +120,9 @@ class ClientModel(Base):
     # because clients created before this two-tier split may not have generated one yet.
     public_key_hash = Column(String, nullable=True, unique=True)
     public_key_rotated_at = Column(DateTime(timezone=True), nullable=True)
+    # See PLAN_LIMITS above - "free" (self-service default) or "unlimited" (the demo
+    # client, or an admin-granted exemption). No billing integration yet.
+    plan = Column(String, nullable=False, default=PLAN_FREE, server_default=PLAN_FREE)
     is_active = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
     # Set only for clients created through the self-service website (Supabase auth) -
@@ -231,17 +254,18 @@ def create_client(name: str) -> tuple[int, str, str]:
         return client.id, raw_secret_key, raw_public_key
 
 
-def ensure_client_id(client_id: int, name: str) -> None:
+def ensure_client_id(client_id: int, name: str, plan: str = PLAN_UNLIMITED) -> None:
     """Used only to seed the fixed DEMO_CLIENT_ID row (id must be stable across runs,
     unlike create_client's autoincrement). Only a placeholder secret key is generated -
     the demo's real keys are provisioned separately via create_client.py so they can be
-    printed and wired into the demo frontend."""
+    printed and wired into the demo frontend. Defaults to the unlimited plan since this
+    is meant for the demo/showcase client."""
     with SessionLocal() as session:
         existing = session.get(ClientModel, client_id)
         if existing is not None:
             return
         session.add(ClientModel(
-            id=client_id, name=name,
+            id=client_id, name=name, plan=plan,
             secret_key_hash=hash_api_key(secrets.token_urlsafe(32)), secret_key_rotated_at=utcnow(),
         ))
         session.commit()
@@ -261,6 +285,22 @@ def get_client_and_scope_by_api_key(raw_key: str) -> Optional[tuple[int, str]]:
         if client:
             return client.id, "public"
         return None
+
+
+def get_client_plan(client_id: int) -> str:
+    """Used at every quota enforcement site instead of the old `client_id ==
+    DEMO_CLIENT_ID` check - falls back to the free plan if the client row is somehow
+    gone, same fail-closed reasoning as get_plan_limits()."""
+    with SessionLocal() as session:
+        client = session.get(ClientModel, client_id)
+        return client.plan if client else PLAN_FREE
+
+
+def set_client_plan(client_id: int, plan: str) -> bool:
+    with SessionLocal() as session:
+        result = session.query(ClientModel).filter_by(id=client_id).update({"plan": plan})
+        session.commit()
+        return result > 0
 
 
 # Debounces last_used_at writes so a busy client doesn't cause one on every single
@@ -300,7 +340,7 @@ def list_all_clients_with_usage() -> list[dict]:
     with SessionLocal() as session:
         rows = session.execute(text("""
             SELECT
-                c.id, c.name, c.contact_email, c.is_active, c.created_at, c.last_used_at,
+                c.id, c.name, c.contact_email, c.is_active, c.created_at, c.last_used_at, c.plan,
                 c.supabase_user_id IS NOT NULL AS is_self_service,
                 c.secret_key_hash IS NOT NULL AS has_secret_key, c.secret_key_rotated_at,
                 c.public_key_hash IS NOT NULL AS has_public_key, c.public_key_rotated_at,
@@ -320,7 +360,7 @@ def get_client_admin_row(client_id: int) -> Optional[dict]:
     with SessionLocal() as session:
         row = session.execute(text("""
             SELECT
-                c.id, c.name, c.contact_email, c.is_active, c.created_at, c.last_used_at,
+                c.id, c.name, c.contact_email, c.is_active, c.created_at, c.last_used_at, c.plan,
                 c.supabase_user_id IS NOT NULL AS is_self_service,
                 c.secret_key_hash IS NOT NULL AS has_secret_key, c.secret_key_rotated_at,
                 c.public_key_hash IS NOT NULL AS has_public_key, c.public_key_rotated_at,
@@ -597,6 +637,17 @@ def count_products_for_client(client_id: int) -> int:
     product cap is an account-wide limit, not a per-catalog one."""
     with SessionLocal() as session:
         return session.query(ProductModel).filter_by(client_id=client_id).count()
+
+
+def list_product_types_for_client(client_id: int) -> list[str]:
+    """Every product_type this client has pushed a catalog profile for - product_type is
+    free-form text the client chooses (see ProductType in app.py), not a fixed enum, so
+    this is how the self-service dashboard knows which catalog(s) to show a quota card
+    for. Scoped to ProductModel only (not InteractionModel) - a client with events but no
+    catalog profile yet has nothing model-status-relevant to show."""
+    with SessionLocal() as session:
+        rows = session.query(ProductModel.product_type).filter_by(client_id=client_id).distinct().all()
+        return [r[0] for r in rows]
 
 
 def product_exists(client_id: int, product_type: str, work_id: int) -> bool:

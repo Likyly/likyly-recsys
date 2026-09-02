@@ -48,7 +48,7 @@ from schemas import (
     Product, RecommendedProduct, VectorRecommendation, User, Purchase,
     Rating, PageView, Message, GenerateModelJobStatus, ModelVersion, ModelStatus,
     ProductProfileUpsert, PurchaseEvent, ViewEvent, ClientSelf,
-    ClientAdminView, DailyUsage, ClientRename,
+    ClientAdminView, DailyUsage, ClientRename, ClientUsageSummary,
 )
 
 
@@ -70,8 +70,8 @@ from db import (
     set_client_active, delete_client, get_client_admin_row, rename_client,
     touch_client_usage, list_all_clients_with_usage, get_client_usage_by_day,
     get_active_model_version, count_products_for_client, product_exists, count_trainings_today,
-    MANUAL, AUTO, FREE_TIER_PRODUCT_LIMIT, FREE_TIER_MANUAL_TRAINING_DAILY_LIMIT,
-    FREE_TIER_AUTO_RETRAIN_DAILY_LIMIT, utcnow,
+    list_product_types_for_client, get_client_plan, set_client_plan,
+    MANUAL, AUTO, VALID_PLANS, get_plan_limits, utcnow,
 )
 
 # Make sure the products/users/interactions/clients tables exist - harmless no-op if they do.
@@ -435,11 +435,12 @@ def maybe_trigger_auto_retrain(client_id: int, product_type: str, background_tas
     if new_interactions < AUTO_RETRAIN_INTERACTION_THRESHOLD:
         return
 
-    if client_id != DEMO_CLIENT_ID and count_trainings_today(client_id, product_type, AUTO) >= FREE_TIER_AUTO_RETRAIN_DAILY_LIMIT:
+    auto_retrain_daily_limit = get_plan_limits(get_client_plan(client_id))["auto_retrain_daily_limit"]
+    if auto_retrain_daily_limit is not None and count_trainings_today(client_id, product_type, AUTO) >= auto_retrain_daily_limit:
         _auto_retrain_skips[key] = {
             "skipped_at": utcnow(),
             "reason": (
-                f"Free plan limit reached: {FREE_TIER_AUTO_RETRAIN_DAILY_LIMIT} automatic "
+                f"Free plan limit reached: {auto_retrain_daily_limit} automatic "
                 f"retrain(s) per day. {new_interactions} new interactions are waiting - "
                 "the model will catch up on tomorrow's automatic retrain, or upgrade your plan."
             ),
@@ -450,7 +451,7 @@ def maybe_trigger_auto_retrain(client_id: int, product_type: str, background_tas
     _auto_retrain_in_progress.add(key)
     job_id = str(uuid.uuid4())
     GENERATE_MODEL_JOBS[job_id] = {
-        "job_id": job_id, "status": "queued", "data_product_type": product_type,
+        "job_id": job_id, "client_id": client_id, "status": "queued", "data_product_type": product_type,
         "detail": f"Auto-triggered: {new_interactions} new interactions since last training",
         "version_id": None, "precision_at_k": None, "promoted": None,
     }
@@ -502,7 +503,10 @@ async def get_or_create_my_client(identity: tuple[str, Optional[str]] = Depends(
     existing = get_client_by_supabase_user_id(supabase_user_id)
     if existing:
         set_client_contact_email(existing["id"], email)
-        return {"client_id": existing["id"], **{k: v for k, v in existing.items() if k != "id"}}
+        return {
+            "client_id": existing["id"], **{k: v for k, v in existing.items() if k != "id"},
+            "product_types": list_product_types_for_client(existing["id"]),
+        }
 
     client_id, raw_secret_key, raw_public_key = create_client_for_supabase_user(
         name=f"Self-service client {supabase_user_id}", supabase_user_id=supabase_user_id, email=email,
@@ -514,6 +518,7 @@ async def get_or_create_my_client(identity: tuple[str, Optional[str]] = Depends(
         "has_public_key": created["has_public_key"],
         "secret_key_rotated_at": created["secret_key_rotated_at"],
         "public_key_rotated_at": created["public_key_rotated_at"],
+        "product_types": [],
     }
 
 @app.post("/clients/me/regenerate-secret-key", tags=["selfServiceClient"], response_model=ClientSelf)
@@ -531,6 +536,7 @@ async def regenerate_my_secret_key(supabase_user_id: str = Depends(get_current_s
         "has_public_key": updated["has_public_key"],
         "secret_key_rotated_at": updated["secret_key_rotated_at"],
         "public_key_rotated_at": updated["public_key_rotated_at"],
+        "product_types": list_product_types_for_client(existing["id"]),
     }
 
 @app.post("/clients/me/regenerate-public-key", tags=["selfServiceClient"], response_model=ClientSelf)
@@ -547,6 +553,23 @@ async def regenerate_my_public_key(supabase_user_id: str = Depends(get_current_s
         "has_public_key": True,
         "secret_key_rotated_at": updated["secret_key_rotated_at"],
         "public_key_rotated_at": updated["public_key_rotated_at"],
+        "product_types": list_product_types_for_client(existing["id"]),
+    }
+
+@app.get("/clients/me/usage", tags=["selfServiceClient"], response_model=ClientUsageSummary)
+async def get_my_usage(supabase_user_id: str = Depends(get_current_supabase_user_id)):
+    """Account-wide plan/product-count numbers for the self-service dashboard - separate
+    from /clients/me/models/status, which is scoped to one product_type."""
+    existing = get_client_by_supabase_user_id(supabase_user_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="No client for this account yet - call /clients/me first")
+
+    client_id = existing["id"]
+    plan = get_client_plan(client_id)
+    return {
+        "plan": plan,
+        "product_count": count_products_for_client(client_id),
+        "product_limit": get_plan_limits(plan)["product_limit"],
     }
 
 @app.get("/admin/clients", tags=["admin"], response_model=List[ClientAdminView])
@@ -567,11 +590,18 @@ async def admin_get_client(client_id: int, admin_user_id: str = Depends(get_curr
 
 @app.patch("/admin/clients/{client_id}", tags=["admin"], response_model=ClientAdminView)
 async def admin_update_client(client_id: int, payload: ClientRename, admin_user_id: str = Depends(get_current_admin_user_id)):
-    """Currently only renames the client - contact_email is intentionally not editable
-    here, since it's re-synced from the linked Supabase account's JWT on every login
-    (see get_or_create_my_client) and a manual edit would just get silently overwritten."""
-    if not rename_client(client_id, payload.name):
+    """Renames the client and/or changes its plan - contact_email is intentionally not
+    editable here, since it's re-synced from the linked Supabase account's JWT on every
+    login (see get_or_create_my_client) and a manual edit would just get silently
+    overwritten."""
+    if payload.plan is not None and payload.plan not in VALID_PLANS:
+        raise HTTPException(status_code=422, detail=f"Unknown plan '{payload.plan}' - must be one of {sorted(VALID_PLANS)}")
+    if get_client_admin_row(client_id) is None:
         raise HTTPException(status_code=404, detail="Client not found")
+    if payload.name is not None:
+        rename_client(client_id, payload.name)
+    if payload.plan is not None:
+        set_client_plan(client_id, payload.plan)
     return get_client_admin_row(client_id)
 
 @app.get("/admin/clients/{client_id}/usage", tags=["admin"], response_model=List[DailyUsage])
@@ -681,11 +711,12 @@ async def upsert_product_profile_endpoint(data_product_type: ProductType, produc
     # Only a brand-new product counts against the cap - updating an existing one's
     # profile must stay possible even once the free-tier catalog is full.
     is_new_product = not product_exists(client_id, data_product_type, product_id)
-    if client_id != DEMO_CLIENT_ID and is_new_product and count_products_for_client(client_id) >= FREE_TIER_PRODUCT_LIMIT:
+    product_limit = get_plan_limits(get_client_plan(client_id))["product_limit"]
+    if is_new_product and product_limit is not None and count_products_for_client(client_id) >= product_limit:
         raise HTTPException(
             status_code=403,
             detail=(
-                f"Free plan limit reached: {FREE_TIER_PRODUCT_LIMIT} products max. "
+                f"Free plan limit reached: {product_limit} products max. "
                 "Upgrade your plan to add more products."
             ),
         )
@@ -756,15 +787,19 @@ async def record_view_event(
     maybe_trigger_auto_retrain(client_id, data_product_type, background_tasks)
     return {"message": "View event recorded"}
 
-@app.get("/generateModel", tags=["generateModel"], response_model=GenerateModelJobStatus)
-async def generate_model(data_product_type: ProductType, background_tasks: BackgroundTasks, client_id: int = Depends(get_current_client_id)):
-    product_type = data_product_type
-
-    if client_id != DEMO_CLIENT_ID and count_trainings_today(client_id, product_type, MANUAL) >= FREE_TIER_MANUAL_TRAINING_DAILY_LIMIT:
+def trigger_manual_training(client_id: int, product_type: str, background_tasks: BackgroundTasks) -> dict:
+    """Shared by GET /generateModel (secret-key, for the customer's own backend) and
+    POST /clients/me/generateModel (Supabase JWT, for the website) - identical quota
+    check and job bookkeeping, only how client_id was resolved differs. The daily manual
+    training count is a single account-wide counter regardless of which surface
+    triggered it - otherwise a customer could double their free-tier allowance by using
+    both surfaces."""
+    manual_limit = get_plan_limits(get_client_plan(client_id))["manual_training_daily_limit"]
+    if manual_limit is not None and count_trainings_today(client_id, product_type, MANUAL) >= manual_limit:
         raise HTTPException(
             status_code=429,
             detail=(
-                f"Free plan limit reached: {FREE_TIER_MANUAL_TRAINING_DAILY_LIMIT} manual "
+                f"Free plan limit reached: {manual_limit} manual "
                 "training run(s) per day. Try again tomorrow, or upgrade your plan for more."
             ),
         )
@@ -773,6 +808,7 @@ async def generate_model(data_product_type: ProductType, background_tasks: Backg
 
     GENERATE_MODEL_JOBS[job_id] = {
         "job_id": job_id,
+        "client_id": client_id,
         "status": "queued",
         "data_product_type": product_type,
         "detail": None,
@@ -784,12 +820,57 @@ async def generate_model(data_product_type: ProductType, background_tasks: Backg
 
     return GENERATE_MODEL_JOBS[job_id]
 
-@app.get("/generateModel/status/{job_id}", tags=["generateModel"], response_model=GenerateModelJobStatus)
-async def generate_model_status(job_id: str, client_id: int = Depends(get_current_client_id)):
+
+def get_job_or_404_for_client(job_id: str, client_id: int) -> dict:
+    """Ownership check: a job_id is an unguessable UUID, but nothing previously stopped
+    an authenticated client from reading another client's job status if they somehow
+    learned/observed one - GENERATE_MODEL_JOBS now records client_id at creation time
+    (see trigger_manual_training/maybe_trigger_auto_retrain) specifically so this can be
+    enforced here."""
     job = GENERATE_MODEL_JOBS.get(job_id)
-    if not job:
+    if not job or job.get("client_id") != client_id:
         raise HTTPException(status_code=404, detail=f"Unknown job_id {job_id}")
     return job
+
+
+def build_model_status(client_id: int, product_type: str) -> dict:
+    """Shared by GET /models/status (secret-key, for the customer's own backend) and
+    GET /clients/me/models/status (Supabase JWT, for the website) - same computation,
+    two different ways of arriving at client_id. Everything a client dashboard needs to
+    show "your model" in one call: the active version - including whether it came from a
+    manual call or an automatic retrain, and its date - plus today's training quota
+    usage, so a free-tier client can see clearly why a training run was refused or an
+    auto-retrain skipped, instead of just noticing nothing changed."""
+    limits = get_plan_limits(get_client_plan(client_id))
+    skip = _auto_retrain_skips.get((client_id, product_type))
+    skip_today = skip is not None and skip["skipped_at"].date() == utcnow().date()
+
+    return {
+        "data_product_type": product_type,
+        "active_version": get_active_model_version(client_id, product_type),
+        "manual_trainings_today": count_trainings_today(client_id, product_type, MANUAL),
+        "manual_training_daily_limit": limits["manual_training_daily_limit"],
+        "auto_retrains_today": count_trainings_today(client_id, product_type, AUTO),
+        "auto_retrain_daily_limit": limits["auto_retrain_daily_limit"],
+        "auto_retrain_skipped_today": skip_today,
+        "auto_retrain_skip_reason": skip["reason"] if skip_today else None,
+    }
+
+
+async def _resolve_my_client_id(supabase_user_id: str) -> int:
+    existing = get_client_by_supabase_user_id(supabase_user_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="No client for this account yet - call /clients/me first")
+    return existing["id"]
+
+
+@app.get("/generateModel", tags=["generateModel"], response_model=GenerateModelJobStatus)
+async def generate_model(data_product_type: ProductType, background_tasks: BackgroundTasks, client_id: int = Depends(get_current_client_id)):
+    return trigger_manual_training(client_id, data_product_type, background_tasks)
+
+@app.get("/generateModel/status/{job_id}", tags=["generateModel"], response_model=GenerateModelJobStatus)
+async def generate_model_status(job_id: str, client_id: int = Depends(get_current_client_id)):
+    return get_job_or_404_for_client(job_id, client_id)
 
 @app.get("/models/versions", tags=["generateModel"], response_model=List[ModelVersion])
 async def get_model_versions(data_product_type: ProductType, client_id: int = Depends(get_current_client_id)):
@@ -799,25 +880,30 @@ async def get_model_versions(data_product_type: ProductType, client_id: int = De
 
 @app.get("/models/status", tags=["generateModel"], response_model=ModelStatus)
 async def get_model_status(data_product_type: ProductType, client_id: int = Depends(get_current_client_id)):
-    """Everything a client dashboard needs to show "your model" in one call: the active
-    version - including whether it came from a manual call or an automatic retrain, and
-    its date - plus today's training quota usage, so a free-tier client can see clearly
-    why a training run was refused or an auto-retrain skipped, instead of just noticing
-    nothing changed."""
-    is_demo = client_id == DEMO_CLIENT_ID
-    skip = _auto_retrain_skips.get((client_id, data_product_type))
-    skip_today = skip is not None and skip["skipped_at"].date() == utcnow().date()
+    return build_model_status(client_id, data_product_type)
 
-    return {
-        "data_product_type": data_product_type,
-        "active_version": get_active_model_version(client_id, data_product_type),
-        "manual_trainings_today": count_trainings_today(client_id, data_product_type, MANUAL),
-        "manual_training_daily_limit": None if is_demo else FREE_TIER_MANUAL_TRAINING_DAILY_LIMIT,
-        "auto_retrains_today": count_trainings_today(client_id, data_product_type, AUTO),
-        "auto_retrain_daily_limit": None if is_demo else FREE_TIER_AUTO_RETRAIN_DAILY_LIMIT,
-        "auto_retrain_skipped_today": skip_today,
-        "auto_retrain_skip_reason": skip["reason"] if skip_today else None,
-    }
+@app.post("/clients/me/generateModel", tags=["selfServiceClient"], response_model=GenerateModelJobStatus)
+async def generate_my_model(
+    data_product_type: ProductType, background_tasks: BackgroundTasks,
+    supabase_user_id: str = Depends(get_current_supabase_user_id),
+):
+    """Self-service equivalent of GET /generateModel: the website only ever holds a
+    Supabase session JWT, never the client's secret API key, so it can't call the
+    secret-key-gated route directly - this lets a logged-in customer trigger a manual
+    train from their own account page. Draws from the same daily quota as the secret-key
+    route (see trigger_manual_training)."""
+    client_id = await _resolve_my_client_id(supabase_user_id)
+    return trigger_manual_training(client_id, data_product_type, background_tasks)
+
+@app.get("/clients/me/generateModel/status/{job_id}", tags=["selfServiceClient"], response_model=GenerateModelJobStatus)
+async def generate_my_model_status(job_id: str, supabase_user_id: str = Depends(get_current_supabase_user_id)):
+    client_id = await _resolve_my_client_id(supabase_user_id)
+    return get_job_or_404_for_client(job_id, client_id)
+
+@app.get("/clients/me/models/status", tags=["selfServiceClient"], response_model=ModelStatus)
+async def get_my_model_status(data_product_type: ProductType, supabase_user_id: str = Depends(get_current_supabase_user_id)):
+    client_id = await _resolve_my_client_id(supabase_user_id)
+    return build_model_status(client_id, data_product_type)
 
 @app.get("/getRec/popular/{count}", tags=["getRecContent"], response_model=List[RecommendedProduct])
 async def get_rec_popular(data_product_type: ProductType, count: int, client_id: int = Depends(get_current_client_id_public_ok)):

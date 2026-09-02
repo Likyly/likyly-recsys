@@ -161,6 +161,18 @@ class ClientSelf(BaseModel):
     # enforce anything server-side.
     secret_key_rotated_at: Optional[datetime] = None
     public_key_rotated_at: Optional[datetime] = None
+    # Which catalog namespace(s) this client has pushed products for - lets the account
+    # dashboard know which product_type(s) to fetch quota/model status for, without an
+    # extra round trip (this endpoint is already called on every /account page load).
+    product_types: List[str] = []
+
+
+class ClientUsageSummary(BaseModel):
+    """Account-wide (not per-product_type) quota numbers for the self-service dashboard -
+    separate from ModelStatus, which is inherently scoped to one product_type."""
+    plan: str
+    product_count: int
+    product_limit: Optional[int] = None
 
 
 class ClientAdminView(BaseModel):
@@ -179,6 +191,7 @@ class ClientAdminView(BaseModel):
     has_public_key: bool
     public_key_rotated_at: Optional[datetime] = None
     total_requests: int
+    plan: str
 
 
 class DailyUsage(BaseModel):
@@ -187,4 +200,7 @@ class DailyUsage(BaseModel):
 
 
 class ClientRename(BaseModel):
-    name: str
+    name: Optional[str] = None
+    # "free" or "unlimited" today - see VALID_PLANS in db.py. Optional so a plain rename
+    # doesn't need to resend the current plan.
+    plan: Optional[str] = None
