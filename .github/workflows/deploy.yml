@@ -46,13 +46,13 @@ jobs:
           # which only holds the build context, no docker-compose.yml of its own.
           cd ~/app/licenses
 
-          if [ -n "$(docker ps -aq -f name=licenses-recsys-1)" ]; then
-            docker rm -f licenses-recsys-1
+          if [ -n "$(docker ps -aq -f name=recsys-api)" ]; then
+            docker rm -f recsys-api
           else
-            echo "Container licenses-recsys-1 not present"
+            echo "Container recsys-api not present"
           fi
 
-          docker compose build recsys
-          docker compose up -d recsys
+          docker compose build recsys-api
+          docker compose up -d recsys-api
           docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}"
           EOF
