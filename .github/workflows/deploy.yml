@@ -55,4 +55,14 @@ jobs:
           docker compose build recsys-api
           docker compose up -d recsys-api
           docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}"
+
+          # This droplet has a small disk (25GB) and recsys-api builds *on* it every
+          # deploy - the build cache and superseded image layers pile up fast enough to
+          # fill it within a couple dozen deploys (this is what caused the "No space
+          # left on device" rsync failure on 2026-09-02). Safe to run unconditionally
+          # right after the new container is up: -a only removes images/cache not
+          # referenced by any container, running or stopped.
+          docker image prune -af
+          docker builder prune -af
+          df -h /
           EOF
