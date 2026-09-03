@@ -512,9 +512,10 @@
     <p class="eyebrow">Architecture technique</p>
     <h1>LIKYLY <em>Recsys</em> — Ingestion, entraînement &amp; service multi-tenant</h1>
     <p class="subtitle">
-      Comment un catalogue et des événements d'achat/vue, poussés via <code>application/api/app.py</code>,
-      deviennent des recommandations content-based, collaboratives (ALS) et hybrides — servies en Postgres/
-      pgvector, versionnées et suivies dans MLflow, consommées par les SDKs Python/JS/PHP.
+      Un moteur de machine learning qui transforme catalogue et événements d'achat/vue en recommandations
+      content-based (TF-IDF + embeddings sémantiques), collaboratives (ALS implicite) et hybrides — modèles
+      versionnés et suivis dans MLflow, servis en Postgres/pgvector via une API FastAPI, consommés par les
+      SDKs Python/JS/PHP. Diffusable en auto-hébergé (Docker, votre infra) ou en Cloud managé multi-tenant.
     </p>
     <div class="chips">
       <span class="chip chip-python">Python 3.11</span>
@@ -524,7 +525,6 @@
       <span class="chip chip-pgvector">pgvector</span>
       <span class="chip chip-mlflow">MLflow</span>
       <span class="chip chip-dvc">DVC</span>
-      <span class="chip chip-solara">Solara</span>
       <span class="chip chip-docker">Docker</span>
     </div>
   </header>
@@ -937,7 +937,7 @@
           <tr><td>Contenu</td><td class="dim">scikit-learn (TF-IDF/CountVectorizer), sentence-transformers</td><td class="dim">embeddings all-MiniLM-L12-v2, 384 dimensions</td></tr>
           <tr><td>Stockage</td><td class="dim">PostgreSQL + pgvector, SQLAlchemy</td><td class="dim">catalogue, événements, embeddings et versions de modèles, tout scopé par client_id</td></tr>
           <tr><td>MLOps</td><td class="dim">MLflow (tracking + model registry), DVC</td><td class="dim">MLflow suit chaque run ; DVC versionne les artefacts modèle (.npz) hors Git</td></tr>
-          <tr><td>UI de démonstration</td><td class="dim">Solara (React/Python), demo/ (HTML/CSS/JS statique)</td><td class="dim">app.py sert 3 pages Solara ; demo/ est une vitrine front indépendante consommant l'API</td></tr>
+          <tr><td>UI de démonstration</td><td class="dim">demo/ (HTML/CSS/JS statique)</td><td class="dim">vitrine front indépendante consommant l'API ; l'UI Solara qui vivait dans ce repo a été retirée du déploiement (API-only)</td></tr>
           <tr><td>Legacy (gelé)</td><td class="dim">Pinecone</td><td class="dim">endpoints vectoriels historiques conservés fonctionnels, remplacés par pgvector pour toute nouvelle intégration</td></tr>
         </tbody>
       </table>
@@ -949,15 +949,11 @@
     <div class="deploy-grid">
       <div class="deploy-card">
         <h4>Conteneur Docker</h4>
-        <p><code>Dockerfile</code> — image Python 3.11-slim, installe PyTorch CPU puis <code>requirements-docker.txt</code>, orchestré par Supervisor + Nginx.</p>
+        <p><code>Dockerfile</code> — image Python 3.11-slim, installe PyTorch CPU puis <code>requirements-docker.txt</code>, lance directement <code>application/api/app.py</code> (Uvicorn) sur le port 6061. API-only : plus de Nginx ni de Supervisor dans l'image (l'UI Solara a été retirée du déploiement).</p>
       </div>
       <div class="deploy-card">
-        <h4>Routage Nginx</h4>
-        <p><code>nginx.conf</code> — <code>/</code> vers l'app Solara (port 6060), <code>/recsys-api/</code> vers l'API FastAPI (port 6061), le tout exposé sur le port 80.</p>
-      </div>
-      <div class="deploy-card">
-        <h4>Supervision des process</h4>
-        <p><code>supervisord.conf</code> démarre et redémarre automatiquement <code>recsys-explore</code> (Solara) et <code>recsys-api</code> (FastAPI/Uvicorn) côte à côte.</p>
+        <h4>Routage Caddy (hôte)</h4>
+        <p>Le reverse proxy Caddy du droplet route <code>api.likyly.com</code> et <code>www.likyly.com/recsys-api/</code> vers le conteneur <code>recsys-api</code> sur le port 6061.</p>
       </div>
       <div class="deploy-card">
         <h4>Séparation entraînement / service</h4>

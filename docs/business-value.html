@@ -237,11 +237,6 @@
   .compare-chip.mid { border-color: var(--accent); color: var(--accent-ink); background: var(--surface); box-shadow: var(--shadow); }
   .compare-arrow { color: var(--text-dim); font-size: 1rem; }
 
-  /* ---------- Evolutions ---------- */
-  .evolutions-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 0.7rem; }
-  .evo-item { display: flex; gap: 0.65rem; align-items: flex-start; font-size: 0.86rem; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 0.7rem 0.9rem; color: var(--text-dim); }
-  .evo-item .evo-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); margin-top: 0.55rem; flex: none; }
-
   footer { padding-top: 2.5rem; color: var(--text-dim); font-size: 0.85rem; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem; }
 
   @media (max-width: 700px) {
@@ -260,14 +255,8 @@
     <p class="eyebrow">Moteur de recommandations produits &amp; contenus — API multi-tenant</p>
     <h1>Un moteur de recommandations qui <em>apprend</em> de vos utilisateurs — pas seulement de leurs clics</h1>
     <p class="subtitle">
-      Sur une fiche produit, une page d'accueil ou un catalogue, une recommandation pertinente change
-      directement le comportement du visiteur — qu'il s'agisse d'un achat sur un site e-commerce ou du
-      contenu suivant regardé, lu ou écouté sur une plateforme culturelle. C'est ce qui fait qu'Amazon
-      annonce jusqu'à 35% de ses ventes générées par son moteur de recommandations, et que des plateformes
-      de streaming ou d'édition attribuent l'essentiel de l'engagement à la personnalisation. LIKYLY expose
-      cette capacité en API pour n'importe quel type de catalogue — produits, mais aussi œuvres culturelles
-      (films, livres, musique) ou contenus éditoriaux : contenu (TF-IDF + similarité sémantique),
-      collaboratif (ALS sur achats/vues) et hybride, branchables sans changer de plateforme.
+      Help your users discover what they'll love next.<br>
+      AI-powered recommendation engine combining content-based, collaborative and hybrid filtering.
     </p>
     <div class="trust-pills">
       <span class="trust-pill"><span class="tp-check">✓</span> Auto-hébergeable, vos données restent chez vous</span>
@@ -299,7 +288,6 @@
       <a href="#comparaison">Comparaison</a>
       <a href="#agent">Pourquoi pas un LLM par requête</a>
       <a href="#performances">Performances</a>
-      <a href="#evolutions">Évolutions</a>
       <div class="nav-sep"></div>
       <a href="architecture.html">Architecture technique →</a>
     </div>
@@ -348,6 +336,14 @@
         <div class="uc-detail"><span class="uc-k">Problème</span><span class="uc-v">Faire tourner un moteur ML séparé par client ne passe pas à l'échelle opérationnellement.</span></div>
         <div class="uc-detail"><span class="uc-k">Solution</span><span class="uc-v">Chaque client s'authentifie par sa propre clé API ; catalogue, événements et modèles restent cloisonnés par client_id.</span></div>
         <div class="uc-value">Valeur : <strong>une seule infrastructure à opérer</strong>, isolation garantie entre clients.</div>
+      </div>
+      <div class="usecase">
+        <span class="uc-tag">SaaS produit</span>
+        <h3>Recommander la bonne fonctionnalité au bon moment</h3>
+        <div class="uc-detail"><span class="uc-k">Contexte</span><span class="uc-v">Un éditeur SaaS veut guider chaque compte vers les fonctionnalités, gabarits ou ressources qu'il n'a pas encore découverts.</span></div>
+        <div class="uc-detail"><span class="uc-k">Problème</span><span class="uc-v">Un onboarding statique ou une liste de fonctionnalités identique pour tous ignore l'usage réel de chaque compte.</span></div>
+        <div class="uc-detail"><span class="uc-k">Solution</span><span class="uc-v">Recommandations hybrides basées sur l'usage in-app (actions, modules consultés) plutôt que sur un catalogue produit classique.</span></div>
+        <div class="uc-value">Valeur : <strong>adoption de fonctionnalités en hausse</strong>, sans développement interne dédié.</div>
       </div>
     </div>
   </section>
@@ -566,17 +562,6 @@
       version actuellement active) et visualisable dans MLflow, avec le run rejeté encore visible en cas de
       non-promotion — rien ne disparaît silencieusement.
     </p>
-  </section>
-
-  <section class="block" id="evolutions">
-    <div class="block-head"><span class="block-num">08</span><h2>Évolutions possibles</h2></div>
-    <p class="block-desc">Le socle actuel est pensé pour grandir dans ces directions.</p>
-    <div class="evolutions-grid">
-      <div class="evo-item"><span class="evo-dot"></span>Connecteurs CMS/e-commerce : ingestion automatique depuis Shopify, WooCommerce, Prismic</div>
-      <div class="evo-item"><span class="evo-dot"></span>Embeddings d'images produit, en complément du texte, pour la similarité visuelle</div>
-      <div class="evo-item"><span class="evo-dot"></span>A/B testing intégré entre versions de modèles, au-delà de la simple gate precision@10</div>
-      <div class="evo-item"><span class="evo-dot"></span>SDKs publiés (PyPI, npm, Packagist) pour une installation en une commande</div>
-    </div>
   </section>
 
   <footer>
