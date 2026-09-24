@@ -3,6 +3,7 @@
 # config and are left alone.
 line-length = 200
 target-version = "py311"
+extend-exclude = ["sdk"]  # each SDK has its own tooling and CI
 include = ["application/api/*.py", "application/utils/db.py", "application/utils/migrate.py", "tests/*.py", "scripts/*.py"]
 
 [lint]

@@ -42,8 +42,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_id_map_internal
 
 -- Backfill: every integer id already in use keeps meaning exactly what it did - its public
 -- id is simply its decimal string. ON CONFLICT DO NOTHING makes re-runs harmless.
-INSERT INTO id_map (client_id, product_type, kind, external_id, internal_id)
-SELECT client_id, product_type, 'item', work_id::text, work_id
+-- created_at is listed explicitly: on a real boot create_all runs BEFORE this file and creates id_map
+-- with a NOT NULL created_at and no server default (the ORM supplies it), so this table's DEFAULT
+-- below is not guaranteed to exist.
+INSERT INTO id_map (client_id, product_type, kind, external_id, internal_id, created_at)
+SELECT client_id, product_type, 'item', work_id::text, work_id, now()
 FROM (
     SELECT client_id, product_type, work_id FROM products
     UNION
@@ -51,8 +54,8 @@ FROM (
 ) AS known_items
 ON CONFLICT DO NOTHING;
 
-INSERT INTO id_map (client_id, product_type, kind, external_id, internal_id)
-SELECT client_id, product_type, 'user', user_id::text, user_id
+INSERT INTO id_map (client_id, product_type, kind, external_id, internal_id, created_at)
+SELECT client_id, product_type, 'user', user_id::text, user_id, now()
 FROM (
     SELECT client_id, product_type, user_id FROM users
     UNION

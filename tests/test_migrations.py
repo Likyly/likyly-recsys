@@ -69,8 +69,37 @@ def legacy_engine():
 def migrated(legacy_engine):
     with legacy_engine.connect() as conn:
         before = {t: conn.execute(text(f"SELECT count(*) FROM {t}")).scalar() for t in ("products", "users", "interactions", "clients")}
+    # The REAL boot path (db.init_db): create_all first - it creates the new tables from the ORM models,
+    # WITHOUT the SQL file's defaults - then the migrations on top. Testing the migration alone missed a
+    # NOT NULL violation on id_map.created_at that took production down.
+    db.Base.metadata.create_all(legacy_engine)
     applied = migrate.run_migrations(legacy_engine)
     return legacy_engine, before, applied
+
+
+def test_migration_also_works_on_a_database_without_create_all(legacy_engine):
+    """The other order (`python migrate.py` on a bare legacy schema): a scratch copy so the module fixture stays intact."""
+    admin = psycopg2.connect(_url("postgres"))
+    admin.autocommit = True
+    with admin.cursor() as cursor:
+        cursor.execute(f"DROP DATABASE IF EXISTS {MIGRATION_DB}_bare")
+        cursor.execute(f"CREATE DATABASE {MIGRATION_DB}_bare")
+    connection = psycopg2.connect(_url(f"{MIGRATION_DB}_bare"))
+    connection.autocommit = True
+    with connection.cursor() as cursor:
+        cursor.execute(LEGACY_SCHEMA)
+        cursor.execute("INSERT INTO clients (id, name, plan, is_active, created_at) VALUES (2, 'c', 'free', true, now())")
+        cursor.execute("INSERT INTO interactions (client_id, product_type, work_id, user_id, event_type, quantity, occurred_at) VALUES (2, 'm', 9, 4, 'view', 1, now())")
+    connection.close()
+    engine = create_engine(_url(f"{MIGRATION_DB}_bare"))
+    try:
+        assert migrate.run_migrations(engine) == ["0001_public_api_ids_sessions_recommendations"]
+        assert rows(engine, "SELECT kind, external_id, internal_id FROM id_map ORDER BY kind") == [("item", "9", 9), ("user", "4", 4)]
+    finally:
+        engine.dispose()
+        with admin.cursor() as cursor:
+            cursor.execute(f"DROP DATABASE IF EXISTS {MIGRATION_DB}_bare")
+        admin.close()
 
 
 def rows(engine, sql):
@@ -140,7 +169,7 @@ def test_schema_is_identical_to_a_fresh_install(migrated):
     """The SQL migration and create_all must describe the same schema - otherwise a fresh
     database and an upgraded one would behave differently."""
     engine, _, _ = migrated
-    query = """SELECT table_name, column_name, data_type, is_nullable FROM information_schema.columns
+    query = """SELECT table_name, column_name, data_type, is_nullable, column_default FROM information_schema.columns
                WHERE table_schema='public' AND table_name <> 'schema_migrations' ORDER BY 1, 2"""
     with db.engine.connect() as fresh_conn:
         fresh = [tuple(r) for r in fresh_conn.execute(text(query))]

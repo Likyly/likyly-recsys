@@ -250,7 +250,7 @@ class IdMapModel(Base):
     kind = Column(String(8), primary_key=True)
     external_id = Column(String, primary_key=True)
     internal_id = Column(Integer, nullable=False)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, server_default=text("now()"))
 
     __table_args__ = (
         Index("uq_id_map_internal", "client_id", "product_type", "kind", "internal_id", unique=True),
@@ -276,10 +276,10 @@ class RecommendationModel(Base):
     # The strategy that actually produced the items (after any fallback).
     strategy = Column(String, nullable=False)
     # "auto" (POST /getRec picked the strategy) or "explicit" (a strategy-specific endpoint).
-    origin = Column(String(16), nullable=False, default="auto")
+    origin = Column(String(16), nullable=False, default="auto", server_default="auto")
     item_ids = Column(JSONB, nullable=False)
     request_id = Column(String, nullable=True)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, server_default=text("now()"))
 
     __table_args__ = (
         Index("ix_recommendations_client_created", "client_id", "created_at"),
