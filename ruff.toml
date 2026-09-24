@@ -1,0 +1,14 @@
+# Lint scope: the API layer, the DB/migration layer, the tests and the scripts. The pandas-heavy
+# engine modules (exploreData/modelData/tools), the Solara pages and the SDKs predate this
+# config and are left alone.
+line-length = 200
+target-version = "py311"
+include = ["application/api/*.py", "application/utils/db.py", "application/utils/migrate.py", "tests/*.py", "scripts/*.py"]
+
+[lint]
+select = ["E", "F", "W", "B"]
+ignore = ["E402", "E501", "B008", "B904", "B905"]   # imports after sys.path setup; Depends()/Query() defaults are FastAPI's idiom; raise-from noise in HTTP handlers; zip strict
+
+[lint.per-file-ignores]
+"application/api/app.py" = ["F403", "F405"]  # star imports of the engine, pre-existing
+"tests/*" = ["E701", "E731", "B017", "B018"]

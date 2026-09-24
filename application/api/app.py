@@ -19,37 +19,41 @@ if _SENTRY_DSN:
         # Errors only, no perf tracing - this API's load doesn't warrant tracing overhead
         # yet, and it's a separate cost lever on Sentry's free tier from error events.
         traces_sample_rate=0.0,
+        # Request bodies carry user properties and event payloads - personal data that must
+        # never end up in an error tracker. (Headers incl. X-API-Key are scrubbed by default.)
+        send_default_pii=False,
+        max_request_body_size="never",
     )
 
-from fastapi import FastAPI, Request, Form, HTTPException, BackgroundTasks, Security, Depends, Query, Header, Path, UploadFile, File
+from fastapi import FastAPI, Request, HTTPException, BackgroundTasks, Security, Depends, Query, Header, Path, UploadFile, File
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import APIKeyHeader
-from fastapi.responses import Response
-from typing import Optional, Annotated
-from fastapi.templating import Jinja2Templates
+from fastapi.responses import JSONResponse, Response
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from dataclasses import dataclass
+from typing import Optional, Annotated, Literal
 from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
 import json
-import math
+import logging
 import time
 import uuid
 import jwt
 from jwt import PyJWKClient
 
-from pydantic import BaseModel, Field, Json
-from typing import Any
 from typing import List
 
 import sys
 import uvicorn
-import numpy as np
 import pandas as pd
 
 from schemas import (
-    Product, RecommendedProduct, VectorRecommendation, User, Purchase,
-    Rating, PageView, Message, GenerateModelJobStatus, ModelVersion, ModelStatus,
-    ProductProfileUpsert, PurchaseEvent, ViewEvent, InteractionEvent, ClientSelf,
+    RecommendedProduct, VectorRecommendation, User, Message, GenerateModelJobStatus, ModelVersion, ModelStatus,
+    ClientSelf,
     ClientAdminView, DailyUsage, ClientRename, ClientUsageSummary,
-    EventType, EventTypeCreate, EventTypeUpdate, ImportSummary, ImportRowError,
+    EventType, EventTypeCreate, EventTypeUpdate, ImportSummary, Item, ItemUpsert, ItemImportRequest, ItemDeleteRequest, BatchResult, ErrorResponse,
+    UserUpsert, UserImportRequest, Event, EventBatch, EventResult, EventBatchResult,
+    RecommendationRequest, RecommendationResponse,
 )
 
 
@@ -63,19 +67,33 @@ sys.path.insert(0, absolute_path_utils)
 from exploreData import *
 from modelData import *
 from db import (
-    upsert_product_profile, delete_product_profile, insert_interaction, init_db,
+    init_db,
     get_client_and_scope_by_api_key, ensure_client_id, DEMO_CLIENT_ID, PURCHASE, VIEW,
-    list_model_versions, count_interactions_since, get_recent_viewed_work_ids,
+    list_model_versions, count_interactions_since,
     get_client_by_supabase_user_id, create_client_for_supabase_user, set_client_contact_email,
     regenerate_secret_key, regenerate_public_key, revoke_secret_key, revoke_public_key,
     set_client_active, delete_client, get_client_admin_row, rename_client,
     touch_client_usage, list_all_clients_with_usage, get_client_usage_by_day,
-    get_active_model_version, count_products_for_client, product_exists, count_trainings_today,
-    list_product_types_for_client, get_client_plan, set_client_plan, upsert_user,
-    get_client_event_types, upsert_client_event_type, delete_client_event_type,
-    get_dominant_event_type, EVENT_TIER_WEIGHTS, DEFAULT_EVENT_TIER,
-    MANUAL, AUTO, VALID_PLANS, get_plan_limits, utcnow,
+    get_active_model_version, count_products_for_client, count_products_in_catalog,
+    count_users_in_catalog, count_trainings_today,
+    list_product_types_for_client, get_client_plan, set_client_plan,
+    get_client_event_types, upsert_client_event_type, delete_client_event_type, list_catalogs_for_client,
+    EVENT_TIER_WEIGHTS, MANUAL, AUTO, VALID_PLANS, get_plan_limits, utcnow,
+    KIND_ITEM, KIND_USER, resolve_internal_ids, resolve_external_ids, product_exists,
+    get_recent_viewed_work_ids,
+    store_recommendation,
 )
+from ids import new_recommendation_id
+from observability import coerce_request_id, get_logger, log_event, request_id_var
+from ingestion import (
+    PlanLimitError, delete_items, delete_user, fetch_items, fetch_users, record_events,
+    upsert_item, upsert_items_batch, upsert_user_profile, upsert_users_batch,
+)
+from recommender import (
+    present_records, rec_collaborative, rec_content, rec_hybrid, rec_popular, rec_session,
+    recommend_auto,
+)
+
 
 # Make sure the products/users/interactions/clients tables exist - harmless no-op if they do.
 init_db()
@@ -84,10 +102,6 @@ ensure_client_id(DEMO_CLIENT_ID, "LIKYLY Demo")
 # The catalog namespace ("movies", "acme-shop", ...) is caller-defined, not a fixed
 # enum - a customer's own catalog isn't known in advance. Kept as a string with a
 # conservative format so it stays safe to use as a partition key.
-ProductType = Annotated[str, Query(
-    min_length=1, max_length=64, pattern=r'^[a-zA-Z0-9_-]+$',
-    description="Catalog namespace, e.g. 'movies' or a customer's own catalog name",
-)]
 
 # A tenant's own event vocabulary ("purchase", "reservation", "watch", ...) - same
 # conservative format as ProductType, since it's also used as a partition key
@@ -108,70 +122,64 @@ stopwords_dir = os.path.abspath(os.path.join(current_dir, stopwords_relative_pat
 
 tags_metadata = [
     {
-        "name": "getProducts",
-        "description": "List of products or one product",
-    },
-    {
-        "name": "getUsers",
-        "description": "List of users",
-    },
-    {
-        "name": "getUsersPurchases",
-        "description": "List of users purchases",
-    },
-    {
-        "name": "getUsersRatings",
-        "description": "List of users ratings",
-    },
-    {
-        "name": "getUsersPageViews",
-        "description": "List of users page views",
-    },
-    {
-        "name": "generateModel",
-        "description": "Trigger Machine Learning model training as a background job, and poll its status.",
-    },
-    {
-        "name": "getRecContent",
-        "description": "Get a list of recommendated works based on similar features of products - Content-based Filtering",
-    },
-    {
-        "name": "getRecContentVectorCreateIndex",
+        "name": "recommendations",
         "description": (
-            "[Legacy/frozen] Create a Pinecone index from product embeddings - "
-            "https://app.pinecone.io/. Superseded by pgvector-backed semantic similarity, "
-            "now blended directly into /getRec/content - kept working for existing "
-            "integrations, not recommended for new ones."
+            "**Start here.** `POST /getRec` returns recommended items for a user, an anonymous "
+            "session, an item being viewed, or nothing at all - LIKYLY picks the strategy. Every "
+            "response carries a `recommendation_id`; send it back on the events that follow to "
+            "measure impressions, CTR, conversion and attributed revenue."
         ),
     },
     {
-        "name": "getRecContentVectorDb",
+        "name": "recommendations-advanced",
         "description": (
-            "[Legacy/frozen] Content-based recommendations via a Pinecone vector index. "
-            "Superseded by pgvector-backed semantic similarity, now blended directly into "
-            "/getRec/content (same embedding model, no separate vector database to run) - "
-            "kept working for existing integrations, not recommended for new ones."
+            "One endpoint per strategy (popular, content, collaborative, hybrid, session), for "
+            "expert use. They keep their historical bare-array response by default "
+            "(`response_format=array`, deprecated) - pass `response_format=object` for the "
+            "`{recommendation_id, strategy, items}` envelope. Either way the recommendation_id "
+            "is in the `X-Recommendation-Id` response header."
         ),
     },
     {
-        "name": "getRecCollaborative",
-        "description": "Get a list of recommendated works for a user based on others users ratings/purchase - User-based Collaborative Filtering",
+        "name": "items",
+        "description": (
+            "Your catalog. An item is anything you recommend - a product, an article, a listing, "
+            "a film. Identified by **your own string id**; described by a `title`, an optional "
+            "`description` and free-form `properties`. Secret key only: the public key can neither "
+            "write nor list the catalog."
+        ),
     },
     {
-        "name": "getRecHybrid",
-        "description": "Get a list of recommended works blending content-based similarity and collaborative filtering, weighted by 'alpha'",
+        "name": "users",
+        "description": (
+            "Optional user profiles (free-form `properties`). You don't need to create a user "
+            "before sending events for them. Secret key only - profiles are personal data."
+        ),
     },
     {
-        "name": "getRecSession",
-        "description": "Get a list of recommended works based on a list of recently viewed work_ids - no user_id or login required",
+        "name": "events",
+        "description": (
+            "Interaction tracking, safe to call from a browser with the public key. Officially "
+            "supported types: `impression`, `view`, `click`, `add_to_cart`, `remove_from_cart`, "
+            "`purchase` - any other type string is auto-registered on first use. Works for "
+            "identified users, anonymous sessions, or both."
+        ),
     },
     {
-        "name": "productsIngestion",
-        "description": "Push/update the lightweight content profile (title, description, category) of your own products - only needed for content-based, hybrid or session recommendations. Price, stock and images stay in your own system.",
+        "name": "models",
+        "description": "Trigger collaborative-model training as a background job, poll it, inspect model versions.",
     },
     {
-        "name": "eventsIngestion",
-        "description": "Send purchase/view events referencing your own product and user ids. Required for collaborative filtering; no product catalog needs to be shared for this alone.",
+        "name": "legacy",
+        "description": "Frozen Pinecone-based vector endpoints, kept for existing integrations only. Use `content` recommendations instead.",
+    },
+    {
+        "name": "selfServiceClient",
+        "description": "Account management for the logged-in website (Supabase session JWT, not an API key).",
+    },
+    {
+        "name": "admin",
+        "description": "Operator-only client management (Supabase session JWT with the admin claim).",
     },
 ]
 
@@ -179,12 +187,23 @@ tags_metadata = [
 # client_id, and every query/write below is scoped to that client_id. This is what
 # keeps two customers' catalogs and events from ever mixing in the shared database,
 # even if they happen to pick the same product_type name.
-api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+api_key_header = APIKeyHeader(
+    name="X-API-Key", auto_error=False,
+    description=(
+        "Your API key. Two kinds: the **secret key** (full access - server-side only) and the "
+        "**public key** (restricted to recommendations and event tracking - "
+        "safe to embed in a web page)."
+    ),
+)
 
 
-async def _resolve_client_id(
-    background_tasks: BackgroundTasks, api_key: Optional[str], min_scope: str,
-) -> int:
+@dataclass(frozen=True)
+class Caller:
+    client_id: int
+    scope: str  # "secret" | "public"
+
+
+async def _authenticate(background_tasks: BackgroundTasks, api_key: Optional[str], min_scope: str) -> Caller:
     if not api_key:
         raise HTTPException(status_code=401, detail="Missing X-API-Key header")
     result = get_client_and_scope_by_api_key(api_key)
@@ -199,7 +218,13 @@ async def _resolve_client_id(
     # Off the request's critical path - a monitoring side-effect must never slow down
     # actual recommendation serving.
     background_tasks.add_task(touch_client_usage, client_id)
-    return client_id
+    return Caller(client_id, scope)
+
+
+async def _resolve_client_id(
+    background_tasks: BackgroundTasks, api_key: Optional[str], min_scope: str,
+) -> int:
+    return (await _authenticate(background_tasks, api_key, min_scope)).client_id
 
 
 async def get_current_client_id(
@@ -214,9 +239,74 @@ async def get_current_client_id_public_ok(
     background_tasks: BackgroundTasks, api_key: Optional[str] = Security(api_key_header),
 ) -> int:
     """Accepts either key. Only used on endpoints safe to call directly from a browser
-    with the restricted public key: reading recommendations/products, and recording
-    purchase/view events - see the two-tier key architecture in db.py's ClientModel."""
+    with the restricted public key: reading recommendations, and recording
+    events - see the two-tier key architecture in db.py's ClientModel."""
     return await _resolve_client_id(background_tasks, api_key, "public")
+
+
+async def get_caller_public_ok(
+    background_tasks: BackgroundTasks, api_key: Optional[str] = Security(api_key_header),
+) -> Caller:
+    """Same as get_current_client_id_public_ok, for the few endpoints whose behavior also
+    depends on WHICH key was used (POST /getRec's `debug`)."""
+    return await _authenticate(background_tasks, api_key, "public")
+
+
+_CATALOG_PATTERN = r'^[a-zA-Z0-9_-]+$'
+DEFAULT_CATALOG = "default"
+
+ProductType = Annotated[str, Query(
+    min_length=1, max_length=64, pattern=_CATALOG_PATTERN,
+    description="Catalog namespace, e.g. 'movies' or a customer's own catalog name",
+)]
+
+# How long a client's list of catalogs is remembered when resolving an omitted data_product_type.
+_CATALOG_CACHE_SECONDS = 30
+_catalog_cache: dict[int, tuple[float, list[str]]] = {}
+
+
+def _catalogs_of(client_id: int) -> list[str]:
+    cached = _catalog_cache.get(client_id)
+    if cached and time.monotonic() - cached[0] < _CATALOG_CACHE_SECONDS:
+        return cached[1]
+    catalogs = list_catalogs_for_client(client_id)
+    _catalog_cache[client_id] = (time.monotonic(), catalogs)
+    return catalogs
+
+
+def resolve_catalog(
+    data_product_type: Optional[str] = Query(
+        None, min_length=1, max_length=64, pattern=_CATALOG_PATTERN,
+        description=(
+            "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when "
+            f"omitted, the account's only catalog is used, or `{DEFAULT_CATALOG}` if it has none yet. "
+            "An account with several catalogs must say which (`422` otherwise)."
+        ),
+        examples=["shop"],
+    ),
+    api_key: Optional[str] = Security(api_key_header),
+) -> str:
+    """Query parameter of every API-key route. Explicit always wins. Omitted: the account's single
+    catalog (items or events), else "default" for a brand-new account; several -> 422, never a
+    silent guess between them. An unknown/missing key falls through to "default" - the auth
+    dependency of the route rejects it right after with the proper 401."""
+    if data_product_type is not None:
+        return data_product_type
+    resolved = get_client_and_scope_by_api_key(api_key) if api_key else None
+    if resolved is None:
+        return DEFAULT_CATALOG
+    catalogs = _catalogs_of(resolved[0])
+    if len(catalogs) > 1:
+        raise HTTPException(
+            status_code=422,
+            detail="data_product_type is required: this account has several catalogs - say which one you mean",
+        )
+    return catalogs[0] if catalogs else DEFAULT_CATALOG
+
+
+# Same parameter, resolved as above - used by every route authenticated with an API key.
+# (The account/admin routes authenticated by Supabase JWT keep the plain, required ProductType.)
+Catalog = Annotated[str, Depends(resolve_catalog)]
 
 
 # Separate from the X-API-Key mechanism above: this verifies a Supabase-issued session
@@ -238,8 +328,8 @@ def _decode_supabase_jwt(authorization: Optional[str]) -> dict:
     try:
         signing_key = _supabase_jwks_client.get_signing_key_from_jwt(token)
         return jwt.decode(token, signing_key.key, algorithms=["ES256", "RS256"], audience="authenticated")
-    except jwt.PyJWTError as error:
-        raise HTTPException(status_code=401, detail=f"Invalid session token: {error}")
+    except jwt.PyJWTError:
+        raise HTTPException(status_code=401, detail="Invalid session token")
 
 
 async def get_current_supabase_user_id(authorization: Optional[str] = Header(None)) -> str:
@@ -269,117 +359,6 @@ def to_records_or_404(data, not_found_status=404):
     if "Error" in data.columns:
         raise HTTPException(status_code=not_found_status, detail=data["Error"].iloc[0])
     return json.loads(data.to_json(orient="records", date_format="iso"))
-
-
-def normalize_scores(series: pd.Series) -> pd.Series:
-    """Min-max normalize a score series to [0, 1] so two differently-scaled signals
-    (content cosine similarity, ALS score) can be blended with a meaningful weight."""
-    if series.empty:
-        return series
-    span = series.max() - series.min()
-    if span == 0:
-        return series * 0.0 + 1.0
-    return (series - series.min()) / span
-
-
-def diversify_by_genre(candidates: pd.DataFrame, allowed_genres: set, count: int, genre_first: bool = False) -> pd.DataFrame:
-    """Guarantees at least half the results share a genre the visitor has shown interest
-    in. Fixes a real failure mode: a single candidate can score anomalously high on both
-    TF-IDF and semantic similarity purely from a coincidental shared phrase (e.g. "The Bad
-    Guys 2" naming its rival gang "The Bad Girls" in-story, which text similarity reads as
-    a strong match to an unrelated film literally titled "Bad Girls") and crowd out every
-    genre-appropriate alternative.
-
-    genre_first=False (default, used by /getRec/content - the "Pourquoi ?"/Cold start
-    pages): guarantees inclusion but re-ranks the union by raw score, so a genuinely
-    dominant cross-genre match (Jurassic Park for Jurassic World Rebirth, Avengers sequels
-    for The Avengers) still wins the top spot on merit.
-
-    genre_first=True (used by /getRec/session - "Vous aimerez aussi" on the homepage/
-    product pages): genre-matched candidates are placed ahead of cross-genre ones
-    regardless of raw score. Verified empirically that no score-based reweighting can
-    separate a spurious cross-genre match (Bad Girls) from a genuine one (Jurassic Park) -
-    both dominate their pool by a comparable margin on every available signal - so fixing
-    one via score alone would have silently broken the other. This trades away Jurassic
-    Park's top spot in this specific endpoint to guarantee Bad Guys 2 surfaces real family
-    films first; the "Pourquoi ?" page keeps the other behavior."""
-    if not allowed_genres:
-        return candidates.sort_values('score', ascending=False).head(count)
-
-    ranked = candidates.sort_values('score', ascending=False)
-    quota = math.ceil(count / 2)
-    same_genre = ranked[ranked['genre_1'].isin(allowed_genres)].head(quota)
-    remaining = count - len(same_genre)
-    others = ranked[~ranked['work_id'].isin(same_genre['work_id'])].head(remaining)
-    if genre_first:
-        return pd.concat([same_genre, others])
-    return pd.concat([same_genre, others]).sort_values('score', ascending=False)
-
-
-def compute_session_recs(product_type: str, client_id: int, viewed_ids: list, count: int) -> list:
-    """Recency-weighted content recs from a list of recently viewed work_ids - shared by
-    the stateless /getRec/session (anonymous, client-supplied list) and
-    /getRec/sessionForUser (logged-in, list sourced from persisted history) endpoints,
-    so both personalization paths rank recs exactly the same way."""
-    data_works = get_data(product_type, product_id=None, count=None, client_id=client_id)
-    valid_viewed_ids = [wid for wid in viewed_ids if (data_works['work_id'] == wid).any()]
-    if not valid_viewed_ids:
-        return []
-
-    data_similarities = get_data_similarities(data_works)
-    cosine_sim, indices = get_cosine_similarities_cached(
-        data_works, data_similarities['bag_of_words'], stopwords_terms, "Tfidf", client_id, product_type
-    )
-
-    work_id_to_idx = dict(zip(data_works['work_id'], range(len(data_works))))
-
-    # Recency weighting: the most recently viewed item (last in the list) counts most
-    n = len(valid_viewed_ids)
-    weights = [(i + 1) / n for i in range(n)]
-
-    combined_scores = np.zeros(cosine_sim.shape[0])
-    for work_id, weight in zip(valid_viewed_ids, weights):
-        combined_scores += weight * cosine_sim[work_id_to_idx[work_id]]
-
-    viewed_idx_set = {work_id_to_idx[wid] for wid in valid_viewed_ids}
-    order = np.argsort(combined_scores)[::-1]
-
-    # Genres the visitor has shown interest in across everything viewed so far - used
-    # below to keep one anomalously-scoring cross-genre match from crowding out every
-    # genre-appropriate alternative (see diversify_by_genre).
-    viewed_genres = set(data_works.loc[data_works['work_id'].isin(valid_viewed_ids), 'genre_1'].dropna())
-
-    pool_size = min(len(data_works), count * 5 + 1)
-    pool_rows = []
-    for idx in order:
-        if idx in viewed_idx_set:
-            continue
-
-        # Which viewed item most drove this particular recommendation
-        best_source_wid, best_sim = None, -1.0
-        for source_wid in valid_viewed_ids:
-            sim = cosine_sim[work_id_to_idx[source_wid], idx]
-            if sim > best_sim:
-                best_sim, best_source_wid = sim, source_wid
-        source_title = data_works.loc[data_works['work_id'] == best_source_wid, 'title'].iloc[0]
-
-        row = data_works.iloc[idx].to_dict()
-        row['score'] = float(combined_scores[idx])
-        row['explanation'] = {
-            "reason": f"Similaire à « {source_title} », consulté récemment",
-            "content_similarity": float(best_sim),
-            "source_work_ids": valid_viewed_ids,
-        }
-        pool_rows.append(row)
-        if len(pool_rows) >= pool_size:
-            break
-
-    if not pool_rows:
-        return []
-
-    final_df = diversify_by_genre(pd.DataFrame(pool_rows), viewed_genres, count, genre_first=True)
-    return json.loads(final_df.to_json(orient='records', date_format='iso'))
-
 
 # In-memory store for background training jobs. Fine for this single-process demo API;
 # would need a shared store (DB/Redis) behind multiple workers or processes.
@@ -411,7 +390,10 @@ def run_generate_model_job(job_id: str, client_id: int, product_type: str, trigg
         # into the event loop instead of surfacing anywhere, so report it to Sentry
         # explicitly rather than relying on its default unhandled-exception capture.
         sentry_sdk.capture_exception(error)
-        GENERATE_MODEL_JOBS[job_id].update(status="failed", detail=str(error))
+        # The raw exception text (file paths, SQL, library internals) stays in the logs /
+        # Sentry; the job status the customer polls only gets a generic reason.
+        log_event("training_failed", level=logging.ERROR, job_id=job_id, client_id=client_id, error_type=type(error).__name__)
+        GENERATE_MODEL_JOBS[job_id].update(status="failed", detail=f"Training failed ({type(error).__name__}) - contact support with this job_id")
 
 
 # Automatic retraining, triggered by accumulated interaction volume rather than a blind
@@ -474,39 +456,73 @@ def maybe_trigger_auto_retrain(client_id: int, product_type: str, background_tas
 
 
 app_description = (
-    "API to serve product recommendations based on Machine Learning - AI models, for any product catalog.\n\n"
-    "- Multi-tenant: every request authenticates via X-API-Key to a specific client, whose catalog/events/model are fully isolated\n"
-    "- Two-tier keys: a secret key (full access, server-side only) and a restricted public key "
-    "(recommendations + interaction tracking only) safe to embed in client-side JS\n"
-    "- Catalog ingestion: push your own products (content profile) and purchase/view events\n"
-    "- Content-based recommendations: TF-IDF cosine similarity blended with pgvector semantic "
-    "embeddings (sentence-transformers), computed at ingestion time and stored in Postgres - "
-    "no separate vector database to run\n"
-    "- Collaborative filtering powered by implicit ALS, with model versioning/promotion gating "
-    "and MLflow tracking\n"
-    "- Legacy Pinecone-based vector endpoints are frozen (kept working, superseded by the "
-    "pgvector integration above)"
+    "Recommendations for any web application: send your **items** (catalog), your **users** "
+    "and their **events**, get back a ranked list of items.\n\n"
+    "### Quick start\n"
+    "1. `PUT /items/{item_id}` (or `POST /items/import`) - push your catalog, using your own ids.\n"
+    "2. `POST /events/{event_type}` (or `/events/batch`) - track what visitors do.\n"
+    "3. `POST /getRec` - ask for recommendations. You get a `recommendation_id`; send it back "
+    "on the `impression` / `click` / `add_to_cart` / `purchase` events to attribute them.\n\n"
+    "### Concepts\n"
+    "- **Ids are your own strings** (`user_123`, `SKU-NIKE-001`, a UUID, `gid://shopify/Product/123456`). "
+    "Integers are still accepted for backward compatibility and treated as their decimal string.\n"
+    "- **session_id** identifies an anonymous visitor: no login needed to track or recommend. "
+    "An event may carry both `user_id` and `session_id`.\n"
+    "- **placement** is a free-form label of where recommendations appear (`homepage`, `cart`, ...). "
+    "Not a resource, no list to maintain.\n"
+    "- **data_product_type** is the catalog namespace (query parameter), used to keep several catalogs of one "
+    "account apart. It is **optional**: omit it and the account's only catalog is used (`default` for a new "
+    "account); an account with several catalogs must name one (`422` otherwise).\n"
+    "- Multi-tenant: every request authenticates via `X-API-Key` to one account whose data is fully isolated.\n"
+    "- Two-tier keys: the **secret key** (full access, server-side only) and a restricted **public key** "
+    "(recommendations and event tracking only) safe to embed in client-side JS.\n\n"
+    "### Under the hood\n"
+    "TF-IDF + pgvector semantic embeddings for content similarity, implicit ALS for collaborative "
+    "filtering with model versioning/promotion gating, popularity as the cold-start fallback. "
+    "`POST /getRec` chooses between them for you; the strategy-specific `GET /getRec/*` endpoints "
+    "remain for expert use. Legacy Pinecone-based vector endpoints are frozen.\n\n"
+    "### Errors\n"
+    "Every error body is `{\"detail\": ..., \"request_id\": ...}`; the same id is in the `X-Request-ID` "
+    "response header. Send your own `X-Request-ID` to correlate with your logs.\n\n"
+    "### Rate limits (enforced at the gateway, per client IP)\n"
+    "`/getRec*`: 100 req/s (burst 100) · `/events*`: 100 req/s (burst 200) · catalog & users "
+    "(`/items*`, `/users*`, `/products*`): 20 req/s (burst 40) · admin & account: 5 req/s "
+    "(burst 10) · CSV import: 2 req/s (burst 5) · everything else: 20 req/s (burst 10). "
+    "Exceeding a limit returns `429`. Batch endpoints (`/events/batch`, "
+    "`/items/import`, `/users/import`) exist to keep server-side traffic well under these."
 )
 
-app = FastAPI(title="ML API - Predict Rec Products",
+app = FastAPI(title="LIKYLY Recommendations API",
               description=app_description,
-              version="0.0.1",
+              version="0.2.0",
               openapi_tags=tags_metadata,
-              root_path="/recsys-api"
+              root_path="/recsys-api",
+              servers=[{"url": "https://api.likyly.com", "description": "Production"}],
+              # Operation ids = handler names (items_upsert, recommendations_get, ...) instead of
+              # FastAPI's default "name_path_method" noise - stable ids are what SDK generators key on.
+              generate_unique_id_function=lambda route: route.name,
               )
 
 
-class Item(BaseModel):
-    count: int = Field(default='3')
-    user_name: int = Field(default='Arnaud Breton')
+def _errors(*codes: int) -> dict:
+    """OpenAPI `responses` entries for the error statuses an operation can return - every
+    error body shares the ErrorResponse shape (detail + request_id)."""
+    docs = {
+        401: "Missing, invalid or revoked `X-API-Key`.",
+        403: "The public key can't do this (secret key required), or a plan limit was reached.",
+        404: "The referenced resource does not exist for this account.",
+        422: "The request is malformed - `detail` lists the offending fields.",
+    }
+    responses: dict = {code: {"model": ErrorResponse, "description": docs[code]} for code in codes}
+    responses[429] = {"description": "Rate limit exceeded at the API gateway - retry shortly."}
+    return responses
 
-    #df: Json[Any] = Field(default='{"count": 3}')
 
-@app.get("/")
+@app.get("/", summary="API root", description="Liveness message; also a cheap way to check the API is reachable.", tags=["models"], include_in_schema=False)
 async def root():
-    return {"message": "LIKYLY recsys API - content-based (TF-IDF + pgvector semantic embeddings) and collaborative filtering (implicit ALS) recommendations"}
+    return {"message": "LIKYLY recommendations API - content-based (TF-IDF + pgvector semantic embeddings) and collaborative filtering (implicit ALS) recommendations"}
 
-@app.post("/clients/me", tags=["selfServiceClient"], response_model=ClientSelf)
+@app.post("/clients/me", tags=["selfServiceClient"], response_model=ClientSelf, summary="Get or create my account", responses=_errors(401))
 async def get_or_create_my_client(identity: tuple[str, Optional[str]] = Depends(get_current_supabase_identity)):
     """Called from the website once a Supabase user is logged in. First call for a given
     account provisions a client + both keys (each shown once); later calls just confirm
@@ -536,7 +552,7 @@ async def get_or_create_my_client(identity: tuple[str, Optional[str]] = Depends(
         "product_types": [],
     }
 
-@app.post("/clients/me/regenerate-secret-key", tags=["selfServiceClient"], response_model=ClientSelf)
+@app.post("/clients/me/regenerate-secret-key", tags=["selfServiceClient"], response_model=ClientSelf, summary="Regenerate my secret key", responses=_errors(401, 404))
 async def regenerate_my_secret_key(supabase_user_id: str = Depends(get_current_supabase_user_id)):
     """Invalidates the current secret key and issues a new one - the only way to recover
     from a lost key, since the raw value is never stored."""
@@ -554,7 +570,7 @@ async def regenerate_my_secret_key(supabase_user_id: str = Depends(get_current_s
         "product_types": list_product_types_for_client(existing["id"]),
     }
 
-@app.post("/clients/me/regenerate-public-key", tags=["selfServiceClient"], response_model=ClientSelf)
+@app.post("/clients/me/regenerate-public-key", tags=["selfServiceClient"], response_model=ClientSelf, summary="Regenerate my public key", responses=_errors(401, 404))
 async def regenerate_my_public_key(supabase_user_id: str = Depends(get_current_supabase_user_id)):
     """Same as regenerate-secret-key, for the restricted public key."""
     existing = get_client_by_supabase_user_id(supabase_user_id)
@@ -571,7 +587,7 @@ async def regenerate_my_public_key(supabase_user_id: str = Depends(get_current_s
         "product_types": list_product_types_for_client(existing["id"]),
     }
 
-@app.get("/clients/me/usage", tags=["selfServiceClient"], response_model=ClientUsageSummary)
+@app.get("/clients/me/usage", tags=["selfServiceClient"], response_model=ClientUsageSummary, summary="My plan usage", responses=_errors(401, 404))
 async def get_my_usage(supabase_user_id: str = Depends(get_current_supabase_user_id)):
     """Account-wide plan/product-count numbers for the self-service dashboard - separate
     from /clients/me/models/status, which is scoped to one product_type."""
@@ -587,7 +603,7 @@ async def get_my_usage(supabase_user_id: str = Depends(get_current_supabase_user
         "product_limit": get_plan_limits(plan)["product_limit"],
     }
 
-@app.get("/clients/me/event-types", tags=["selfServiceClient"], response_model=List[EventType])
+@app.get("/clients/me/event-types", tags=["selfServiceClient"], response_model=List[EventType], summary="List my event types", responses=_errors(401, 404))
 async def list_my_event_types(supabase_user_id: str = Depends(get_current_supabase_user_id)):
     """Every event type this tenant has registered - "purchase"/"view" always exist
     (seeded at client creation, see seed_default_event_types in db.py); others appear
@@ -596,15 +612,17 @@ async def list_my_event_types(supabase_user_id: str = Depends(get_current_supaba
     client_id = await _resolve_my_client_id(supabase_user_id)
     return get_client_event_types(client_id)
 
-@app.post("/clients/me/event-types", tags=["selfServiceClient"], response_model=EventType)
+@app.post("/clients/me/event-types", tags=["selfServiceClient"], response_model=EventType, summary="Register an event type", responses=_errors(401, 404, 422))
 async def create_my_event_type(payload: EventTypeCreate, supabase_user_id: str = Depends(get_current_supabase_user_id)):
+    """Registers an event type for this account with a label and a training-weight tier (`aucun`, `faible`, `moyen`, `fort`). Types are also auto-registered the first time they are sent to `POST /events/{event_type}`."""
     if payload.tier not in EVENT_TIER_WEIGHTS:
         raise HTTPException(status_code=422, detail=f"Unknown tier '{payload.tier}' - must be one of {sorted(EVENT_TIER_WEIGHTS)}")
     client_id = await _resolve_my_client_id(supabase_user_id)
     return upsert_client_event_type(client_id, payload.event_type, payload.label, payload.tier)
 
-@app.patch("/clients/me/event-types/{event_type}", tags=["selfServiceClient"], response_model=EventType)
+@app.patch("/clients/me/event-types/{event_type}", tags=["selfServiceClient"], response_model=EventType, summary="Update an event type", responses=_errors(401, 404, 422))
 async def update_my_event_type(event_type: EventTypePath, payload: EventTypeUpdate, supabase_user_id: str = Depends(get_current_supabase_user_id)):
+    """Changes the label and/or tier of an existing event type. Past events keep their type; only future training uses the new weight."""
     if payload.tier is not None and payload.tier not in EVENT_TIER_WEIGHTS:
         raise HTTPException(status_code=422, detail=f"Unknown tier '{payload.tier}' - must be one of {sorted(EVENT_TIER_WEIGHTS)}")
     client_id = await _resolve_my_client_id(supabase_user_id)
@@ -617,7 +635,7 @@ async def update_my_event_type(event_type: EventTypePath, payload: EventTypeUpda
         payload.tier if payload.tier is not None else existing["tier"],
     )
 
-@app.delete("/clients/me/event-types/{event_type}", tags=["selfServiceClient"], response_model=Message)
+@app.delete("/clients/me/event-types/{event_type}", tags=["selfServiceClient"], response_model=Message, summary="Delete an event type", responses=_errors(401, 404, 422))
 async def delete_my_event_type(event_type: EventTypePath, supabase_user_id: str = Depends(get_current_supabase_user_id)):
     """Deleting the definition doesn't touch past interactions already recorded under
     this event_type - they fall back to the default tier's weight in training (see
@@ -639,142 +657,170 @@ def _clean_cell(row, column: str):
     return value
 
 
+def _cell_id(row, *columns: str) -> Optional[str]:
+    """First non-empty of the given columns, as a string. The CSV is read with every cell as
+    text (see _read_import_csv), so an id like "007" or "SKU-1" survives untouched instead of
+    being coerced to a number."""
+    for column in columns:
+        value = _clean_cell(row, column)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return None
+
+
+def _cell_int(row, column: str) -> Optional[int]:
+    value = _clean_cell(row, column)
+    return int(float(value)) if value is not None else None
+
+
+def _cell_str(row, column: str) -> Optional[str]:
+    value = _clean_cell(row, column)
+    return str(value) if value is not None else None
+
+
 def _read_import_csv(file: UploadFile) -> pd.DataFrame:
     try:
-        return pd.read_csv(file.file)
+        # dtype=str: ids are opaque strings now - never let pandas turn them into numbers.
+        return pd.read_csv(file.file, dtype=str)
     except Exception as error:
         raise HTTPException(status_code=422, detail=f"Could not parse CSV: {error}")
+
+
+def _row_error_message(error: Exception) -> str:
+    """What a CSV row's failure may say to the uploader. Validation problems (bad value,
+    missing column, plan limit) are theirs to fix and safe to show; anything else - a database
+    error carries the SQL statement and its parameters - is not, so it is logged and replaced."""
+    from pydantic import ValidationError
+    if isinstance(error, (ValueError, KeyError, PlanLimitError)) and not isinstance(error, ValidationError):
+        return str(error)
+    if isinstance(error, ValidationError):
+        return "; ".join(f"{'.'.join(str(p) for p in e['loc'])}: {e['msg']}" for e in error.errors())
+    log_event("csv_row_failed", level=logging.ERROR, error_type=type(error).__name__)
+    return "Unexpected error while importing this row"
 
 
 def _import_summary(rows_total: int, errors: list[dict]) -> dict:
     return {"rows_total": rows_total, "rows_ok": rows_total - len(errors), "errors": errors}
 
 
-@app.post("/clients/me/import/products", tags=["selfServiceClient"], response_model=ImportSummary)
+@app.post(
+    "/clients/me/import/products", tags=["selfServiceClient"], response_model=ImportSummary,
+    summary="Import items from a CSV file",
+    responses=_errors(401, 422),
+)
 async def import_my_products(
     data_product_type: ProductType, file: UploadFile = File(...),
     supabase_user_id: str = Depends(get_current_supabase_user_id),
 ):
-    """Bulk equivalent of PUT /products/{id}/profile - columns:
-    work_id,title,description,genre_1,author,year,url,price (only work_id/title
-    required). A bad row is skipped and reported, not fatal to the whole import."""
+    """Bulk equivalent of PUT /items/{item_id} - columns:
+    item_id,title,description,genre_1,author,year,url,price (only item_id/title required;
+    `work_id` is accepted as a deprecated name for `item_id`). A bad row is skipped and
+    reported, not fatal to the whole import."""
     client_id = await _resolve_my_client_id(supabase_user_id)
     df = _read_import_csv(file)
-    product_limit = get_plan_limits(get_client_plan(client_id))["product_limit"]
 
     errors = []
     for i, row in df.iterrows():
         try:
-            work_id = int(row["work_id"])
-            title = _clean_cell(row, "title")
+            item_id = _cell_id(row, "item_id", "work_id")
+            if item_id is None:
+                raise ValueError("item_id is required")
+            title = _cell_str(row, "title")
             if not title:
                 raise ValueError("title is required")
-
-            is_new_product = not product_exists(client_id, data_product_type, work_id)
-            if is_new_product and product_limit is not None and count_products_for_client(client_id) >= product_limit:
-                raise ValueError(f"Free plan limit reached: {product_limit} products max")
-
-            description = _clean_cell(row, "description")
-            genre_1 = _clean_cell(row, "genre_1")
-            year_cell = _clean_cell(row, "year")
-            price_cell = _clean_cell(row, "price")
-            upsert_product_profile(
-                product_type=data_product_type, work_id=work_id, title=str(title),
-                description=str(description) if description is not None else None,
-                genre_1=str(genre_1) if genre_1 is not None else None,
-                author=(lambda a: str(a) if a is not None else None)(_clean_cell(row, "author")),
-                year=int(year_cell) if year_cell is not None else None,
-                url=(lambda u: str(u) if u is not None else None)(_clean_cell(row, "url")),
-                price=float(price_cell) if price_cell is not None else None,
-                client_id=client_id,
-            )
-            try:
-                compute_and_store_product_embedding(
-                    client_id=client_id, product_type=data_product_type, work_id=work_id,
-                    title=str(title),
-                    description=str(description) if description is not None else None,
-                    genre_1=str(genre_1) if genre_1 is not None else None,
-                )
-            except Exception:
-                pass  # non-fatal, same as the single-item endpoint
+            price = _clean_cell(row, "price")
+            upsert_item(client_id, data_product_type, item_id, ItemUpsert(
+                title=title, description=_cell_str(row, "description"),
+                genre_1=_cell_str(row, "genre_1"), author=_cell_str(row, "author"),
+                year=_cell_int(row, "year"), url=_cell_str(row, "url"),
+                price=float(price) if price is not None else None,
+            ))
         except Exception as error:
-            errors.append({"row": i + 2, "message": str(error)})
+            errors.append({"row": i + 2, "message": _row_error_message(error)})
 
     return _import_summary(len(df), errors)
 
 
-@app.post("/clients/me/import/users", tags=["selfServiceClient"], response_model=ImportSummary)
+@app.post(
+    "/clients/me/import/users", tags=["selfServiceClient"], response_model=ImportSummary,
+    summary="Import users from a CSV file",
+    responses=_errors(401, 422),
+)
 async def import_my_users(
     data_product_type: ProductType, file: UploadFile = File(...),
     supabase_user_id: str = Depends(get_current_supabase_user_id),
 ):
-    """Bulk equivalent of a user profile upsert - columns:
+    """Bulk equivalent of PUT /users/{user_id} - columns:
     user_id,user_gender,user_age,user_zip,user_firstname,user_lastname (only user_id
-    required - user profiles are optional enrichment, interactions work with bare
-    user_ids alone)."""
+    required - user profiles are optional enrichment, events work with bare user_ids
+    alone)."""
     client_id = await _resolve_my_client_id(supabase_user_id)
     df = _read_import_csv(file)
 
     errors = []
     for i, row in df.iterrows():
         try:
-            user_id = int(row["user_id"])
-            age_cell = _clean_cell(row, "user_age")
-            zip_cell = _clean_cell(row, "user_zip")
-            upsert_user(
-                product_type=data_product_type, user_id=user_id,
-                user_gender=(lambda g: str(g) if g is not None else None)(_clean_cell(row, "user_gender")),
-                user_age=int(age_cell) if age_cell is not None else None,
-                user_zip=int(zip_cell) if zip_cell is not None else None,
-                user_firstname=(lambda f: str(f) if f is not None else None)(_clean_cell(row, "user_firstname")),
-                user_lastname=(lambda l: str(l) if l is not None else None)(_clean_cell(row, "user_lastname")),
-                client_id=client_id,
-            )
+            user_id = _cell_id(row, "user_id")
+            if user_id is None:
+                raise ValueError("user_id is required")
+            upsert_user_profile(client_id, data_product_type, user_id, UserUpsert(
+                user_gender=_cell_str(row, "user_gender"), user_age=_cell_int(row, "user_age"),
+                user_zip=_cell_int(row, "user_zip"), user_firstname=_cell_str(row, "user_firstname"),
+                user_lastname=_cell_str(row, "user_lastname"),
+            ))
         except Exception as error:
-            errors.append({"row": i + 2, "message": str(error)})
+            errors.append({"row": i + 2, "message": _row_error_message(error)})
 
     return _import_summary(len(df), errors)
 
 
-@app.post("/clients/me/import/interactions", tags=["selfServiceClient"], response_model=ImportSummary)
+@app.post(
+    "/clients/me/import/interactions", tags=["selfServiceClient"], response_model=ImportSummary,
+    summary="Import events from a CSV file",
+    responses=_errors(401, 422),
+)
 async def import_my_interactions(
     data_product_type: ProductType, event_type: EventTypeQuery, background_tasks: BackgroundTasks,
     file: UploadFile = File(...), supabase_user_id: str = Depends(get_current_supabase_user_id),
 ):
     """Bulk equivalent of POST /events/{event_type} - columns:
-    user_id,work_id,quantity,occurred_at (only user_id/work_id required; quantity
-    defaults to 1). Goes through the same record_interaction_event path as single-event
-    ingestion, so it auto-registers a new event_type and can trigger an auto-retrain."""
+    user_id,session_id,item_id,quantity,occurred_at,event_id (only item_id and one of
+    user_id/session_id required; `work_id` is accepted as a deprecated name for `item_id`;
+    quantity defaults to 1). Goes through the same record_events path as single-event
+    ingestion, so it auto-registers a new event_type, honors event_id de-duplication, and can
+    trigger an auto-retrain."""
     client_id = await _resolve_my_client_id(supabase_user_id)
     df = _read_import_csv(file)
 
     errors = []
+    events = []
     for i, row in df.iterrows():
         try:
-            user_id = int(row["user_id"])
-            work_id = int(row["work_id"])
-            quantity_cell = _clean_cell(row, "quantity")
-            quantity = int(quantity_cell) if quantity_cell is not None else 1
-            occurred_at_cell = _clean_cell(row, "occurred_at")
-            occurred_at = pd.to_datetime(occurred_at_cell) if occurred_at_cell is not None else None
-            record_interaction_event(
-                client_id, data_product_type, event_type, user_id, work_id,
-                quantity, occurred_at, background_tasks,
-            )
+            occurred_at = _clean_cell(row, "occurred_at")
+            quantity = _cell_int(row, "quantity")
+            events.append((event_type, Event(
+                user_id=_cell_id(row, "user_id"), session_id=_cell_id(row, "session_id"),
+                item_id=_cell_id(row, "item_id", "work_id"), event_id=_cell_id(row, "event_id"),
+                quantity=quantity if quantity is not None else 1,
+                occurred_at=pd.to_datetime(occurred_at).to_pydatetime() if occurred_at is not None else None,
+            )))
         except Exception as error:
-            errors.append({"row": i + 2, "message": str(error)})
+            errors.append({"row": i + 2, "message": _row_error_message(error)})
+
+    outcome = record_events(client_id, data_product_type, events)
+    if outcome.carries_signal:
+        maybe_trigger_auto_retrain(client_id, data_product_type, background_tasks)
 
     return _import_summary(len(df), errors)
 
-
-@app.get("/admin/clients", tags=["admin"], response_model=List[ClientAdminView])
+@app.get("/admin/clients", tags=["admin"], response_model=List[ClientAdminView], summary="List all clients", responses=_errors(401, 403))
 async def admin_list_clients(admin_user_id: str = Depends(get_current_admin_user_id)):
     """Operator-only: every client across the whole system, not scoped to the caller's
     own account - gated by app_metadata.is_admin, entirely separate from the
     self-service /clients/me* endpoints above."""
     return list_all_clients_with_usage()
 
-@app.get("/admin/clients/{client_id}", tags=["admin"], response_model=ClientAdminView)
+@app.get("/admin/clients/{client_id}", tags=["admin"], response_model=ClientAdminView, summary="Get a client", responses=_errors(401, 403, 404))
 async def admin_get_client(client_id: int, admin_user_id: str = Depends(get_current_admin_user_id)):
     """Single-client detail (for the admin panel's side drawer) - same shape as one row
     of GET /admin/clients, without re-fetching the whole list."""
@@ -783,7 +829,7 @@ async def admin_get_client(client_id: int, admin_user_id: str = Depends(get_curr
         raise HTTPException(status_code=404, detail="Client not found")
     return row
 
-@app.patch("/admin/clients/{client_id}", tags=["admin"], response_model=ClientAdminView)
+@app.patch("/admin/clients/{client_id}", tags=["admin"], response_model=ClientAdminView, summary="Rename a client or change its plan", responses=_errors(401, 403, 404, 422))
 async def admin_update_client(client_id: int, payload: ClientRename, admin_user_id: str = Depends(get_current_admin_user_id)):
     """Renames the client and/or changes its plan - contact_email is intentionally not
     editable here, since it's re-synced from the linked Supabase account's JWT on every
@@ -799,11 +845,12 @@ async def admin_update_client(client_id: int, payload: ClientRename, admin_user_
         set_client_plan(client_id, payload.plan)
     return get_client_admin_row(client_id)
 
-@app.get("/admin/clients/{client_id}/usage", tags=["admin"], response_model=List[DailyUsage])
+@app.get("/admin/clients/{client_id}/usage", tags=["admin"], response_model=List[DailyUsage], summary="Client daily usage", responses=_errors(401, 403))
 async def admin_client_usage(client_id: int, days: int = 30, admin_user_id: str = Depends(get_current_admin_user_id)):
+    """Requests per day for one client over the last `days` days (default 30)."""
     return get_client_usage_by_day(client_id, days)
 
-@app.get("/admin/clients/{client_id}/models", tags=["admin"], response_model=List[ModelStatus])
+@app.get("/admin/clients/{client_id}/models", tags=["admin"], response_model=List[ModelStatus], summary="Client models", responses=_errors(401, 403, 404))
 async def admin_client_models(client_id: int, admin_user_id: str = Depends(get_current_admin_user_id)):
     """One entry per catalog (product_type) this client has pushed products for - the
     active model's training date and whether it came from a manual call or an automatic
@@ -813,7 +860,7 @@ async def admin_client_models(client_id: int, admin_user_id: str = Depends(get_c
         raise HTTPException(status_code=404, detail="Client not found")
     return [build_model_status(client_id, product_type) for product_type in list_product_types_for_client(client_id)]
 
-@app.post("/admin/clients/{client_id}/disable", tags=["admin"], response_model=Message)
+@app.post("/admin/clients/{client_id}/disable", tags=["admin"], response_model=Message, summary="Disable a client", responses=_errors(401, 403, 404))
 async def admin_disable_client(client_id: int, admin_user_id: str = Depends(get_current_admin_user_id)):
     """Suspends a client: both its keys stop authenticating immediately (see
     get_client_and_scope_by_api_key's is_active check), without touching their data -
@@ -822,13 +869,14 @@ async def admin_disable_client(client_id: int, admin_user_id: str = Depends(get_
         raise HTTPException(status_code=404, detail="Client not found")
     return {"message": "Client disabled"}
 
-@app.post("/admin/clients/{client_id}/enable", tags=["admin"], response_model=Message)
+@app.post("/admin/clients/{client_id}/enable", tags=["admin"], response_model=Message, summary="Enable a client", responses=_errors(401, 403, 404))
 async def admin_enable_client(client_id: int, admin_user_id: str = Depends(get_current_admin_user_id)):
+    """Re-enables a suspended client: both its keys authenticate again."""
     if not set_client_active(client_id, True):
         raise HTTPException(status_code=404, detail="Client not found")
     return {"message": "Client enabled"}
 
-@app.post("/admin/clients/{client_id}/revoke-secret-key", tags=["admin"], response_model=Message)
+@app.post("/admin/clients/{client_id}/revoke-secret-key", tags=["admin"], response_model=Message, summary="Revoke a client's secret key", responses=_errors(401, 403))
 async def admin_revoke_secret_key(client_id: int, admin_user_id: str = Depends(get_current_admin_user_id)):
     """Kills the client's secret key immediately, with no replacement - use this for
     incident response (e.g. a leaked key), when the point is to cut access off right now
@@ -838,12 +886,13 @@ async def admin_revoke_secret_key(client_id: int, admin_user_id: str = Depends(g
     revoke_secret_key(client_id)
     return {"message": "Secret key revoked - the client must generate a new one from their account page"}
 
-@app.post("/admin/clients/{client_id}/revoke-public-key", tags=["admin"], response_model=Message)
+@app.post("/admin/clients/{client_id}/revoke-public-key", tags=["admin"], response_model=Message, summary="Revoke a client's public key", responses=_errors(401, 403))
 async def admin_revoke_public_key(client_id: int, admin_user_id: str = Depends(get_current_admin_user_id)):
+    """Kills the client's public key immediately, with no replacement - the client must generate a new one from their account page."""
     revoke_public_key(client_id)
     return {"message": "Public key revoked - the client must generate a new one from their account page"}
 
-@app.post("/admin/clients/{client_id}/regenerate-secret-key", tags=["admin"], response_model=ClientSelf)
+@app.post("/admin/clients/{client_id}/regenerate-secret-key", tags=["admin"], response_model=ClientSelf, summary="Regenerate a client's secret key", responses=_errors(401, 403, 404))
 async def admin_regenerate_secret_key(client_id: int, admin_user_id: str = Depends(get_current_admin_user_id)):
     """Unlike revoke, this issues a replacement immediately and returns the raw value to
     the admin - a support workflow (a customer lost their key and needs it communicated
@@ -859,7 +908,7 @@ async def admin_regenerate_secret_key(client_id: int, admin_user_id: str = Depen
         "public_key_rotated_at": row["public_key_rotated_at"],
     }
 
-@app.post("/admin/clients/{client_id}/regenerate-public-key", tags=["admin"], response_model=ClientSelf)
+@app.post("/admin/clients/{client_id}/regenerate-public-key", tags=["admin"], response_model=ClientSelf, summary="Regenerate a client's public key", responses=_errors(401, 403, 404))
 async def admin_regenerate_public_key(client_id: int, admin_user_id: str = Depends(get_current_admin_user_id)):
     """Same as regenerate-secret-key, for the restricted public key."""
     if get_client_admin_row(client_id) is None:
@@ -873,7 +922,7 @@ async def admin_regenerate_public_key(client_id: int, admin_user_id: str = Depen
         "public_key_rotated_at": row["public_key_rotated_at"],
     }
 
-@app.delete("/admin/clients/{client_id}", tags=["admin"], response_model=Message)
+@app.delete("/admin/clients/{client_id}", tags=["admin"], response_model=Message, summary="Delete a client permanently", responses=_errors(401, 403, 404))
 async def admin_delete_client(client_id: int, admin_user_id: str = Depends(get_current_admin_user_id)):
     """Permanently deletes a client and everything scoped to it - catalog, users,
     interactions, model version history, usage counters. There is no undo; the admin UI
@@ -886,143 +935,290 @@ async def admin_delete_client(client_id: int, admin_user_id: str = Depends(get_c
         raise HTTPException(status_code=404, detail="Client not found")
     return {"message": "Client permanently deleted"}
 
-@app.get("/products", tags=["getProducts"], response_model=List[Product])
-async def getProducts(data_product_type: ProductType, product_id: Optional[int] = None, count: Optional[int] = None, client_id: int = Depends(get_current_client_id_public_ok)):
-    # List of products (works, movies, shows)
-    return to_records_or_404(get_data(data_product_type, product_id, count, client_id=client_id))
+# ---------------------------------------------------------------------------
+# Items
+# ---------------------------------------------------------------------------
 
-@app.get("/users", tags=["getUsers"], response_model=List[User])
-async def getUsers(data_product_type: ProductType, user_id: Optional[int] = None, count: Optional[int] = None, client_id: int = Depends(get_current_client_id)):
-    # List of users
-    return to_records_or_404(get_data_users(data_product_type, user_id, count, client_id=client_id))
+ItemIdPath = Annotated[str, Path(
+    min_length=1, max_length=255,
+    description=(
+        "Your own item id - any string, e.g. `SKU-NIKE-001` or `gid://shopify/Product/123456` "
+        "(URL-encode reserved characters). A legacy integer id is just its decimal string."
+    ),
+    examples=["SKU-NIKE-001"],
+)]
+UserIdPath = Annotated[str, Path(
+    min_length=1, max_length=255,
+    description="Your own user id - any string, e.g. `user_123` or a UUID. A legacy integer id is just its decimal string.",
+    examples=["user_123"],
+)]
 
-@app.get("/usersPurchases", tags=["getUsersPurchases"], response_model=List[Purchase])
-async def getUsersPurchases(data_product_type: ProductType, user_id: Optional[int] = None, count: Optional[int] = None, client_id: int = Depends(get_current_client_id)):
-    # List of users purchases
-    return to_records_or_404(get_data_users_purchases(data_product_type, user_id, count, client_id=client_id))
 
-@app.get("/usersRatings", tags=["getUsersRatings"], response_model=List[Rating])
-async def usersRatings(data_product_type: ProductType, user_id: Optional[int] = None, count: Optional[int] = None, client_id: int = Depends(get_current_client_id)):
-    # List of users ratings
-    return to_records_or_404(get_data_users_ratings(data_product_type, user_id, count, client_id=client_id))
+@app.get(
+    "/items", tags=["items"], response_model=List[Item], summary="List items",
+    responses=_errors(401, 403, 422),
+)
+def items_list(
+    response: Response, data_product_type: Catalog,
+    limit: int = Query(100, ge=1, le=1000, description="Page size."),
+    offset: int = Query(0, ge=0, description="Rows to skip."),
+    client_id: int = Depends(get_current_client_id),
+):
+    """One page of the catalog, ordered by creation. The total number of items in this
+    catalog is in the `X-Total-Count` response header. Secret key only: a public key lives in
+    web pages, and must not be able to export your whole catalog (recommendations already
+    return the few items they recommend)."""
+    response.headers["X-Total-Count"] = str(count_products_in_catalog(client_id, data_product_type))
+    return fetch_items(client_id, data_product_type, limit=limit, offset=offset)
 
-@app.get("/usersPageViews", tags=["getUsersPageViews"], response_model=List[PageView])
-async def usersPageViews(data_product_type: ProductType, user_id: Optional[int] = None, count: Optional[int] = None, client_id: int = Depends(get_current_client_id)):
-    # List of users page views
-    return to_records_or_404(get_data_users_page_views(data_product_type, user_id, count, client_id=client_id))
 
-@app.put("/products/{product_id}/profile", tags=["productsIngestion"], response_model=Message)
-async def upsert_product_profile_endpoint(data_product_type: ProductType, product_id: int, payload: ProductProfileUpsert, client_id: int = Depends(get_current_client_id)):
-    # Only a brand-new product counts against the cap - updating an existing one's
-    # profile must stay possible even once the free-tier catalog is full.
-    is_new_product = not product_exists(client_id, data_product_type, product_id)
-    product_limit = get_plan_limits(get_client_plan(client_id))["product_limit"]
-    if is_new_product and product_limit is not None and count_products_for_client(client_id) >= product_limit:
-        raise HTTPException(
-            status_code=403,
-            detail=(
-                f"Free plan limit reached: {product_limit} products max. "
-                "Upgrade your plan to add more products."
-            ),
-        )
+@app.get(
+    "/items/{item_id:path}", tags=["items"], response_model=Item, summary="Get an item",
+    responses=_errors(401, 403, 404, 422),
+)
+def items_get(item_id: ItemIdPath, data_product_type: Catalog, client_id: int = Depends(get_current_client_id)):
+    """One item by your own id. Secret key only."""
+    items = fetch_items(client_id, data_product_type, item_id=item_id)
+    if not items:
+        raise HTTPException(status_code=404, detail=f"No item '{item_id}' in data_product_type={data_product_type}")
+    return items[0]
 
-    upsert_product_profile(
-        product_type=data_product_type,
-        work_id=product_id,
-        title=payload.title,
-        description=payload.description,
-        genre_1=payload.genre_1,
-        author=payload.author,
-        year=payload.year,
-        url=payload.url,
-        price=payload.price,
-        client_id=client_id,
-    )
 
+@app.put(
+    "/items/{item_id:path}", tags=["items"], response_model=Item, summary="Create or replace an item",
+    responses={201: {"model": Item, "description": "The item did not exist and was created."}, **_errors(401, 403, 422)},
+)
+def items_upsert(
+    item_id: ItemIdPath, payload: ItemUpsert, data_product_type: Catalog, response: Response,
+    client_id: int = Depends(get_current_client_id),
+):
+    """Idempotent upsert: the body is the whole item, sent as often as you like. `201` when
+    the item was created, `200` when an existing one was replaced. Only `title` is required;
+    `description` and `properties.category` feed content-based similarity. Secret key only.
+    Only brand-new items count against a free plan's item cap."""
     try:
-        compute_and_store_product_embedding(
-            client_id=client_id, product_type=data_product_type, work_id=product_id,
-            title=payload.title, description=payload.description, genre_1=payload.genre_1,
-        )
-    except Exception as error:
-        # The profile itself is already saved and content-based (TF-IDF) recs work fine
-        # without an embedding - a failure here shouldn't fail the whole upsert.
-        print(f"Embedding computation skipped (non-fatal): {error}")
-
-    return {"message": f"Product profile {product_id} upserted for data_product_type={data_product_type}"}
-
-@app.delete("/products/{product_id}/profile", tags=["productsIngestion"], response_model=Message)
-async def delete_product_profile_endpoint(data_product_type: ProductType, product_id: int, client_id: int = Depends(get_current_client_id)):
-    deleted = delete_product_profile(product_type=data_product_type, work_id=product_id, client_id=client_id)
-    if not deleted:
-        raise HTTPException(status_code=404, detail=f"No product profile {product_id} for data_product_type={data_product_type}")
-    return {"message": f"Product profile {product_id} deleted for data_product_type={data_product_type}"}
-
-_AUTO_REGISTERED_EVENT_TYPES: set[tuple[int, str]] = set()
+        created = upsert_item(client_id, data_product_type, item_id, payload)
+    except PlanLimitError as error:
+        raise HTTPException(status_code=403, detail=str(error))
+    if created:
+        response.status_code = 201
+    return fetch_items(client_id, data_product_type, item_id=item_id)[0]
 
 
-def record_interaction_event(
-    client_id: int, product_type: str, event_type: str, user_id: int, work_id: int,
-    quantity: int, occurred_at, background_tasks: BackgroundTasks,
-) -> None:
-    """Shared by every /events/* route (the two backward-compatible purchase/view routes
-    and the generic /events/{event_type}) - records the interaction, auto-registers the
-    event type for this client on first use (in-memory cache to avoid a DB round trip on
-    every single event once it's known - a client's set of event types is small and
-    changes rarely), and checks for an auto-retrain."""
-    key = (client_id, event_type)
-    if key not in _AUTO_REGISTERED_EVENT_TYPES:
-        existing_types = {e["event_type"] for e in get_client_event_types(client_id)}
-        if event_type not in existing_types:
-            upsert_client_event_type(client_id, event_type, event_type.replace("_", " ").title(), DEFAULT_EVENT_TIER)
-        _AUTO_REGISTERED_EVENT_TYPES.add(key)
+@app.delete(
+    "/items/{item_id:path}", tags=["items"], response_model=Message, summary="Delete an item",
+    responses=_errors(401, 403, 404, 422),
+)
+def items_delete(item_id: ItemIdPath, data_product_type: Catalog, client_id: int = Depends(get_current_client_id)):
+    """Removes the item from the catalog, so it is no longer recommended. Events already
+    recorded for it are kept (they remain valid signal for other items' recommendations).
+    Secret key only."""
+    if delete_items(client_id, data_product_type, [item_id]):
+        raise HTTPException(status_code=404, detail=f"No item '{item_id}' in data_product_type={data_product_type}")
+    return {"message": f"Item '{item_id}' deleted from data_product_type={data_product_type}"}
 
-    insert_interaction(
-        product_type=product_type, work_id=work_id, user_id=user_id,
-        event_type=event_type, quantity=quantity, occurred_at=occurred_at,
-        client_id=client_id,
+
+@app.post(
+    "/items/import", tags=["items"], response_model=BatchResult, summary="Upsert many items",
+    responses=_errors(401, 403, 422),
+)
+def items_import(payload: ItemImportRequest, data_product_type: Catalog, client_id: int = Depends(get_current_client_id)):
+    """Batch upsert of up to 1000 items in one call - each entry behaves exactly like
+    `PUT /items/{item_id}`. An entry that fails (e.g. the free plan's item cap) is reported in
+    `errors` without failing the others. For a spreadsheet, the account page has a CSV
+    import. Secret key only."""
+    outcome = upsert_items_batch(client_id, data_product_type, payload.items)
+    log_event("items_import", client_id=client_id, product_type=data_product_type, received=outcome.received, succeeded=outcome.succeeded)
+    return {"received": outcome.received, "succeeded": outcome.succeeded, "failed": len(outcome.errors), "errors": outcome.errors}
+
+
+@app.post(
+    "/items/delete", tags=["items"], response_model=BatchResult, summary="Delete many items",
+    responses=_errors(401, 403, 422),
+)
+def items_delete_many(payload: ItemDeleteRequest, data_product_type: Catalog, client_id: int = Depends(get_current_client_id)):
+    """Batch delete of up to 1000 items. Ids that don't exist are reported in `errors`; the
+    rest are deleted. Secret key only."""
+    missing = set(delete_items(client_id, data_product_type, payload.item_ids))
+    errors = [
+        {"index": i, "id": item_id, "message": "No such item"}
+        for i, item_id in enumerate(payload.item_ids) if item_id in missing
+    ]
+    return {
+        "received": len(payload.item_ids), "succeeded": len(payload.item_ids) - len(errors),
+        "failed": len(errors), "errors": errors,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Users
+# ---------------------------------------------------------------------------
+
+@app.get(
+    "/users", tags=["users"], response_model=List[User], summary="List users",
+    responses=_errors(401, 403, 404, 422),
+)
+def users_list(
+    response: Response, data_product_type: Catalog,
+    user_id: Optional[str] = Query(None, deprecated=True, description="Deprecated: use GET /users/{user_id}."),
+    count: Optional[int] = Query(None, deprecated=True, description="Deprecated alias of `limit`."),
+    limit: Optional[int] = Query(None, ge=1, le=1000, description="Page size. Omit to get every user (historical behavior)."),
+    offset: int = Query(0, ge=0),
+    client_id: int = Depends(get_current_client_id),
+):
+    """User profiles for this catalog. The total is in the `X-Total-Count` response header.
+    Secret key only. Each user has free-form `properties`; the historical `user_gender` /
+    `user_age` / ... fields are still returned for accounts that used them (deprecated)."""
+    users = fetch_users(client_id, data_product_type, user_id=user_id, limit=limit if limit is not None else count, offset=offset)
+    if user_id is not None and not users:
+        raise HTTPException(status_code=404, detail=f"This user ID {user_id} does not exist")
+    response.headers["X-Total-Count"] = str(count_users_in_catalog(client_id, data_product_type))
+    return users
+
+
+@app.get(
+    "/users/{user_id:path}", tags=["users"], response_model=User, summary="Get a user",
+    responses=_errors(401, 403, 404, 422),
+)
+def users_get(user_id: UserIdPath, data_product_type: Catalog, client_id: int = Depends(get_current_client_id)):
+    """One user profile by your own id. Secret key only."""
+    users = fetch_users(client_id, data_product_type, user_id=user_id)
+    if not users:
+        raise HTTPException(status_code=404, detail=f"No user '{user_id}' in data_product_type={data_product_type}")
+    return users[0]
+
+
+@app.put(
+    "/users/{user_id:path}", tags=["users"], response_model=User, summary="Create or replace a user",
+    responses={201: {"model": User, "description": "The user did not exist and was created."}, **_errors(401, 403, 422)},
+)
+def users_upsert(
+    user_id: UserIdPath, payload: UserUpsert, data_product_type: Catalog, response: Response,
+    client_id: int = Depends(get_current_client_id),
+):
+    """Idempotent upsert of a user profile: `properties` is whatever describes your users
+    (country, segment, age, ...) - free-form JSON. `201` when created, `200` when replaced.
+    Creating a profile is optional: events referencing an unknown `user_id` work anyway.
+    Secret key only."""
+    created = upsert_user_profile(client_id, data_product_type, user_id, payload)
+    if created:
+        response.status_code = 201
+    return fetch_users(client_id, data_product_type, user_id=user_id)[0]
+
+
+@app.delete(
+    "/users/{user_id:path}", tags=["users"], response_model=Message, summary="Delete a user",
+    responses=_errors(401, 403, 404, 422),
+)
+def users_delete(user_id: UserIdPath, data_product_type: Catalog, client_id: int = Depends(get_current_client_id)):
+    """Erases the user: their profile **and every event recorded for them** (right to
+    erasure). The next model training no longer sees them. Secret key only."""
+    if not delete_user(client_id, data_product_type, user_id):
+        raise HTTPException(status_code=404, detail=f"No user '{user_id}' in data_product_type={data_product_type}")
+    return {"message": f"User '{user_id}' deleted from data_product_type={data_product_type}"}
+
+
+@app.post(
+    "/users/import", tags=["users"], response_model=BatchResult, summary="Upsert many users",
+    responses=_errors(401, 403, 422),
+)
+def users_import(payload: UserImportRequest, data_product_type: Catalog, client_id: int = Depends(get_current_client_id)):
+    """Batch upsert of up to 1000 user profiles - each entry behaves like
+    `PUT /users/{user_id}`. Secret key only."""
+    outcome = upsert_users_batch(client_id, data_product_type, payload.users)
+    log_event("users_import", client_id=client_id, product_type=data_product_type, received=outcome.received, succeeded=outcome.succeeded)
+    return {"received": outcome.received, "succeeded": outcome.succeeded, "failed": len(outcome.errors), "errors": outcome.errors}
+
+
+# ---------------------------------------------------------------------------
+# Events
+# ---------------------------------------------------------------------------
+
+def _record_one(client_id: int, product_type: str, event_type: str, payload: Event, background_tasks: BackgroundTasks, label: str) -> EventResult:
+    """The one path behind /events/purchase, /events/view and /events/{event_type}: the
+    specialized routes are only URL shortcuts for the generic one, never a second
+    implementation."""
+    outcome = record_events(client_id, product_type, [(event_type, payload)])
+    if outcome.carries_signal:
+        maybe_trigger_auto_retrain(client_id, product_type, background_tasks)
+    duplicate = outcome.duplicates > 0
+    return EventResult(
+        message=f"{label} event already recorded (duplicate event_id ignored)" if duplicate else f"{label} event recorded",
+        event_id=payload.event_id, duplicate=duplicate,
     )
-    maybe_trigger_auto_retrain(client_id, product_type, background_tasks)
 
 
-@app.post("/events/purchase", tags=["eventsIngestion"], response_model=Message)
-async def record_purchase_event(
-    data_product_type: ProductType, payload: PurchaseEvent, background_tasks: BackgroundTasks,
+@app.post(
+    "/events/purchase", tags=["events"], response_model=EventResult, summary="Track a purchase",
+    responses=_errors(401, 422),
+)
+def events_purchase(
+    data_product_type: Catalog, payload: Event, background_tasks: BackgroundTasks,
     client_id: int = Depends(get_current_client_id_public_ok),
 ):
-    record_interaction_event(
-        client_id, data_product_type, PURCHASE, payload.user_id, payload.work_id,
-        payload.quantity, payload.occurred_at, background_tasks,
-    )
-    return {"message": "Purchase event recorded"}
+    """Shortcut for `POST /events/{event_type}` with `event_type=purchase` - same body, same
+    behavior. Put `price`, `currency`, `order_id`, `revenue` in `properties` and send an
+    `event_id` (e.g. `evt_<order_id>_<item_id>`) so a retried request can't double-count the
+    purchase. Accepts the public key."""
+    return _record_one(client_id, data_product_type, PURCHASE, payload, background_tasks, "Purchase")
 
-@app.post("/events/view", tags=["eventsIngestion"], response_model=Message)
-async def record_view_event(
-    data_product_type: ProductType, payload: ViewEvent, background_tasks: BackgroundTasks,
+
+@app.post(
+    "/events/view", tags=["events"], response_model=EventResult, summary="Track a view",
+    responses=_errors(401, 422),
+)
+def events_view(
+    data_product_type: Catalog, payload: Event, background_tasks: BackgroundTasks,
     client_id: int = Depends(get_current_client_id_public_ok),
 ):
-    record_interaction_event(
-        client_id, data_product_type, VIEW, payload.user_id, payload.work_id,
-        1, payload.occurred_at, background_tasks,
-    )
-    return {"message": "View event recorded"}
+    """Shortcut for `POST /events/{event_type}` with `event_type=view` - same body, same
+    behavior. Works for an anonymous visitor: send `session_id` instead of `user_id`.
+    Accepts the public key."""
+    return _record_one(client_id, data_product_type, VIEW, payload, background_tasks, "View")
 
-@app.post("/events/{event_type}", tags=["eventsIngestion"], response_model=Message)
-async def record_generic_event(
-    event_type: EventTypePath, data_product_type: ProductType, payload: InteractionEvent,
+
+@app.post(
+    "/events/batch", tags=["events"], response_model=EventBatchResult, summary="Track many events",
+    responses=_errors(401, 422),
+)
+def events_batch(
+    payload: EventBatch, data_product_type: Catalog, background_tasks: BackgroundTasks,
+    client_id: int = Depends(get_current_client_id_public_ok),
+):
+    """Up to 1000 events in one request, each with its own `event_type` - for server-side
+    tracking, imports, or a browser SDK flushing a queue. All-or-nothing validation (a
+    malformed event gives a `422` naming its position and nothing is recorded); events whose
+    `event_id` was already recorded are skipped and counted in `duplicates`. Accepts the public key."""
+    outcome = record_events(client_id, data_product_type, [(e.event_type, e) for e in payload.events])
+    if outcome.carries_signal:
+        maybe_trigger_auto_retrain(client_id, data_product_type, background_tasks)
+    log_event(
+        "events_batch", client_id=client_id, product_type=data_product_type,
+        received=len(payload.events), accepted=outcome.accepted, duplicates=outcome.duplicates,
+    )
+    return {"received": len(payload.events), "accepted": outcome.accepted, "duplicates": outcome.duplicates}
+
+
+@app.post(
+    "/events/{event_type}", tags=["events"], response_model=EventResult, summary="Track an event",
+    responses=_errors(401, 422),
+)
+def events_track(
+    event_type: EventTypePath, data_product_type: Catalog, payload: Event,
     background_tasks: BackgroundTasks, client_id: int = Depends(get_current_client_id_public_ok),
 ):
-    """For any interaction type beyond purchase/view - a library's reservation, a video
-    platform's watch, a content site's page view. The type is auto-registered on first
-    use (default "moyen" tier) so an integrator can start sending events without
-    configuring anything first; the tenant can retune the label/tier from the dashboard
-    afterwards. Routing purchase/view here too would work identically, but the two
-    dedicated routes above stay for backward compatibility with existing integrations."""
-    record_interaction_event(
-        client_id, data_product_type, event_type, payload.user_id, payload.work_id,
-        payload.quantity, payload.occurred_at, background_tasks,
-    )
-    return {"message": f"{event_type} event recorded"}
+    """Records one interaction of any type. Officially supported types: `impression`,
+    `view`, `click`, `add_to_cart`, `remove_from_cart`, `purchase` - any other string (a
+    reservation, a watch, ...) is auto-registered on first use with the default weight, and
+    can be retuned from the dashboard afterwards. No endpoint per event type is needed.
+
+    - Identified user, anonymous visitor, or both: at least one of `user_id` / `session_id`.
+    - Send the `recommendation_id` of the recommendation that surfaced the item to attribute impressions, clicks and purchases to it.
+    - `impression` and `remove_from_cart` are recorded but carry no training weight.
+    - `event_id` makes the call idempotent: a replay records nothing and returns `duplicate: true`.
+
+    Accepts the public key."""
+    return _record_one(client_id, data_product_type, event_type, payload, background_tasks, event_type)
 
 def trigger_manual_training(client_id: int, product_type: str, background_tasks: BackgroundTasks) -> dict:
     """Shared by GET /generateModel (secret-key, for the customer's own backend) and
@@ -1101,25 +1297,28 @@ async def _resolve_my_client_id(supabase_user_id: str) -> int:
     return existing["id"]
 
 
-@app.get("/generateModel", tags=["generateModel"], response_model=GenerateModelJobStatus)
-async def generate_model(data_product_type: ProductType, background_tasks: BackgroundTasks, client_id: int = Depends(get_current_client_id)):
+@app.get("/generateModel", tags=["models"], response_model=GenerateModelJobStatus, summary="Train the model (background job)", responses=_errors(401, 403, 422))
+async def generate_model(data_product_type: Catalog, background_tasks: BackgroundTasks, client_id: int = Depends(get_current_client_id)):
+    """Starts a collaborative-model training run as a background job and returns its `job_id` immediately; poll `/generateModel/status/{job_id}`. Subject to the plan's daily manual-training quota (`429` when exhausted). The new model is only promoted to production if its precision@k is at least the current one's. Secret key only."""
     return trigger_manual_training(client_id, data_product_type, background_tasks)
 
-@app.get("/generateModel/status/{job_id}", tags=["generateModel"], response_model=GenerateModelJobStatus)
+@app.get("/generateModel/status/{job_id}", tags=["models"], response_model=GenerateModelJobStatus, summary="Training job status", responses=_errors(401, 403, 404))
 async def generate_model_status(job_id: str, client_id: int = Depends(get_current_client_id)):
+    """Status (`queued`, `running`, `completed`, `failed`) of a training job started by this account. Secret key only."""
     return get_job_or_404_for_client(job_id, client_id)
 
-@app.get("/models/versions", tags=["generateModel"], response_model=List[ModelVersion])
-async def get_model_versions(data_product_type: ProductType, client_id: int = Depends(get_current_client_id)):
+@app.get("/models/versions", tags=["models"], response_model=List[ModelVersion], summary="Model version history", responses=_errors(401, 403, 422))
+async def get_model_versions(data_product_type: Catalog, client_id: int = Depends(get_current_client_id)):
     """History of trained ALS models for this client/product type - hyperparameters,
     precision@k, and which one is currently active (served)."""
     return list_model_versions(client_id, data_product_type)
 
-@app.get("/models/status", tags=["generateModel"], response_model=ModelStatus)
-async def get_model_status(data_product_type: ProductType, client_id: int = Depends(get_current_client_id)):
+@app.get("/models/status", tags=["models"], response_model=ModelStatus, summary="Model status and daily quota", responses=_errors(401, 403, 422))
+async def get_model_status(data_product_type: Catalog, client_id: int = Depends(get_current_client_id)):
+    """The active model version (when it was trained and whether manually or automatically) plus today's training quota usage. Secret key only."""
     return build_model_status(client_id, data_product_type)
 
-@app.post("/clients/me/generateModel", tags=["selfServiceClient"], response_model=GenerateModelJobStatus)
+@app.post("/clients/me/generateModel", tags=["selfServiceClient"], response_model=GenerateModelJobStatus, summary="Train my model", responses=_errors(401, 404, 422))
 async def generate_my_model(
     data_product_type: ProductType, background_tasks: BackgroundTasks,
     supabase_user_id: str = Depends(get_current_supabase_user_id),
@@ -1132,17 +1331,19 @@ async def generate_my_model(
     client_id = await _resolve_my_client_id(supabase_user_id)
     return trigger_manual_training(client_id, data_product_type, background_tasks)
 
-@app.get("/clients/me/generateModel/status/{job_id}", tags=["selfServiceClient"], response_model=GenerateModelJobStatus)
+@app.get("/clients/me/generateModel/status/{job_id}", tags=["selfServiceClient"], response_model=GenerateModelJobStatus, summary="My training job status", responses=_errors(401, 404))
 async def generate_my_model_status(job_id: str, supabase_user_id: str = Depends(get_current_supabase_user_id)):
+    """Status of a training job started from the account page."""
     client_id = await _resolve_my_client_id(supabase_user_id)
     return get_job_or_404_for_client(job_id, client_id)
 
-@app.get("/clients/me/models/status", tags=["selfServiceClient"], response_model=ModelStatus)
+@app.get("/clients/me/models/status", tags=["selfServiceClient"], response_model=ModelStatus, summary="My model status", responses=_errors(401, 404, 422))
 async def get_my_model_status(data_product_type: ProductType, supabase_user_id: str = Depends(get_current_supabase_user_id)):
+    """Website equivalent of `GET /models/status`: the active model version and today's quota usage for one catalog."""
     client_id = await _resolve_my_client_id(supabase_user_id)
     return build_model_status(client_id, data_product_type)
 
-@app.get("/clients/me/models/versions", tags=["selfServiceClient"], response_model=List[ModelVersion])
+@app.get("/clients/me/models/versions", tags=["selfServiceClient"], response_model=List[ModelVersion], summary="My model versions", responses=_errors(401, 404, 422))
 async def get_my_model_versions(data_product_type: ProductType, supabase_user_id: str = Depends(get_current_supabase_user_id)):
     """Full training history for this catalog, not just the currently active version -
     self-service equivalent of the secret-key GET /models/versions, so a tenant can see
@@ -1150,270 +1351,336 @@ async def get_my_model_versions(data_product_type: ProductType, supabase_user_id
     client_id = await _resolve_my_client_id(supabase_user_id)
     return list_model_versions(client_id, data_product_type)
 
-def _popularity_label(client_id: int) -> str:
-    """Plural-ish label for the popularity explanation text - "achats" for the default
-    purchase type (matches the exact pre-generalization copy), the tenant's own label
-    lowercased for any other dominant (highest-tier) event type."""
-    dominant = get_dominant_event_type(client_id)
-    if dominant is None or dominant["event_type"] == PURCHASE:
-        return "achats"
-    return dominant["label"].lower()
+# ---------------------------------------------------------------------------
+# Recommendations
+# ---------------------------------------------------------------------------
+
+recommendations_logger = get_logger()
 
 
-@app.get("/getRec/popular/{count}", tags=["getRecContent"], response_model=List[RecommendedProduct])
-async def get_rec_popular(data_product_type: ProductType, count: int, client_id: int = Depends(get_current_client_id_public_ok)):
-    """Pure popularity ranking, no anchor product or user history needed - the true
-    cold-start fallback for a visitor with zero browsing history at all (not even one
-    viewed product to compute content similarity from)."""
+def _store_recommendation_safe(**fields) -> None:
+    """Runs after the response is sent: persisting the trace must never affect - or be able
+    to fail - the recommendation call itself. A failure is logged and sent to Sentry; the
+    only consequence is that events later carrying this recommendation_id can't be attributed."""
+    try:
+        store_recommendation(**fields)
+    except Exception as error:
+        sentry_sdk.capture_exception(error)
+        log_event("recommendation_trace_failed", level=logging.ERROR, recommendation_id=fields.get("recommendation_id"), error=str(error))
+
+
+def _finalize_recommendation(
+    *, client_id: int, product_type: str, strategy: str, origin: str, presented: list[dict],
+    background_tasks: BackgroundTasks, response: Response, user_id: Optional[str] = None,
+    session_id: Optional[str] = None, item_id: Optional[str] = None, placement: Optional[str] = None,
+    attempted: Optional[list[str]] = None,
+) -> str:
+    """Mints the recommendation_id, schedules the trace write, exposes the id in response
+    headers (so the legacy array responses carry it too) and logs the call. Ids and counts
+    only - no keys, no item content, no user properties."""
+    recommendation_id = new_recommendation_id()
+    item_ids = [item["item_id"] for item in presented]
+    background_tasks.add_task(
+        _store_recommendation_safe,
+        recommendation_id=recommendation_id, client_id=client_id, product_type=product_type,
+        strategy=strategy, origin=origin, item_ids=item_ids, user_id=user_id, session_id=session_id,
+        item_id=item_id, placement=placement, request_id=request_id_var.get(),
+    )
+    response.headers["X-Recommendation-Id"] = recommendation_id
+    response.headers["X-Recommendation-Strategy"] = strategy
+    log_event(
+        "recommendation", recommendation_id=recommendation_id, client_id=client_id,
+        product_type=product_type, strategy=strategy, origin=origin, placement=placement,
+        returned=len(item_ids), attempted=attempted,
+        has_user=user_id is not None, has_session=session_id is not None, has_item=item_id is not None,
+    )
+    return recommendation_id
+
+
+@app.post(
+    "/getRec", tags=["recommendations"], response_model=RecommendationResponse,
+    summary="Get recommendations",
+    responses={
+        200: {"description": "Always contains `recommendation_id` and `items` (possibly empty for an empty catalog)."},
+        **_errors(401, 403, 422),
+    },
+)
+def recommendations_get(
+    payload: RecommendationRequest, data_product_type: Catalog, background_tasks: BackgroundTasks,
+    response: Response, caller: Caller = Depends(get_caller_public_ok),
+):
+    """The recommendation endpoint to use. Send whatever you know about the moment - a
+    `user_id`, an anonymous `session_id`, the `item_id` being viewed, the `viewed_item_ids` so
+    far, a `placement` label - and LIKYLY chooses the strategy:
+
+    | You send | Strategy |
+    |---|---|
+    | `user_id` + `item_id` | `hybrid` (personalized similar items) |
+    | `item_id` | `content` (similar items) |
+    | `viewed_item_ids` | `session` (recency-weighted from the viewed list) |
+    | `user_id` (has history, model trained) | `collaborative` |
+    | `user_id` or `session_id` with tracked views | `session` (from LIKYLY's own history of them) |
+    | nothing / no data behind the signals | `popular` |
+
+    Signals with no data behind them (an unknown item, a user with no events yet) are skipped
+    - the request falls back down this list, ending at `popular`, and never fails for it. The
+    `strategy` that actually produced the items is in the response. The `recommendation_id`
+    is also in the `X-Recommendation-Id` header. Accepts the public key; `debug` needs the secret key."""
+    if payload.debug and caller.scope != "secret":
+        raise HTTPException(status_code=403, detail="debug requires the secret API key")
+
+    result = recommend_auto(
+        caller.client_id, data_product_type, user_id=payload.user_id, session_id=payload.session_id,
+        item_id=payload.item_id, viewed_item_ids=payload.viewed_item_ids, count=payload.count,
+    )
+    items = present_records(caller.client_id, data_product_type, result.records, legacy=False, include_similar_users=payload.debug)
+    recommendation_id = _finalize_recommendation(
+        client_id=caller.client_id, product_type=data_product_type, strategy=result.strategy, origin="auto",
+        presented=items, background_tasks=background_tasks, response=response, user_id=payload.user_id,
+        session_id=payload.session_id, item_id=payload.item_id, placement=payload.placement,
+        attempted=result.attempted,
+    )
+    return {"recommendation_id": recommendation_id, "strategy": result.strategy, "placement": payload.placement, "items": items}
+
+
+# --- Strategy-specific endpoints (expert use; historical array response by default) --------
+
+class RecTraceParams:
+    """Query parameters shared by every strategy-specific endpoint: attribution context and
+    the response shape switch."""
+
+    def __init__(
+        self,
+        response_format: Literal["array", "object"] = Query(
+            "array",
+            description=(
+                "`array` (default, **deprecated**): the historical bare list of items. `object`: "
+                "`{recommendation_id, strategy, items}` - the same envelope as `POST /getRec`. The "
+                "default will switch to `object` in a future version. Either way the "
+                "recommendation_id is in the `X-Recommendation-Id` response header."
+            ),
+        ),
+        placement: Optional[str] = Query(None, max_length=128, description="Free-form label of where these recommendations will be shown; stored with the recommendation for attribution.", examples=["product_page"]),
+        session_id: Optional[str] = Query(None, max_length=255, description="Anonymous session these recommendations are for; stored with the recommendation for attribution."),
+    ):
+        self.response_format = response_format
+        self.placement = placement
+        self.session_id = session_id
+
+
+RecCount = Annotated[int, Path(ge=1, le=500, description="How many items to return.")]
+
+_REC_RESPONSES = {
+    200: {"description": "A bare array of items by default, or `{recommendation_id, strategy, items}` with `response_format=object`."},
+}
+
+
+def _explicit_reply(
+    records: list[dict], strategy: str, trace: RecTraceParams, *, client_id: int, product_type: str,
+    background_tasks: BackgroundTasks, response: Response, user_id: Optional[str] = None,
+    item_id: Optional[str] = None, secret_key: bool = False,
+):
+    legacy = trace.response_format == "array"
+    # `similar_users` names OTHER users (first + last name): only ever for a secret-key caller.
+    # A public key ships inside web pages - anyone can read it - so it must never see them.
+    presented = present_records(client_id, product_type, records, legacy=legacy, include_similar_users=legacy and secret_key)
+    recommendation_id = _finalize_recommendation(
+        client_id=client_id, product_type=product_type, strategy=strategy, origin="explicit",
+        presented=presented, background_tasks=background_tasks, response=response, user_id=user_id,
+        session_id=trace.session_id, item_id=item_id, placement=trace.placement, attempted=[strategy],
+    )
+    if legacy:
+        return presented
+    return {"recommendation_id": recommendation_id, "strategy": strategy, "placement": trace.placement, "items": presented}
+
+
+def _known_item_or_404(client_id: int, product_type: str, item_id: str) -> int:
+    internal = resolve_internal_ids(client_id, product_type, KIND_ITEM, [item_id]).get(item_id)
+    if internal is None or not product_exists(client_id, product_type, internal):
+        raise HTTPException(status_code=404, detail=f"This product ID {item_id} does not exist")
+    return internal
+
+
+@app.get(
+    "/getRec/popular/{count}", tags=["recommendations-advanced"],
+    response_model=RecommendationResponse | List[RecommendedProduct],
+    summary="Popular items", responses={**_REC_RESPONSES, **_errors(401, 422)},
+)
+async def get_rec_popular(
+    data_product_type: Catalog, count: RecCount, background_tasks: BackgroundTasks, response: Response,
+    trace: RecTraceParams = Depends(), client_id: int = Depends(get_current_client_id_public_ok),
+):
+    """Pure popularity ranking, no anchor item or user history needed - the true cold-start
+    fallback for a visitor with nothing at all. Weighted by event type (a purchase counts
+    more than a view; impressions don't count)."""
+    records = rec_popular(client_id, data_product_type, count)
+    return _explicit_reply(records, "popular", trace, client_id=client_id, product_type=data_product_type, background_tasks=background_tasks, response=response)
+
+
+@app.get(
+    "/getRec/content/{product_id}/{count}", tags=["recommendations-advanced"],
+    response_model=RecommendationResponse | List[RecommendedProduct],
+    summary="Items similar to an item", responses={**_REC_RESPONSES, **_errors(401, 404, 422)},
+)
+async def get_rec_content(
+    data_product_type: Catalog, product_id: str, count: RecCount, background_tasks: BackgroundTasks,
+    response: Response, trace: RecTraceParams = Depends(), client_id: int = Depends(get_current_client_id_public_ok),
+):
+    """Content-based filtering: items whose text (title, description, category, ...) and
+    semantic embedding are closest to the given item. `product_id` is an `item_id` (the path
+    segment can't contain `/` - use `POST /getRec` for ids that do)."""
+    work_id = _known_item_or_404(client_id, data_product_type, product_id)
+    records = rec_content(client_id, data_product_type, work_id, count)
+    return _explicit_reply(records, "content", trace, client_id=client_id, product_type=data_product_type, background_tasks=background_tasks, response=response, item_id=product_id)
+
+
+@app.get("/getRec/contentVec/createIndex", tags=["legacy"], response_model=Message, deprecated=True, summary="Create the Pinecone index (frozen legacy)", responses=_errors(401, 403, 422))
+async def get_rec_content_vectordb_init(data_product_type: Catalog, client_id: int = Depends(get_current_client_id)):
+    """**Frozen legacy.** Create a Pinecone index from product embeddings - superseded by
+    pgvector-backed semantic similarity, already blended into `content` recommendations.
+    Kept working for existing integrations, not recommended for new ones."""
+    # List of works
     data_works = get_data(data_product_type, product_id=None, count=None, client_id=client_id)
-    popularity = compute_popularity_scores(data_product_type, client_id=client_id)
-    if popularity.empty:
-        return []
-
-    merged = data_works.merge(popularity, on='work_id', how='inner')
-    merged = merged.sort_values('popularity_score', ascending=False).head(count)
-
-    label = _popularity_label(client_id)
-    records = json.loads(merged.to_json(orient='records', date_format='iso'))
-    for record in records:
-        interaction_count = record.get('interaction_count')
-        interaction_count = int(interaction_count) if interaction_count is not None else None
-        record['score'] = record.get('popularity_score')
-        record['explanation'] = {
-            "reason": f"Populaire ({interaction_count} {label})" if interaction_count else "Recommandation populaire",
-            "popularity_score": record.get('popularity_score'),
-            "purchase_count": interaction_count if label == "achats" else None,
-            "interaction_count": interaction_count,
-            "interaction_label": label,
-        }
-    return records
-
-@app.get("/getRec/content/{product_id}/{count}", tags=["getRecContent"], response_model=List[RecommendedProduct])
-async def get_rec_content(data_product_type: ProductType, product_id: int, count: int, client_id: int = Depends(get_current_client_id_public_ok)):
-    #try:
-        product_type = data_product_type
-        # List of works
-        data_works = get_data(product_type, product_id=None, count=None, client_id=client_id)
-        # Get Work Title from the ID
-        title = data_works.loc[data_works['work_id'] == product_id, 'title'].iloc[0]
-        # create bags of words
-        data_similarities = get_data_similarities(data_works)
-
-        # create cosine similarities matrix (must fit on the bag_of_words text column,
-        # not the whole DataFrame, or CountVectorizer silently vectorizes column names)
-        cosine_sim, indices = get_cosine_similarities_cached(
-            data_works, data_similarities['bag_of_words'], stopwords_terms, "Tfidf", client_id, product_type
-        )
-
-        # Wide TF-IDF candidate pool, blended below with semantic embedding neighbors -
-        # TF-IDF alone only matches shared vocabulary; embeddings also catch paraphrased/
-        # thematically similar synopses that share no literal words.
-        pool_size = min(len(data_works), count * 5 + 1)
-        tfidf_candidates = model_content_recommender(title, cosine_sim, data_works, indices, limit=pool_size, with_score=False)
-
-        semantic_neighbors = find_similar_by_embedding(client_id, product_type, product_id, count=pool_size - 1)
-        semantic_map = {n["work_id"]: n["semantic_similarity"] for n in semantic_neighbors}
-
-        # Union of both candidate sets, so a strong semantic-only match isn't dropped just
-        # because it fell outside the narrower TF-IDF pool, and vice versa.
-        candidate_ids = set(tfidf_candidates["work_id"].tolist()) | set(semantic_map.keys())
-        candidates = data_works[data_works["work_id"].isin(candidate_ids)].copy()
-
-        tfidf_map = dict(zip(tfidf_candidates["work_id"], tfidf_candidates["content_similarity"]))
-        candidates["content_similarity"] = candidates["work_id"].map(tfidf_map).fillna(0.0)
-        candidates["semantic_similarity"] = candidates["work_id"].map(semantic_map).fillna(0.0)
-
-        tfidf_norm = normalize_scores(candidates["content_similarity"])
-        semantic_norm = normalize_scores(candidates["semantic_similarity"])
-        candidates["score"] = (1 - SEMANTIC_BLEND_WEIGHT) * tfidf_norm + SEMANTIC_BLEND_WEIGHT * semantic_norm
-        source_genre = data_works.loc[data_works['work_id'] == product_id, 'genre_1'].iloc[0]
-        candidates = diversify_by_genre(candidates, {source_genre} if source_genre else set(), count)
-
-        popularity = compute_popularity_scores(product_type, client_id=client_id)
-        merged = candidates.merge(popularity, on='work_id', how='left')
-
-        label = _popularity_label(client_id)
-        records = json.loads(merged.to_json(orient='records', date_format='iso'))
-        for record in records:
-            interaction_count = record.get('interaction_count')
-            interaction_count = int(interaction_count) if interaction_count is not None else None
-            record['explanation'] = {
-                "reason": (
-                    f"Similaire à « {title} » par le contenu (texte + similarité sémantique)"
-                    + (f", populaire ({interaction_count} {label})" if interaction_count else "")
-                ),
-                "content_similarity": record.get('content_similarity'),
-                "semantic_similarity": record.get('semantic_similarity'),
-                "popularity_score": record.get('popularity_score'),
-                "purchase_count": interaction_count if label == "achats" else None,
-                "interaction_count": interaction_count,
-                "interaction_label": label,
-            }
-        return records
-
-    #except Exception as error:
-    #    return {'error': error}
-
-@app.get("/getRec/contentVec/createIndex", tags=["getRecContentVectorCreateIndex"], response_model=Message)
-async def get_rec_content_vectordb_init(data_product_type: ProductType, client_id: int = Depends(get_current_client_id)):
-    #try:
-        # List of works
-        data_works = get_data(data_product_type, product_id=None, count=None, client_id=client_id)
-        # create bag of words
-        data_similarities = get_data_similarities(data_works)
-        # get only bag of words and convert it to dictionnary
-        data_similarities["id"] = data_similarities["work_id"].astype(str)
-        # Transform list of works into dictionnary
-        data_similarities_dict = data_similarities.to_dict(orient='records')
-        data_similarities_prepared_for_vectors = data_similarities[["id","bag_of_words"]].to_dict(orient='records')
-
-        index, model, total_vectors = model_vector_indexing(
-            data_similarities_dict,
-            data_similarities_prepared_for_vectors,
-            data_product_type,
-            client_id=client_id,
-        )
-
-        endpoint_response = {
-            "message": f"OK, Vector Index was created and total of {total_vectors} vectors were added to the index"
-        }
-
-        return endpoint_response
-
-    #except Exception as error:
-    #    return {'error': error}
-
-@app.get("/getRec/contentVec/{product_id}/{count}", tags=["getRecContentVectorDb"], response_model=List[VectorRecommendation])
-async def get_rec_content_vectordb(data_product_type: ProductType, product_id: int, count: int, client_id: int = Depends(get_current_client_id_public_ok)):
-    #try:
-        # List of works
-        data_works = get_data(data_product_type, product_id=None, count=None, client_id=client_id)
-        # Get Work Title from the ID
-        title = data_works.loc[data_works['work_id'] == product_id, 'title'].iloc[0]
-        # create bag of words
-        data_similarities = get_data_similarities(data_works)
-        # get only bag of words and convert it to dictionnary
-        data_similarities["id"] = data_similarities["work_id"].astype(str)
-        # Transform list of works into dictionnary
-        data_similarities_dict = data_similarities.to_dict(orient='records')
-        data_similarities_prepared_for_vectors = data_similarities[["id","bag_of_words"]].to_dict(orient='records')
-
-        print("title:",title)
-        #print(data_works[:3])
-        #print(data_similarities_prepared_for_vectors[:3])
-
-        predictOutput = model_content_recommender_vectors(
-            data_similarities_dict,
-            data_similarities_prepared_for_vectors,
-            title,
-            count,
-            data_product_type,
-            client_id=client_id,
-        )
-
-        return predictOutput
-
-    #except Exception as error:
-    #    return {'error': error}
-
-
-@app.get("/getRec/collaborative/{user_id}/{count}", tags=["getRecCollaborative"], response_model=List[RecommendedProduct])
-async def get_rec_collaborative(data_product_type: ProductType, user_id: int, count: int, client_id: int = Depends(get_current_client_id_public_ok)):
-        # List of works
-        data_works = get_data(data_product_type, product_id=None, count=None, client_id=client_id)
-
-        # List of works purchased by users - exclusion of works products buy previously by the user - to not rec those to him
-        data_purchases = get_data_users_purchases(data_product_type, user_id=None, count=None, client_id=client_id)
-
-        try:
-            return predict_items_from_user_api(data_product_type, data_works, data_purchases, user_id, count, client_id=client_id)
-        except FileNotFoundError as error:
-            raise HTTPException(status_code=404, detail=str(error))
-        except Exception as error:
-            raise HTTPException(status_code=500, detail=f"Collaborative model prediction failed: {error}")
-
-
-@app.get("/getRec/hybrid/{user_id}/{product_id}/{count}", tags=["getRecHybrid"], response_model=List[RecommendedProduct])
-async def get_rec_hybrid(data_product_type: ProductType, user_id: int, product_id: int, count: int, alpha: float = 0.5, client_id: int = Depends(get_current_client_id_public_ok)):
-    product_type = data_product_type
-
-    data_works = get_data(product_type, product_id=None, count=None, client_id=client_id)
-    title = data_works.loc[data_works['work_id'] == product_id, 'title'].iloc[0]
-
+    # create bag of words
     data_similarities = get_data_similarities(data_works)
-    cosine_sim, indices = get_cosine_similarities_cached(
-        data_works, data_similarities['bag_of_words'], stopwords_terms, "Tfidf", client_id, product_type
+    # get only bag of words and convert it to dictionnary
+    data_similarities["id"] = data_similarities["work_id"].astype(str)
+    # Transform list of works into dictionnary
+    data_similarities_dict = data_similarities.to_dict(orient='records')
+    data_similarities_prepared_for_vectors = data_similarities[["id", "bag_of_words"]].to_dict(orient='records')
+
+    index, model, total_vectors = model_vector_indexing(
+        data_similarities_dict,
+        data_similarities_prepared_for_vectors,
+        data_product_type,
+        client_id=client_id,
     )
 
-    # Wide content-based candidate pool, then re-ranked by blending in the collaborative signal
-    pool_size = min(len(data_works), count * 5 + 1)
-    candidates = model_content_recommender(title, cosine_sim, data_works, indices, limit=pool_size, with_score=False)
+    return {"message": f"OK, Vector Index was created and total of {total_vectors} vectors were added to the index"}
 
-    collab_scores = {}
+
+@app.get("/getRec/contentVec/{product_id}/{count}", tags=["legacy"], response_model=List[VectorRecommendation], deprecated=True, summary="Similar items via Pinecone (frozen legacy)", responses=_errors(401, 404, 422))
+async def get_rec_content_vectordb(data_product_type: Catalog, product_id: str, count: RecCount, client_id: int = Depends(get_current_client_id_public_ok)):
+    """**Frozen legacy.** Content-based recommendations via a Pinecone vector index -
+    superseded by `content`. Kept working for existing integrations."""
+    work_id = _known_item_or_404(client_id, data_product_type, product_id)
+    data_works = get_data(data_product_type, product_id=None, count=None, client_id=client_id)
+    title = data_works.loc[data_works['work_id'] == work_id, 'title'].iloc[0]
+    data_similarities = get_data_similarities(data_works)
+    data_similarities["id"] = data_similarities["work_id"].astype(str)
+    data_similarities_dict = data_similarities.to_dict(orient='records')
+    data_similarities_prepared_for_vectors = data_similarities[["id", "bag_of_words"]].to_dict(orient='records')
+
+    matches = model_content_recommender_vectors(
+        data_similarities_dict, data_similarities_prepared_for_vectors, title, count,
+        data_product_type, client_id=client_id,
+    )
+    # The Pinecone ids are the engine's internal ints (as strings) - translate to the public ids.
+    external = resolve_external_ids(client_id, data_product_type, KIND_ITEM, [int(m["work_id"]) for m in matches])
+    out = []
+    for match in matches:
+        item_id = external.get(int(match["work_id"]), match["work_id"])
+        out.append({"item_id": item_id, "work_id": item_id, "title": match["title"]})
+    return out
+
+
+@app.get(
+    "/getRec/collaborative/{user_id}/{count}", tags=["recommendations-advanced"],
+    response_model=RecommendationResponse | List[RecommendedProduct],
+    summary="Items liked by similar users", responses={**_REC_RESPONSES, **_errors(401, 404, 422)},
+)
+async def get_rec_collaborative(
+    data_product_type: Catalog, user_id: str, count: RecCount, background_tasks: BackgroundTasks,
+    response: Response, trace: RecTraceParams = Depends(), caller: Caller = Depends(get_caller_public_ok),
+):
+    """User-based collaborative filtering (implicit ALS): items appreciated by users with
+    similar histories, excluding what this user already bought. Needs a trained model
+    (`/generateModel`) - `404` until then. With the secret key, the legacy array response's
+    explanation includes `similar_users` (other users' names); with the public key, or with
+    `response_format=object`, it never does."""
+    client_id = caller.client_id
+    internal_user = resolve_internal_ids(client_id, data_product_type, KIND_USER, [user_id]).get(user_id)
+    if internal_user is None:
+        raise HTTPException(status_code=404, detail=f"Unknown user_id '{user_id}'")
     try:
-        rec_model = load_model(product_type, client_id=client_id)
-        interactions = build_user_item_matrix(product_type, client_id=client_id)
-        user_items_row = interactions[user_id] if user_id < interactions.shape[0] else None
-        candidate_ids = candidates['work_id'].to_numpy()
-        item_ids, scores = rec_model.recommend(
-            user_id, user_items_row, N=len(candidate_ids),
-            filter_already_liked_items=False, items=candidate_ids,
-        )
-        collab_scores = dict(zip(item_ids, scores))
+        records = rec_collaborative(client_id, data_product_type, internal_user, count)
     except FileNotFoundError:
-        pass  # no trained model yet - degrade gracefully to pure content-based ranking
-
-    content_norm = normalize_scores(candidates.set_index('work_id')['content_similarity'])
-    collab_norm = normalize_scores(pd.Series(collab_scores, dtype=float)) if collab_scores else pd.Series(dtype=float)
-
-    rows = []
-    for _, row in candidates.iterrows():
-        work_id = row['work_id']
-        c_score = float(content_norm.get(work_id, 0.0))
-        cf_score = float(collab_norm.get(work_id, 0.0))
-        record = row.to_dict()
-        record['score'] = alpha * cf_score + (1 - alpha) * c_score
-        record['explanation'] = {
-            "reason": f"Hybride : {alpha:.0%} collaboratif + {1 - alpha:.0%} contenu (similaire à « {title} »)",
-            "content_similarity": c_score,
-            "collaborative_score": cf_score if collab_scores else None,
-        }
-        rows.append(record)
-
-    rows.sort(key=lambda r: r['score'], reverse=True)
-
-    return json.loads(pd.DataFrame(rows[:count]).to_json(orient='records', date_format='iso'))
+        # (the exception text is a server file path - never echoed)
+        raise HTTPException(status_code=404, detail="No trained model for this catalog yet - call /generateModel first")
+    except Exception as error:
+        sentry_sdk.capture_exception(error)
+        log_event("collaborative_failed", level=logging.ERROR, client_id=client_id, error_type=type(error).__name__)
+        raise HTTPException(status_code=500, detail="Collaborative recommendation failed")
+    return _explicit_reply(records, "collaborative", trace, client_id=client_id, product_type=data_product_type, background_tasks=background_tasks, response=response, user_id=user_id, secret_key=caller.scope == "secret")
 
 
-@app.get("/getRec/session", tags=["getRecSession"], response_model=List[RecommendedProduct])
-async def get_rec_session(data_product_type: ProductType, viewed_work_ids: str, count: int = 3, client_id: int = Depends(get_current_client_id_public_ok)):
-    """Recommendations from a list of recently viewed work_ids - no account/login needed.
-    The client (SDK) is expected to keep this list in browser storage and send it on
-    each call; the API itself stays stateless."""
-    try:
-        viewed_ids = [int(x) for x in viewed_work_ids.split(',') if x.strip()]
-    except ValueError:
-        raise HTTPException(status_code=422, detail="viewed_work_ids must be a comma-separated list of integers")
+@app.get(
+    "/getRec/hybrid/{user_id}/{product_id}/{count}", tags=["recommendations-advanced"],
+    response_model=RecommendationResponse | List[RecommendedProduct],
+    summary="Personalized similar items (hybrid)", responses={**_REC_RESPONSES, **_errors(401, 404, 422)},
+)
+async def get_rec_hybrid(
+    data_product_type: Catalog, user_id: str, product_id: str, count: RecCount,
+    background_tasks: BackgroundTasks, response: Response, trace: RecTraceParams = Depends(),
+    alpha: float = Query(0.5, ge=0, le=1, description="Weight of the collaborative signal against content similarity (0 = pure content, 1 = pure collaborative). An expert knob: `POST /getRec` picks a sensible blend for you."),
+    client_id: int = Depends(get_current_client_id_public_ok),
+):
+    """Blends content similarity to `product_id` with the user's collaborative signal:
+    `score = alpha * collaborative + (1 - alpha) * content`. Degrades to pure content ranking
+    when no model is trained or the user is unknown."""
+    work_id = _known_item_or_404(client_id, data_product_type, product_id)
+    internal_user = resolve_internal_ids(client_id, data_product_type, KIND_USER, [user_id]).get(user_id)
+    records = rec_hybrid(client_id, data_product_type, internal_user, work_id, count, alpha=alpha)
+    return _explicit_reply(records, "hybrid", trace, client_id=client_id, product_type=data_product_type, background_tasks=background_tasks, response=response, user_id=user_id, item_id=product_id)
 
-    if not viewed_ids:
-        raise HTTPException(status_code=422, detail="viewed_work_ids must contain at least one work_id")
 
-    recs = compute_session_recs(data_product_type, client_id, viewed_ids, count)
-    if not recs:
-        raise HTTPException(status_code=404, detail="None of the given viewed_work_ids exist in the catalog")
-    return recs
+@app.get(
+    "/getRec/session", tags=["recommendations-advanced"],
+    response_model=RecommendationResponse | List[RecommendedProduct],
+    summary="Recommendations from a viewed list", responses={**_REC_RESPONSES, **_errors(401, 404, 422)},
+)
+async def get_rec_session(
+    data_product_type: Catalog, background_tasks: BackgroundTasks, response: Response,
+    viewed_item_ids: Optional[str] = Query(None, description="Comma-separated `item_id`s, oldest first. Ids containing a comma need `POST /getRec`.", examples=["item_123,item_456"]),
+    viewed_work_ids: Optional[str] = Query(None, deprecated=True, description="Deprecated alias of `viewed_item_ids`."),
+    count: int = Query(3, ge=1, le=500), trace: RecTraceParams = Depends(),
+    client_id: int = Depends(get_current_client_id_public_ok),
+):
+    """Recency-weighted recommendations from a list of recently viewed items - no account or
+    login needed. The caller keeps the list (browser storage) and sends it on each call; the
+    API stays stateless."""
+    raw = viewed_item_ids if viewed_item_ids is not None else viewed_work_ids
+    if raw is None:
+        raise HTTPException(status_code=422, detail="viewed_item_ids is required")
+    viewed = [x.strip() for x in raw.split(',') if x.strip()]
+    if not viewed:
+        raise HTTPException(status_code=422, detail="viewed_item_ids must contain at least one item_id")
+
+    mapping = resolve_internal_ids(client_id, data_product_type, KIND_ITEM, viewed)
+    viewed_internal = [mapping[v] for v in viewed if v in mapping]
+    records = rec_session(client_id, data_product_type, viewed_internal, count)
+    if not records:
+        raise HTTPException(status_code=404, detail="None of the given viewed_item_ids exist in the catalog")
+    return _explicit_reply(records, "session", trace, client_id=client_id, product_type=data_product_type, background_tasks=background_tasks, response=response)
 
 
-@app.get("/getRec/sessionForUser/{user_id}/{count}", tags=["getRecSession"], response_model=List[RecommendedProduct])
-async def get_rec_session_for_user(data_product_type: ProductType, user_id: int, count: int, client_id: int = Depends(get_current_client_id_public_ok)):
-    """Same recency-weighted content recs as /getRec/session, but for a logged-in user:
-    the recently-viewed list is sourced from persisted view history (Postgres) instead
-    of a client-supplied list - so "for you" recs survive across devices/sessions."""
-    viewed_ids = get_recent_viewed_work_ids(client_id, data_product_type, user_id, limit=10)
-    if not viewed_ids:
-        return []
-    return compute_session_recs(data_product_type, client_id, viewed_ids, count)
-
+@app.get(
+    "/getRec/sessionForUser/{user_id}/{count}", tags=["recommendations-advanced"],
+    response_model=RecommendationResponse | List[RecommendedProduct],
+    summary="Recommendations from a user's tracked views", responses={**_REC_RESPONSES, **_errors(401, 422)},
+)
+async def get_rec_session_for_user(
+    data_product_type: Catalog, user_id: str, count: RecCount, background_tasks: BackgroundTasks,
+    response: Response, trace: RecTraceParams = Depends(), client_id: int = Depends(get_current_client_id_public_ok),
+):
+    """Same recency-weighted recs as `/getRec/session`, but the recently-viewed list comes
+    from the views tracked for this user (persisted history) instead of a client-supplied
+    list - so "for you" recommendations survive across devices and sessions. Empty when the
+    user has no tracked views."""
+    internal_user = resolve_internal_ids(client_id, data_product_type, KIND_USER, [user_id]).get(user_id)
+    viewed = get_recent_viewed_work_ids(client_id, data_product_type, internal_user, limit=10) if internal_user is not None else []
+    records = rec_session(client_id, data_product_type, viewed, count) if viewed else []
+    return _explicit_reply(records, "session", trace, client_id=client_id, product_type=data_product_type, background_tasks=background_tasks, response=response, user_id=user_id)
 
 origins = ['*']
 
@@ -1426,6 +1693,9 @@ app.add_middleware(
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
+    # Browsers hide every non-safelisted response header from page JS unless it is exposed
+    # here - and the legacy array responses deliver their recommendation_id in a header.
+    expose_headers=["X-Request-ID", "X-Recommendation-Id", "X-Recommendation-Strategy", "X-Total-Count"],
 )
 
 # Prometheus metrics: request count and latency, labeled by the route *template* (e.g.
@@ -1460,6 +1730,120 @@ async def metrics():
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
+@app.middleware("http")
+async def request_id_middleware(request: Request, call_next):
+    """Outermost middleware (registered last): gives every request an id before anything
+    else runs, so every log line and error body produced while handling it can carry it.
+    Deliberately reads no credentials and logs no query string or body."""
+    request_id = coerce_request_id(request.headers.get("x-request-id"))
+    request.state.request_id = request_id
+    token = request_id_var.set(request_id)
+    start = time.perf_counter()
+    try:
+        response = await call_next(request)
+    finally:
+        request_id_var.reset(token)
+    response.headers["X-Request-ID"] = request_id
+
+    route = request.scope.get("route")
+    log_event(
+        "request", request_id=request_id, method=request.method,
+        path=getattr(route, "path_format", None) or (route.path if route is not None else request.url.path),
+        status=response.status_code, duration_ms=round((time.perf_counter() - start) * 1000, 1),
+    )
+    return response
+
+
+def _current_request_id(request: Request) -> Optional[str]:
+    return getattr(request.state, "request_id", None) or request_id_var.get()
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+    return JSONResponse(
+        {"detail": exc.detail, "request_id": _current_request_id(request)},
+        status_code=exc.status_code, headers=getattr(exc, "headers", None),
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    from fastapi.encoders import jsonable_encoder
+    return JSONResponse(
+        {"detail": jsonable_encoder(exc.errors()), "request_id": _current_request_id(request)},
+        status_code=422,
+    )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    request_id = _current_request_id(request)
+    get_logger().error(
+        "unhandled_exception",
+        extra={"fields": {"event": "unhandled_exception", "path": request.url.path, "method": request.method}},
+        exc_info=exc,
+    )
+    return JSONResponse(
+        {"detail": "Internal server error - quote this request_id when reporting it", "request_id": request_id},
+        status_code=500,
+        # This response is built by Starlette's outermost error middleware, which sits outside
+        # request_id_middleware - so the header has to be set here.
+        headers={"X-Request-ID": request_id} if request_id else None,
+    )
+
+
+def _required_key_by_operation() -> dict[tuple[str, str], str]:
+    """(path, method) -> "secret" | "public", read off each route's actual auth dependency -
+    so the OpenAPI states what the code enforces instead of what a docstring claims."""
+    from fastapi.routing import APIRoute
+
+    def dependency_calls(dependant):
+        for sub in dependant.dependencies:
+            yield sub.call
+            yield from dependency_calls(sub)
+
+    required: dict[tuple[str, str], str] = {}
+    for route in app.routes:
+        if not isinstance(route, APIRoute):
+            continue
+        calls = set(dependency_calls(route.dependant))
+        if get_current_client_id in calls:
+            level = "secret"
+        elif get_current_client_id_public_ok in calls or get_caller_public_ok in calls:
+            level = "public"
+        else:
+            continue
+        for method in route.methods:
+            required[(route.path_format, method.lower())] = level
+    return required
+
+
+_base_openapi = app.openapi
+
+
+def custom_openapi():
+    """FastAPI's schema plus what it can't infer: the Supabase bearer scheme on the
+    account/admin routes, and an `x-required-key` on each API-key route (`secret` = secret
+    key only, `public` = either key)."""
+    if app.openapi_schema is not None:
+        return app.openapi_schema
+    schema = _base_openapi()
+    schema.setdefault("components", {}).setdefault("securitySchemes", {})["bearerAuth"] = {
+        "type": "http", "scheme": "bearer", "bearerFormat": "JWT",
+        "description": "Supabase session JWT of the logged-in website user (account and admin routes only - not an API key).",
+    }
+    required = _required_key_by_operation()
+    for path, operations in schema["paths"].items():
+        for method, operation in operations.items():
+            if path.startswith("/clients/me") or path.startswith("/admin"):
+                operation["security"] = [{"bearerAuth": []}]
+            level = required.get((path, method))
+            if level:
+                operation["x-required-key"] = level
+    return schema
+
+
+app.openapi = custom_openapi  # type: ignore[method-assign]
 if __name__ == "__main__":
     # Pass the app object directly, not the "app:app" string form: the string form makes
     # uvicorn re-import this module by path, and since this file is already running as

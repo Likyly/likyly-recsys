@@ -12,8 +12,9 @@ hybrid or session recommendations. Collaborative filtering only needs `interacti
 import hashlib
 import os
 import secrets
+import zlib
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Any, Optional
 
 import pandas as pd
 from dotenv import load_dotenv
@@ -32,6 +33,7 @@ from sqlalchemy import (
     select,
     text,
 )
+from sqlalchemy.dialects.postgresql import JSONB, insert as pg_insert
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 # Dimension of sentence-transformers/all-MiniLM-L12-v2, the model used for semantic
@@ -51,6 +53,13 @@ Base = declarative_base()
 
 PURCHASE = "purchase"
 VIEW = "view"
+# The other officially supported event types (see DEFAULT_EVENT_TYPES below) - any other
+# string is still accepted and auto-registered, these are just the ones every tenant
+# starts with.
+IMPRESSION = "impression"
+CLICK = "click"
+ADD_TO_CART = "add_to_cart"
+REMOVE_FROM_CART = "remove_from_cart"
 
 MANUAL = "manual"
 AUTO = "auto"
@@ -97,8 +106,23 @@ def get_plan_limits(plan: str) -> dict[str, Optional[int]]:
 # purchase/view already used before this generalization, so existing behavior for those
 # two types is unchanged; "moyen" is the new middle tier for anything in between (e.g.
 # "add to cart", "favorited").
-EVENT_TIER_WEIGHTS = {"faible": 0.2, "moyen": 1.0, "fort": 3.0}
+EVENT_TIER_WEIGHTS = {"aucun": 0.0, "faible": 0.2, "moyen": 1.0, "fort": 3.0}
 DEFAULT_EVENT_TIER = "moyen"
+
+# Event types every tenant starts with. "aucun" (weight 0) is for events that are worth
+# recording - impressions are the denominator of any CTR, remove_from_cart is a useful
+# funnel signal - but that must NOT count as interest: an impression is exposure caused by
+# our own recommendation, and feeding it back into training/popularity would create a
+# feedback loop (recommend X -> X is "seen" -> X looks more popular). Weight-0 rows are
+# excluded from the ALS matrix, from popularity, and from the auto-retrain trigger.
+DEFAULT_EVENT_TYPES = [
+    (PURCHASE, "Achat", "fort"),
+    (VIEW, "Vue", "faible"),
+    (IMPRESSION, "Impression", "aucun"),
+    (CLICK, "Clic", "faible"),
+    (ADD_TO_CART, "Ajout au panier", "moyen"),
+    (REMOVE_FROM_CART, "Retrait du panier", "aucun"),
+]
 
 
 def get_event_tier_weight(tier: str) -> float:
@@ -184,6 +208,11 @@ class ProductModel(Base):
     # Semantic embedding of title+description+genre (all-MiniLM-L12-v2), computed at
     # ingestion time - nullable because it's only populated once a profile has content.
     embedding = Column(Vector(EMBEDDING_DIM), nullable=True)
+    # Free-form item attributes as sent by the integrator (category, price, brand, ...) -
+    # the public API's `properties`. genre_1/author/year/url/price above are the subset the
+    # engine itself reads, derived from these at write time (see ingestion.derive_item_columns).
+    # Null on rows written before this column existed: read as synthesized from the columns.
+    properties = Column(JSONB, nullable=True)
 
 
 class UserModel(Base):
@@ -197,6 +226,65 @@ class UserModel(Base):
     user_zip = Column(Integer, nullable=True)
     user_firstname = Column(String, nullable=True)
     user_lastname = Column(String, nullable=True)
+    # Free-form user attributes (country, segment, ...) - the public API's `properties`.
+    # The legacy columns above are kept for existing consumers; null on rows written before
+    # this column existed (read as synthesized from those columns).
+    properties = Column(JSONB, nullable=True)
+
+
+class IdMapModel(Base):
+    """Maps the identifiers a tenant sends (any string: "user_123", "SKU-NIKE-001", a UUID,
+    a Shopify gid://...) to the dense per-(client, catalog) integers the engine works with
+    internally. The ALS matrix is indexed directly by these integers, so they must stay
+    small and dense - hence allocated here per (client_id, product_type, kind) instead of
+    hashed. Rows written before this table existed are backfilled by the migration with
+    external_id = str(internal_id), so no legacy id changes meaning.
+
+    The primary key is the (tenant, external id) lookup every request does; the unique
+    index is the reverse lookup used to translate engine output back to external ids."""
+    __tablename__ = "id_map"
+
+    client_id = Column(Integer, ForeignKey("clients.id"), primary_key=True)
+    product_type = Column(String, primary_key=True)
+    # "item" or "user" - see KIND_ITEM/KIND_USER
+    kind = Column(String(8), primary_key=True)
+    external_id = Column(String, primary_key=True)
+    internal_id = Column(Integer, nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+    __table_args__ = (
+        Index("uq_id_map_internal", "client_id", "product_type", "kind", "internal_id", unique=True),
+    )
+
+
+class RecommendationModel(Base):
+    """Minimal trace of every recommendation call, so later events (impression, click,
+    add_to_cart, purchase) that carry a recommendation_id can be attributed to it: CTR,
+    conversion, attributed revenue, performance per strategy / per placement. Stores ids and
+    context only - never item content, which stays in `products`. item_ids are the tenant's
+    own external ids, in rank order, so the trace stays valid even if an item is later deleted."""
+    __tablename__ = "recommendations"
+
+    recommendation_id = Column(String, primary_key=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False)
+    product_type = Column(String, nullable=False)
+    user_id = Column(String, nullable=True)
+    session_id = Column(String, nullable=True)
+    # The anchor item (page being viewed) the recommendation was requested for, if any.
+    item_id = Column(String, nullable=True)
+    placement = Column(String, nullable=True)
+    # The strategy that actually produced the items (after any fallback).
+    strategy = Column(String, nullable=False)
+    # "auto" (POST /getRec picked the strategy) or "explicit" (a strategy-specific endpoint).
+    origin = Column(String(16), nullable=False, default="auto")
+    item_ids = Column(JSONB, nullable=False)
+    request_id = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+    __table_args__ = (
+        Index("ix_recommendations_client_created", "client_id", "created_at"),
+        Index("ix_recommendations_client_placement", "client_id", "placement", "created_at"),
+    )
 
 
 class InteractionModel(Base):
@@ -206,10 +294,23 @@ class InteractionModel(Base):
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=False)
     product_type = Column(String, nullable=False)
     work_id = Column(Integer, nullable=False)
-    user_id = Column(Integer, nullable=False)
+    # Internal (id_map) user id - null for an anonymous visitor tracked by session_id only.
+    # Collaborative training ignores null-user rows; popularity and session history use them.
+    user_id = Column(Integer, nullable=True)
     event_type = Column(String, nullable=False)
     quantity = Column(Integer, nullable=False, default=1)
     occurred_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    # A row can carry both user_id and session_id: that is what lets a later job stitch an
+    # anonymous session's history onto the user once they log in (not implemented yet -
+    # `UPDATE ... SET user_id = ... WHERE session_id = ... AND user_id IS NULL` is all it takes).
+    session_id = Column(String, nullable=True)
+    # Client-supplied idempotency key, unique per tenant - see uq_interactions_event_id.
+    event_id = Column(String, nullable=True)
+    # Attribution to the recommendation call that surfaced the item (recommendations table).
+    recommendation_id = Column(String, nullable=True)
+    placement = Column(String, nullable=True)
+    # Free-form event payload (price, currency, order_id, revenue, ...). Not read by the engine.
+    properties = Column(JSONB, nullable=True)
 
     __table_args__ = (
         # No longer a fixed IN ('purchase', 'view') CheckConstraint - event_type is now a
@@ -217,6 +318,19 @@ class InteractionModel(Base):
         # product_type already is. Format validated at the API layer (EventTypePath's
         # regex in app.py), not enforced in the schema.
         Index("ix_interactions_lookup", "client_id", "product_type", "event_type", "user_id", "work_id"),
+        Index("ix_interactions_client_event_time", "client_id", "event_type", "occurred_at"),
+        Index(
+            "ix_interactions_session", "client_id", "product_type", "session_id", "occurred_at",
+            postgresql_where=text("session_id IS NOT NULL"),
+        ),
+        Index(
+            "ix_interactions_recommendation", "recommendation_id",
+            postgresql_where=text("recommendation_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_interactions_event_id", "client_id", "event_id", unique=True,
+            postgresql_where=text("event_id IS NOT NULL"),
+        ),
     )
 
 
@@ -270,6 +384,11 @@ class ClientEventTypeModel(Base):
 
 def init_db():
     Base.metadata.create_all(engine)
+    # create_all only creates missing tables - it never alters an existing one, so columns,
+    # indexes and backfills added since a database was first created come from the SQL
+    # migrations (idempotent, additive, recorded in schema_migrations).
+    from migrate import run_migrations
+    run_migrations(engine)
 
 
 # ---------------------------------------------------------------------------
@@ -308,6 +427,12 @@ def ensure_client_id(client_id: int, name: str, plan: str = PLAN_UNLIMITED) -> N
             id=client_id, name=name, plan=plan,
             secret_key_hash=hash_api_key(secrets.token_urlsafe(32)), secret_key_rotated_at=utcnow(),
         ))
+        # An explicit id doesn't advance the serial sequence: on a fresh database the very
+        # next create_client() would be handed id 1 again and collide with this row.
+        session.flush()
+        session.execute(text(
+            "SELECT setval(pg_get_serial_sequence('clients', 'id'), (SELECT GREATEST(MAX(id), 1) FROM clients))"
+        ))
         session.commit()
     seed_default_event_types(client_id)
 
@@ -327,12 +452,12 @@ def _event_type_row_to_dict(row: "ClientEventTypeModel") -> dict:
 
 
 def seed_default_event_types(client_id: int) -> None:
-    """Every client starts with the two event types this system always had - "purchase"
-    (fort) and "view" (faible) - at their pre-existing exact weights, so nothing changes
-    by default. A tenant only needs to touch this if their vertical needs something
-    else (a reservation, a watch event, ...)."""
-    upsert_client_event_type(client_id, PURCHASE, "Achat", "fort")
-    upsert_client_event_type(client_id, VIEW, "Vue", "faible")
+    """Every client starts with the officially supported event types (DEFAULT_EVENT_TYPES).
+    "purchase" (fort) and "view" (faible) are the two this system always had, at their
+    pre-existing exact weights, so nothing changes for them. A tenant only needs to touch
+    this if their vertical needs something else (a reservation, a watch event, ...)."""
+    for event_type, label, tier in DEFAULT_EVENT_TYPES:
+        upsert_client_event_type(client_id, event_type, label, tier)
 
 
 def get_client_event_types(client_id: int) -> list[dict]:
@@ -614,7 +739,8 @@ def set_client_active(client_id: int, is_active: bool) -> bool:
 
 def delete_client(client_id: int) -> bool:
     """Permanently deletes a client and everything scoped to it (catalog, users,
-    interactions, model version history, usage counters, event type definitions) - there
+    interactions, id mappings, recommendation traces, model version history, usage counters,
+    event type definitions) - there
     is no undo. Rows are
     deleted table-by-table in application code rather than via an ON DELETE CASCADE
     constraint, so the full blast radius stays visible here instead of hidden in a
@@ -631,6 +757,8 @@ def delete_client(client_id: int) -> bool:
         session.query(UserModel).filter_by(client_id=client_id).delete()
         session.query(ModelVersionModel).filter_by(client_id=client_id).delete()
         session.query(ClientEventTypeModel).filter_by(client_id=client_id).delete()
+        session.query(IdMapModel).filter_by(client_id=client_id).delete()
+        session.query(RecommendationModel).filter_by(client_id=client_id).delete()
         session.delete(client)
         session.commit()
         return True
@@ -646,6 +774,7 @@ def fetch_products(
     work_id: Optional[int] = None,
     count: Optional[int] = None,
     client_id: int = DEMO_CLIENT_ID,
+    offset: Optional[int] = None,
 ) -> pd.DataFrame:
     query = select(ProductModel).where(
         ProductModel.client_id == client_id,
@@ -654,6 +783,8 @@ def fetch_products(
     if work_id is not None:
         query = query.where(ProductModel.work_id == work_id)
     query = query.order_by(ProductModel.work_id)
+    if offset:
+        query = query.offset(offset)
     if count is not None:
         query = query.limit(count)
 
@@ -669,6 +800,7 @@ def fetch_users(
     user_id: Optional[int] = None,
     count: Optional[int] = None,
     client_id: int = DEMO_CLIENT_ID,
+    offset: Optional[int] = None,
 ) -> pd.DataFrame:
     query = select(UserModel).where(
         UserModel.client_id == client_id,
@@ -677,6 +809,8 @@ def fetch_users(
     if user_id is not None:
         query = query.where(UserModel.user_id == user_id)
     query = query.order_by(UserModel.user_id)
+    if offset:
+        query = query.offset(offset)
     if count is not None:
         query = query.limit(count)
 
@@ -695,10 +829,14 @@ def fetch_interactions(
     since_days: Optional[int] = None,
     client_id: int = DEMO_CLIENT_ID,
 ) -> pd.DataFrame:
+    """Per-user rows only: anonymous (session-only) events have no user_id and are left out
+    here - every caller (the users/purchases/page-views exports, the "already bought"
+    exclusion) is per user. Session history is read by get_recent_viewed_work_ids_for_session."""
     query = select(InteractionModel).where(
         InteractionModel.client_id == client_id,
         InteractionModel.product_type == product_type,
         InteractionModel.event_type == event_type,
+        InteractionModel.user_id.isnot(None),
     )
     if user_id is not None:
         query = query.where(InteractionModel.user_id == user_id)
@@ -739,11 +877,32 @@ def get_recent_viewed_work_ids(
     client-side SessionTracker (localStorage) keeps for anonymous visitors, but sourced
     from persisted history so a logged-in user's "for you" recs survive across devices
     and sessions instead of living only in one browser."""
+    return _recent_viewed_work_ids(client_id, product_type, limit, user_id=user_id)
+
+
+def get_recent_viewed_work_ids_for_session(
+    client_id: int, product_type: str, session_id: str, limit: int = 10,
+) -> list[int]:
+    """Same as get_recent_viewed_work_ids, for an anonymous visitor identified only by the
+    session_id their view events carried - so a visitor's own tracked browsing feeds their
+    recommendations without the client having to resend the viewed list on every call."""
+    return _recent_viewed_work_ids(client_id, product_type, limit, session_id=session_id)
+
+
+def _recent_viewed_work_ids(
+    client_id: int, product_type: str, limit: int,
+    user_id: Optional[int] = None, session_id: Optional[str] = None,
+) -> list[int]:
     with SessionLocal() as session:
+        query = session.query(InteractionModel.work_id, InteractionModel.occurred_at).filter_by(
+            client_id=client_id, product_type=product_type, event_type=VIEW,
+        )
+        if user_id is not None:
+            query = query.filter(InteractionModel.user_id == user_id)
+        if session_id is not None:
+            query = query.filter(InteractionModel.session_id == session_id)
         rows = (
-            session.query(InteractionModel.work_id, InteractionModel.occurred_at)
-            .filter_by(client_id=client_id, product_type=product_type, user_id=user_id, event_type=VIEW)
-            .order_by(InteractionModel.occurred_at.desc())
+            query.order_by(InteractionModel.occurred_at.desc())
             .limit(limit * 3)  # over-fetch before de-duping, since repeats collapse
             .all()
         )
@@ -761,12 +920,21 @@ def get_recent_viewed_work_ids(
 def count_interactions_since(
     client_id: int, product_type: str, since: Optional[datetime] = None,
 ) -> int:
-    """How many purchase/view rows exist for this client/product_type since a given
-    timestamp - used to decide whether enough new signal has accumulated to justify an
-    automatic retrain, instead of a blind time-based cron."""
+    """How many signal-carrying interaction rows exist for this client/product_type since a
+    given timestamp - used to decide whether enough new signal has accumulated to justify an
+    automatic retrain, instead of a blind time-based cron. Rows of zero-weight event types
+    (impressions, remove_from_cart) and anonymous rows are not signal for the ALS model, so
+    they don't count - otherwise a busy widget's impressions alone would fire a retrain."""
+    zero_weight_types = (
+        select(ClientEventTypeModel.event_type)
+        .where(ClientEventTypeModel.client_id == client_id, ClientEventTypeModel.weight <= 0)
+    )
     with SessionLocal() as session:
-        query = session.query(InteractionModel).filter_by(
-            client_id=client_id, product_type=product_type,
+        query = session.query(InteractionModel).filter(
+            InteractionModel.client_id == client_id,
+            InteractionModel.product_type == product_type,
+            InteractionModel.user_id.isnot(None),
+            InteractionModel.event_type.notin_(zero_weight_types),
         )
         if since is not None:
             query = query.filter(InteractionModel.occurred_at >= since)
@@ -791,6 +959,19 @@ def list_product_types_for_client(client_id: int) -> list[str]:
         return [r[0] for r in rows]
 
 
+def list_catalogs_for_client(client_id: int) -> list[str]:
+    """Every catalog (product_type) this client has anything in - items OR events - so a request
+    that omits data_product_type can tell "one catalog, use it" from "several, be explicit".
+    Unlike list_product_types_for_client (items only, for the dashboard), an events-only client
+    (collaborative filtering with no catalog pushed) counts too."""
+    with SessionLocal() as session:
+        rows = session.execute(text(
+            "SELECT product_type FROM products WHERE client_id = :c "
+            "UNION SELECT product_type FROM interactions WHERE client_id = :c"
+        ), {"c": client_id}).all()
+        return sorted(r[0] for r in rows)
+
+
 def product_exists(client_id: int, product_type: str, work_id: int) -> bool:
     with SessionLocal() as session:
         return session.get(ProductModel, {
@@ -812,6 +993,88 @@ def count_trainings_today(client_id: int, product_type: str, triggered_by: str) 
 
 
 # ---------------------------------------------------------------------------
+# Public <-> internal id mapping (see IdMapModel)
+# ---------------------------------------------------------------------------
+
+KIND_ITEM = "item"
+KIND_USER = "user"
+
+
+def _advisory_lock_key(client_id: int, product_type: str, kind: str) -> int:
+    """Stable 63-bit key for pg_advisory_xact_lock, one per (client, catalog, kind) - so two
+    concurrent requests introducing brand-new ids in the same namespace allocate their
+    internal ints one after the other instead of both computing the same MAX+1."""
+    digest = zlib.crc32(f"{client_id}:{product_type}:{kind}".encode("utf-8"))
+    return (client_id << 32) | digest
+
+
+def resolve_internal_ids(
+    client_id: int, product_type: str, kind: str, external_ids: list[str], create: bool = False,
+) -> dict[str, int]:
+    """external id -> engine-internal int, for every id in `external_ids` that is known (or,
+    with create=True, that could be allocated - so the result then covers all of them).
+    Reads never create: a recommendation request mentioning an id we've never seen must not
+    leave a mapping behind."""
+    wanted = list(dict.fromkeys(external_ids))
+    if not wanted:
+        return {}
+
+    with SessionLocal() as session:
+        found = _lookup_internal_ids(session, client_id, product_type, kind, wanted)
+        missing = [e for e in wanted if e not in found]
+        if not missing or not create:
+            return found
+
+        # Serialize allocation for this namespace, then re-read: another transaction may
+        # have created some of the "missing" ids between the lookup above and the lock.
+        session.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": _advisory_lock_key(client_id, product_type, kind)})
+        found = _lookup_internal_ids(session, client_id, product_type, kind, wanted)
+        missing = [e for e in wanted if e not in found]
+        if missing:
+            highest = session.execute(
+                text(
+                    "SELECT COALESCE(MAX(internal_id), -1) FROM id_map "
+                    "WHERE client_id = :c AND product_type = :p AND kind = :k"
+                ),
+                {"c": client_id, "p": product_type, "k": kind},
+            ).scalar_one()
+            for offset, external_id in enumerate(missing, start=1):
+                found[external_id] = highest + offset
+                session.add(IdMapModel(
+                    client_id=client_id, product_type=product_type, kind=kind,
+                    external_id=external_id, internal_id=highest + offset,
+                ))
+            session.commit()
+        else:
+            session.rollback()  # ends the transaction, releasing the advisory lock
+        return found
+
+
+def _lookup_internal_ids(session, client_id: int, product_type: str, kind: str, external_ids: list[str]) -> dict[str, int]:
+    rows = session.query(IdMapModel.external_id, IdMapModel.internal_id).filter(
+        IdMapModel.client_id == client_id, IdMapModel.product_type == product_type,
+        IdMapModel.kind == kind, IdMapModel.external_id.in_(external_ids),
+    ).all()
+    return {r.external_id: r.internal_id for r in rows}
+
+
+def resolve_external_ids(client_id: int, product_type: str, kind: str, internal_ids: list[int]) -> dict[int, str]:
+    """engine-internal int -> the id the tenant knows it by. An internal id with no mapping
+    (shouldn't happen after the migration's backfill, but a row inserted by a direct-DB
+    script could) falls back to str(internal_id) in callers - which is exactly what the
+    backfill would have produced."""
+    wanted = list({int(i) for i in internal_ids})
+    if not wanted:
+        return {}
+    with SessionLocal() as session:
+        rows = session.query(IdMapModel.internal_id, IdMapModel.external_id).filter(
+            IdMapModel.client_id == client_id, IdMapModel.product_type == product_type,
+            IdMapModel.kind == kind, IdMapModel.internal_id.in_(wanted),
+        ).all()
+        return {r.internal_id: r.external_id for r in rows}
+
+
+# ---------------------------------------------------------------------------
 # Writes (ingestion)
 # ---------------------------------------------------------------------------
 
@@ -826,9 +1089,12 @@ def upsert_product_profile(
     url: Optional[str] = None,
     price: Optional[float] = None,
     client_id: int = DEMO_CLIENT_ID,
-) -> None:
+    properties: Optional[dict[str, Any]] = None,
+) -> bool:
+    """Returns True if the product was newly created, False if an existing one was updated."""
     with SessionLocal() as session:
         obj = session.get(ProductModel, {"client_id": client_id, "product_type": product_type, "work_id": work_id})
+        created = obj is None
         if obj is None:
             obj = ProductModel(client_id=client_id, product_type=product_type, work_id=work_id)
             session.add(obj)
@@ -840,9 +1106,11 @@ def upsert_product_profile(
         obj.year = year
         obj.url = url
         obj.price = price
+        obj.properties = properties
         obj.updated_at = utcnow()
 
         session.commit()
+        return created
 
 
 def delete_product_profile(product_type: str, work_id: int, client_id: int = DEMO_CLIENT_ID) -> bool:
@@ -855,26 +1123,71 @@ def delete_product_profile(product_type: str, work_id: int, client_id: int = DEM
         return True
 
 
+def fetch_item_properties(client_id: int, product_type: str, work_ids: list[int]) -> dict[int, Optional[dict]]:
+    """work_id -> stored `properties` JSON (None for a row written before that column
+    existed) - kept out of fetch_products' DataFrame on purpose: the content-based pipeline
+    indexes that frame's columns by position (see get_data_similarities)."""
+    wanted = list({int(w) for w in work_ids})
+    if not wanted:
+        return {}
+    with SessionLocal() as session:
+        rows = session.query(ProductModel.work_id, ProductModel.properties).filter(
+            ProductModel.client_id == client_id, ProductModel.product_type == product_type,
+            ProductModel.work_id.in_(wanted),
+        ).all()
+        return {r.work_id: r.properties for r in rows}
+
+
+def count_products_in_catalog(client_id: int, product_type: str) -> int:
+    with SessionLocal() as session:
+        return session.query(ProductModel).filter_by(client_id=client_id, product_type=product_type).count()
+
+
+def insert_interactions(rows: list[dict[str, Any]]) -> int:
+    """Bulk insert; returns how many rows were actually written. A row whose (client_id,
+    event_id) already exists is skipped silently (ON CONFLICT DO NOTHING against the partial
+    unique index) - that is the whole idempotency mechanism, and it also covers the same
+    event_id appearing twice inside one batch."""
+    if not rows:
+        return 0
+    now = utcnow()
+    values = [{**row, "occurred_at": row.get("occurred_at") or now} for row in rows]
+    statement = (
+        pg_insert(InteractionModel)
+        .values(values)
+        .on_conflict_do_nothing(
+            index_elements=[InteractionModel.client_id, InteractionModel.event_id],
+            index_where=text("event_id IS NOT NULL"),
+        )
+        .returning(InteractionModel.id)
+    )
+    with SessionLocal() as session:
+        inserted = len(session.execute(statement).all())
+        session.commit()
+        return inserted
+
+
 def insert_interaction(
     product_type: str,
     work_id: int,
-    user_id: int,
+    user_id: Optional[int],
     event_type: str,
     quantity: int = 1,
     occurred_at: Optional[datetime] = None,
     client_id: int = DEMO_CLIENT_ID,
-) -> None:
-    with SessionLocal() as session:
-        session.add(InteractionModel(
-            client_id=client_id,
-            product_type=product_type,
-            work_id=work_id,
-            user_id=user_id,
-            event_type=event_type,
-            quantity=quantity,
-            occurred_at=occurred_at or utcnow(),
-        ))
-        session.commit()
+    session_id: Optional[str] = None,
+    event_id: Optional[str] = None,
+    recommendation_id: Optional[str] = None,
+    placement: Optional[str] = None,
+    properties: Optional[dict[str, Any]] = None,
+) -> bool:
+    """Returns False if this event_id was already recorded (nothing written)."""
+    return insert_interactions([{
+        "client_id": client_id, "product_type": product_type, "work_id": work_id,
+        "user_id": user_id, "event_type": event_type, "quantity": quantity,
+        "occurred_at": occurred_at, "session_id": session_id, "event_id": event_id,
+        "recommendation_id": recommendation_id, "placement": placement, "properties": properties,
+    }]) == 1
 
 
 def upsert_user(
@@ -886,9 +1199,12 @@ def upsert_user(
     user_firstname: Optional[str] = None,
     user_lastname: Optional[str] = None,
     client_id: int = DEMO_CLIENT_ID,
-) -> None:
+    properties: Optional[dict[str, Any]] = None,
+) -> bool:
+    """Returns True if the user row was newly created, False if an existing one was updated."""
     with SessionLocal() as session:
         obj = session.get(UserModel, {"client_id": client_id, "product_type": product_type, "user_id": user_id})
+        created = obj is None
         if obj is None:
             obj = UserModel(client_id=client_id, product_type=product_type, user_id=user_id)
             session.add(obj)
@@ -898,8 +1214,107 @@ def upsert_user(
         obj.user_zip = user_zip
         obj.user_firstname = user_firstname
         obj.user_lastname = user_lastname
+        obj.properties = properties
 
         session.commit()
+        return created
+
+
+def fetch_user_rows(
+    client_id: int, product_type: str, user_id: Optional[int] = None,
+    limit: Optional[int] = None, offset: Optional[int] = None,
+) -> list[dict[str, Any]]:
+    """User profile rows (internal user_id + every profile column incl. `properties`), ordered
+    by internal id. The public users API translates internal ids back to external ones."""
+    with SessionLocal() as session:
+        query = session.query(UserModel).filter_by(client_id=client_id, product_type=product_type)
+        if user_id is not None:
+            query = query.filter(UserModel.user_id == user_id)
+        query = query.order_by(UserModel.user_id)
+        if offset:
+            query = query.offset(offset)
+        if limit is not None:
+            query = query.limit(limit)
+        return [
+            {
+                "user_id": r.user_id, "user_gender": r.user_gender, "user_age": r.user_age,
+                "user_zip": r.user_zip, "user_firstname": r.user_firstname,
+                "user_lastname": r.user_lastname, "properties": r.properties,
+            }
+            for r in query.all()
+        ]
+
+
+def count_users_in_catalog(client_id: int, product_type: str) -> int:
+    with SessionLocal() as session:
+        return session.query(UserModel).filter_by(client_id=client_id, product_type=product_type).count()
+
+
+def delete_user_data(client_id: int, product_type: str, user_id: int) -> bool:
+    """Erases a user: profile, every interaction they generated, and their id mapping (right
+    to erasure - an integrator deleting a user expects them gone, not orphaned events still
+    steering recommendations). Returns False if there was nothing at all for this user."""
+    with SessionLocal() as session:
+        profile = session.get(UserModel, {"client_id": client_id, "product_type": product_type, "user_id": user_id})
+        interactions_deleted = session.query(InteractionModel).filter_by(
+            client_id=client_id, product_type=product_type, user_id=user_id,
+        ).delete()
+        mapping_deleted = session.query(IdMapModel).filter_by(
+            client_id=client_id, product_type=product_type, kind=KIND_USER, internal_id=user_id,
+        ).delete()
+        if profile is not None:
+            session.delete(profile)
+        session.commit()
+        return profile is not None or interactions_deleted > 0 or mapping_deleted > 0
+
+
+def count_user_signal_interactions(client_id: int, product_type: str, user_id: int) -> int:
+    """How many signal-carrying (non-zero-weight) interactions this user has - what tells the
+    automatic strategy selection whether collaborative filtering has anything to work with."""
+    zero_weight_types = (
+        select(ClientEventTypeModel.event_type)
+        .where(ClientEventTypeModel.client_id == client_id, ClientEventTypeModel.weight <= 0)
+    )
+    with SessionLocal() as session:
+        return session.query(InteractionModel).filter(
+            InteractionModel.client_id == client_id,
+            InteractionModel.product_type == product_type,
+            InteractionModel.user_id == user_id,
+            InteractionModel.event_type.notin_(zero_weight_types),
+        ).count()
+
+
+# ---------------------------------------------------------------------------
+# Recommendation traces (see RecommendationModel)
+# ---------------------------------------------------------------------------
+
+def store_recommendation(
+    recommendation_id: str, client_id: int, product_type: str, strategy: str, origin: str,
+    item_ids: list[str], user_id: Optional[str] = None, session_id: Optional[str] = None,
+    item_id: Optional[str] = None, placement: Optional[str] = None, request_id: Optional[str] = None,
+) -> None:
+    with SessionLocal() as session:
+        session.add(RecommendationModel(
+            recommendation_id=recommendation_id, client_id=client_id, product_type=product_type,
+            user_id=user_id, session_id=session_id, item_id=item_id, placement=placement,
+            strategy=strategy, origin=origin, item_ids=item_ids, request_id=request_id,
+        ))
+        session.commit()
+
+
+def get_recommendation(client_id: int, recommendation_id: str) -> Optional[dict[str, Any]]:
+    with SessionLocal() as session:
+        row = session.query(RecommendationModel).filter_by(
+            client_id=client_id, recommendation_id=recommendation_id,
+        ).first()
+        if row is None:
+            return None
+        return {
+            "recommendation_id": row.recommendation_id, "product_type": row.product_type,
+            "user_id": row.user_id, "session_id": row.session_id, "item_id": row.item_id,
+            "placement": row.placement, "strategy": row.strategy, "origin": row.origin,
+            "item_ids": row.item_ids, "created_at": row.created_at,
+        }
 
 
 # ---------------------------------------------------------------------------

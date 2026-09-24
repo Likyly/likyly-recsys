@@ -69,6 +69,14 @@ def compute_embedding(text: str) -> list:
     return model.encode(text).tolist()
 
 
+def compute_embeddings(texts: list) -> list:
+    """One forward pass for a whole batch - far cheaper than N compute_embedding calls when
+    importing a catalog."""
+    if not texts:
+        return []
+    return _get_cached_sentence_transformer().encode(texts).tolist()
+
+
 def compute_and_store_product_embedding(client_id, product_type, work_id, title, description=None, genre_1=None):
     text = " ".join(filter(None, [title, description, genre_1]))
     embedding = compute_embedding(text)
@@ -100,6 +108,9 @@ def build_user_item_matrix(product_type, client_id=DEMO_CLIENT_ID):
     weights by default (seeded for every client - see seed_default_event_types), so this
     produces the same output as before this was generalized beyond those two types."""
     interactions = fetch_all_interactions(product_type, client_id=client_id)
+    # Anonymous (session-only) events have no user to learn a preference for - they feed
+    # popularity and session history, not the user x item matrix.
+    interactions = interactions.dropna(subset=['user_id'])
     if interactions.empty:
         return csr_matrix((1, 1), dtype=np.float32)
 
@@ -109,6 +120,10 @@ def build_user_item_matrix(product_type, client_id=DEMO_CLIENT_ID):
     interactions['weight'] = interactions['quantity'] * interactions['event_type'].map(
         lambda et: weights.get(et, default_weight)
     )
+    # Zero-weight event types (impressions, remove_from_cart) record exposure, not interest.
+    interactions = interactions[interactions['weight'] > 0]
+    if interactions.empty:
+        return csr_matrix((1, 1), dtype=np.float32)
 
     confidence = interactions.groupby(['user_id', 'work_id'], as_index=False)['weight'].sum()
 
@@ -375,6 +390,10 @@ def compute_popularity_scores(product_type, client_id=DEMO_CLIENT_ID):
     interactions['weighted_quantity'] = interactions['quantity'] * interactions['event_type'].map(
         lambda et: weights.get(et, default_weight)
     )
+    # Impressions & co. (weight 0) must not make an item look popular - see DEFAULT_EVENT_TYPES.
+    interactions = interactions[interactions['weighted_quantity'] > 0]
+    if interactions.empty:
+        return pd.DataFrame(columns=['work_id', 'interaction_count', 'popularity_score'])
 
     grouped = interactions.groupby('work_id')['weighted_quantity'].agg(
         interactor_count='count', interaction_count='sum'
@@ -418,8 +437,14 @@ def find_similar_users(product_type, user_id, top_n=2, client_id=DEMO_CLIENT_ID)
 
     overlaps.sort(key=lambda x: len(x[1]), reverse=True)
 
+    def display_name(uid):
+        # Profiles are optional and free-form now - a user with no first/last name is NaN
+        # after the concatenation in get_data_users, not a missing key.
+        name = name_map.get(uid)
+        return name if isinstance(name, str) and name.strip() else f"User {uid}"
+
     return [
-        {"user_id": uid, "name": name_map.get(uid, f"User {uid}"), "shared_work_ids": shared}
+        {"user_id": uid, "name": display_name(uid), "shared_work_ids": shared}
         for uid, shared in overlaps[:top_n]
     ]
 

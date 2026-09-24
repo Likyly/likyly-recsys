@@ -175,8 +175,12 @@ def get_work_default(product_type='movies'):
 
 def get_data_similarities(data):
     # Création du bags of Words et de la répétition des mots sur certaines caractéristiques des spectacles
-    # If no description is given in the dataset, we cannot recommand it
-    data = data.dropna(subset=['description'], how='any').copy()
+    # description is optional on a generic item (only title is required): an item with just
+    # a title and a category is still comparable on those. Rows must NOT be dropped here -
+    # callers index the resulting cosine matrix by position in `data_works`, so dropping a
+    # row would silently shift every similarity after it onto the wrong item.
+    data = data.copy()
+    data['description'] = data['description'].fillna('')
 
     # genre_1/author/year are optional on a lightweight ingested content profile - fill
     # them so cleanHTML() and the int cast below don't choke on None/NaN.
