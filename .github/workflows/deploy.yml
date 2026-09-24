@@ -62,7 +62,7 @@ jobs:
           docker run --rm --network host \
             -e TEST_DATABASE_URL=postgresql://test:test@localhost:5432/likyly_test \
             -w /srv recsys-api:test \
-            sh -c "pip install --quiet -r requirements-dev.txt --no-deps pytest==9.1.1 mypy==2.3.1 \
+            sh -c "pip install --quiet pytest==9.1.1 mypy==2.3.1 \
               && mypy application/api/ids.py application/api/observability.py application/api/schemas.py \
                       application/api/ingestion.py application/api/recommender.py application/utils/migrate.py \
               && pytest -q"
