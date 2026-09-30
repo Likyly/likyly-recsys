@@ -30,6 +30,8 @@ from sqlalchemy import (
     Integer,
     String,
     create_engine,
+    func,
+    or_,
     select,
     text,
 )
@@ -70,25 +72,62 @@ AUTO = "auto"
 DEMO_CLIENT_ID = 1
 
 # Plan names are the only vocabulary PLAN_LIMITS understands. "free" is the only plan a
-# self-service signup can reach today; "unlimited" is what the demo client gets, and what
-# an admin can manually grant a client via PATCH /admin/clients/{id} (e.g. a pilot
-# customer) - paid tiers are a placeholder for future work, not wired to billing yet.
+# self-service signup can reach today; "pro" is the first self-service paid step up (more
+# catalogs, more products, a real sync cadence instead of once/day) - not wired to billing
+# yet, so today an admin grants it the same way as "unlimited" (PATCH /admin/clients/{id}),
+# but the limits themselves are real and enforced. "unlimited" stays reserved for the demo
+# client and pilot customers with no cap at all.
 PLAN_FREE = "free"
+PLAN_PRO = "pro"
 PLAN_UNLIMITED = "unlimited"
-VALID_PLANS = {PLAN_FREE, PLAN_UNLIMITED}
+VALID_PLANS = {PLAN_FREE, PLAN_PRO, PLAN_UNLIMITED}
 
 PLAN_LIMITS: dict[str, dict[str, Optional[int]]] = {
     PLAN_FREE: {
         "product_limit": 50,
+        "index_limit": 1,
+        "data_source_limit": 1,
         "manual_training_daily_limit": 1,
         "auto_retrain_daily_limit": 1,
+        "manual_sync_daily_limit": 1,
+        "workspace_limit": 1,
+        "analytics_window_days": 7,
+        "analytics_detail": False,
+    },
+    PLAN_PRO: {
+        "product_limit": 5000,
+        "index_limit": 10,
+        "data_source_limit": 10,
+        "manual_training_daily_limit": 10,
+        "auto_retrain_daily_limit": 10,
+        "manual_sync_daily_limit": 24,
+        "workspace_limit": 5,
+        "analytics_window_days": 90,
+        "analytics_detail": True,
     },
     PLAN_UNLIMITED: {
         "product_limit": None,
+        "index_limit": None,
+        "data_source_limit": None,
         "manual_training_daily_limit": None,
         "auto_retrain_daily_limit": None,
+        "manual_sync_daily_limit": None,
+        "workspace_limit": None,
+        "analytics_window_days": 365,
+        "analytics_detail": True,
     },
 }
+
+# A hard floor between two sync triggers on the *same* data source - unlike the limits above,
+# this isn't a plan perk (it's not lifted by "manual_sync_daily_limit": None either) but an
+# abuse guard: a full sync re-fetches the whole upstream catalog and re-upserts every product,
+# so a caller (or a leaked/compromised developer key) hammering POST /data-sources/{id}/sync
+# in a loop can burn through a tenant's own ingestion cost and DB write volume for no reason -
+# "on ne peut pas ingérer un catalogue toutes les minutes". Checked in
+# data_source_service.trigger_sync against the most recent row in data_source_sync_runs,
+# regardless of that run's outcome (even a failed/still-running one counts - the point is
+# spacing out *attempts*, not just successes).
+SYNC_COOLDOWN_SECONDS = 300
 
 
 def get_plan_limits(plan: str) -> dict[str, Optional[int]]:
@@ -96,6 +135,22 @@ def get_plan_limits(plan: str) -> dict[str, Optional[int]]:
     typo written directly in Postgres) instead of raising - fails closed to the most
     restrictive tier rather than crashing every quota check across the API."""
     return PLAN_LIMITS.get(plan, PLAN_LIMITS[PLAN_FREE])
+
+
+# Where a workspace owner asks for more capacity - there is no online payment yet, so an upgrade
+# is a request form (see UpgradeRequestModel). Included in every plan-limit message so a coding
+# agent that hits a cap can tell the user exactly where to go.
+UPGRADE_URL = "https://likyly.com/account/upgrade"
+
+_PLAN_DISPLAY_NAMES = {PLAN_FREE: "Free", PLAN_PRO: "Pro", PLAN_UNLIMITED: "Unlimited"}
+
+
+def plan_limit_message(plan: str, what: str) -> str:
+    """"Free plan limit reached: 1 catalog max. Request the Pro plan: https://..." - `what` is the
+    "1 catalog max" part. The plan name is real (a Pro workspace at its cap isn't told it is on Free)."""
+    name = _PLAN_DISPLAY_NAMES.get(plan, "Free")
+    hint = "Request the Pro plan to raise it" if plan == PLAN_FREE else "Contact us to raise it"
+    return f"{name} plan limit reached: {what}. {hint}: {UPGRADE_URL}"
 
 
 # A tenant's own event types ("purchase", "reservation", "watch", ...) aren't a fixed
@@ -124,6 +179,18 @@ DEFAULT_EVENT_TYPES = [
     (REMOVE_FROM_CART, "Retrait du panier", "aucun"),
 ]
 
+# Clearer public names for a coding-agent-facing SDK/MCP vocabulary, mapped onto the existing
+# canonical types so their already-tuned training weights (impression=aucun, view=faible,
+# click=faible, ...) are never accidentally fragmented by a same-meaning-different-string type
+# getting auto-registered at DEFAULT_EVENT_TIER instead. Applied once, at the earliest point an
+# event enters the system (ingestion.record_events) - every caller (raw API, MCP, the SDK)
+# benefits regardless of which name it used.
+EVENT_TYPE_ALIASES = {
+    "product_view": VIEW,
+    "recommendation_impression": IMPRESSION,
+    "recommendation_click": CLICK,
+}
+
 
 def get_event_tier_weight(tier: str) -> float:
     """Falls back to the middle tier for an unrecognized tier string - same fail-safe-
@@ -140,15 +207,35 @@ def hash_api_key(raw_key: str) -> str:
     return hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
 
 
-def generate_api_key() -> str:
-    return secrets.token_urlsafe(32)
+def generate_api_key(prefix: Optional[str] = None) -> str:
+    """`prefix` ("sk"/"pk"/"lk") makes a newly-issued key's *kind* visible at a glance - the
+    one structural way an SDK can refuse to run with a browser-unsafe key at construction
+    time, instead of just documenting "don't do this" (see sdk/js's LikylyClient guard).
+    Purely additive: verification is hash-based and format-agnostic (hash_api_key doesn't
+    care what the raw string looks like), so every key issued before this existed keeps
+    authenticating exactly as it does today - only newly-generated ones get a prefix."""
+    raw = secrets.token_urlsafe(32)
+    return f"{prefix}_{raw}" if prefix else raw
+
+
+def key_hint(raw_key: str) -> str:
+    """A non-secret preview for the console - the key's kind and first characters, an ellipsis, its last
+    four ("sk_yVzt…gjP0"), the way other API consoles show a key that can no longer be revealed. Stored
+    next to the hash at generation time (the raw key is never stored, so it can't be derived later).
+    Eight visible characters out of ~40 of randomness leaves the key as unguessable as before."""
+    return f"{raw_key[:7]}…{raw_key[-4:]}"
 
 
 class ClientModel(Base):
     __tablename__ = "clients"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    # Technical name: "li_" + a random code for self-service workspaces, fixed at creation. It is the
+    # identifier to quote to support and it never changes when the owner renames their workspace.
     name = Column(String, nullable=False)
+    # What the owner chose to call the workspace (PATCH /clients/me) - shown in the console in place
+    # of the technical name once set. Null until then.
+    display_name = Column(String, nullable=True)
     # Full-access key: every endpoint, including PII reads (users/purchases/ratings) and
     # catalog/model writes. Server-to-server only - see app.py's PUBLIC_SCOPE_PATHS for
     # exactly what a "public" key below is restricted from. Nullable so an admin can
@@ -156,11 +243,13 @@ class ClientModel(Base):
     # replacement - a client with no live secret key just can't authenticate as "secret"
     # scope until they self-serve a new one.
     secret_key_hash = Column(String, nullable=True, unique=True)
+    secret_key_hint = Column(String, nullable=True)
     secret_key_rotated_at = Column(DateTime(timezone=True), nullable=True)
     # Restricted key: read-only recommendations + interaction tracking only - safe to
     # embed in client-side JS. Nullable for the same reason as secret_key_hash, and also
     # because clients created before this two-tier split may not have generated one yet.
     public_key_hash = Column(String, nullable=True, unique=True)
+    public_key_hint = Column(String, nullable=True)
     public_key_rotated_at = Column(DateTime(timezone=True), nullable=True)
     # See PLAN_LIMITS above - "free" (self-service default) or "unlimited" (the demo
     # client, or an admin-granted exemption). No billing integration yet.
@@ -169,7 +258,9 @@ class ClientModel(Base):
     created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
     # Set only for clients created through the self-service website (Supabase auth) -
     # null for clients created directly via create_client.py (e.g. this demo's own key).
-    supabase_user_id = Column(String, nullable=True, unique=True)
+    # Not unique: one account can own several workspaces (see list_clients_by_supabase_user_id) -
+    # the Free plan just caps how many via workspace_limit, enforced at creation time, not here.
+    supabase_user_id = Column(String, nullable=True, index=True)
     # Kept in sync from the Supabase session JWT on every self-service /clients/me call
     # (see get_or_create_my_client) - not fetched live via the Supabase Admin API, so no
     # extra service-role secret is needed just to show "whose account is this" in admin.
@@ -382,6 +473,206 @@ class ClientEventTypeModel(Base):
     created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
 
 
+# The scope vocabulary a developer key's `scopes` column is validated against (see
+# create_developer_key). Only "sources:read"/"sources:write" are actually checked by any
+# endpoint today (app.py's get_scoped_client_id, used solely by the /data-sources* router) -
+# the rest are reserved so a key minted now keeps working once a matching resource (direct
+# catalog access, placements) starts checking them, without a schema change.
+ALLOWED_SCOPES = {
+    "catalog:read", "catalog:write",
+    "sources:read", "sources:write",
+    "placements:read", "placements:write",
+    "integrations:read", "events:read",
+}
+
+
+class DeveloperKeyModel(Base):
+    """A third credential kind, alongside ClientModel's secret/public keys - narrower and
+    revocable independently, meant to be handed to a coding agent (Claude Code, Codex) for
+    data-source management rather than to a runtime environment. Never usable for the
+    recommendations/events surface (see get_current_client_id / get_current_client_id_public_ok
+    in app.py, neither of which this table is wired into) - only for the /data-sources* router
+    via app.py's get_scoped_client_id. Like the secret key, it must never be embedded in
+    browser JS; unlike the secret key, a leak only exposes catalog-source configuration, not
+    full account access."""
+    __tablename__ = "developer_keys"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False)
+    key_hash = Column(String, nullable=False, unique=True)
+    key_hint = Column(String, nullable=True)
+    name = Column(String, nullable=False)
+    scopes = Column(JSONB, nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    last_used_at = Column(DateTime(timezone=True), nullable=True)
+    revoked_at = Column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        Index("ix_developer_keys_client", "client_id"),
+    )
+
+
+class UpgradeRequestModel(Base):
+    """A workspace owner's request to move to a paid plan. There is no billing yet, so this is the
+    whole upgrade flow: the form's answers are stored here (never lost, whatever happens to the
+    notification email) and emailed to the team. `payload` is the validated form; the email columns
+    record whether the notification went out, for follow-up when SMTP was down or unconfigured."""
+    __tablename__ = "upgrade_requests"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False)
+    payload = Column(JSONB, nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    emailed_at = Column(DateTime(timezone=True), nullable=True)
+    email_error = Column(String, nullable=True)
+
+    __table_args__ = (
+        Index("ix_upgrade_requests_client", "client_id", "created_at"),
+    )
+
+
+class DataSourceModel(Base):
+    """A configured, recurring catalog integration ("this is where my catalog comes from"),
+    as opposed to the caller-driven one-off writes of PUT /items - see
+    application/utils/connectors for the Connector contract this drives and
+    application/utils/sync_engine for what actually runs a sync. `product_type` is the
+    existing catalog namespace (ProductModel.product_type) this source writes into - a data
+    source doesn't introduce a new partitioning concept, it just targets an existing one.
+    `credentials_encrypted` is never stored in plaintext - see crypto.py."""
+    __tablename__ = "data_sources"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False)
+    name = Column(String, nullable=False)
+    type = Column(String, nullable=False)  # registry.py's SOURCE_TYPES key
+    product_type = Column(String, nullable=False)
+    config = Column(JSONB, nullable=False, default=dict)
+    credentials_encrypted = Column(String, nullable=True)
+    field_mapping = Column(JSONB, nullable=True)
+    sync_mode = Column(String, nullable=False)  # "full" | "incremental" | "push"
+    schedule = Column(String, nullable=True)  # e.g. "1h", "1d" - null means manual-only
+    status = Column(String, nullable=False, default="draft", server_default="draft")
+    last_sync_at = Column(DateTime(timezone=True), nullable=True)
+    last_success_at = Column(DateTime(timezone=True), nullable=True)
+    last_error = Column(String, nullable=True)
+    cursor = Column(JSONB, nullable=True)
+    # Per-source shared secret for inbound pushes (webhook/Shopify-webhook types) - hashed the
+    # same way as the tenant API keys, never stored raw. Unused by pull connectors.
+    push_secret_hash = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
+
+    __table_args__ = (
+        Index("ix_data_sources_client", "client_id"),
+    )
+
+
+class DataSourceSyncRunModel(Base):
+    """One row per sync attempt (full/incremental/push) - the metrics + history that
+    get_sync_status reads. Never deleted, so a tenant (or a coding agent debugging a failed
+    integration) can see exactly what changed run over run."""
+    __tablename__ = "data_source_sync_runs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    data_source_id = Column(Integer, ForeignKey("data_sources.id"), nullable=False)
+    mode = Column(String, nullable=False)  # "full" | "incremental" | "push"
+    status = Column(String, nullable=False, default="running")  # running|success|partial|failed
+    started_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    finished_at = Column(DateTime(timezone=True), nullable=True)
+    items_fetched = Column(Integer, nullable=False, default=0)
+    items_upserted = Column(Integer, nullable=False, default=0)
+    items_deleted = Column(Integer, nullable=False, default=0)
+    items_failed = Column(Integer, nullable=False, default=0)
+    error_summary = Column(String, nullable=True)
+
+    __table_args__ = (
+        Index("ix_data_source_sync_runs_source", "data_source_id", "started_at"),
+    )
+
+
+class DataSourceItemModel(Base):
+    """Sync bookkeeping only - never read by the recommendation/event engine. Lets the sync
+    engine (a) skip re-upserting a record whose content hasn't changed since it was last seen
+    from this specific source, and (b) detect deletions on a full sync (an external_id that
+    was tracked here but isn't in the latest full listing is gone upstream). Deliberately a
+    separate table from id_map/products - id_map's dense internal ids are used by the ALS
+    matrix and must stay on their existing hot path, unaffected by this feature."""
+    __tablename__ = "data_source_items"
+
+    data_source_id = Column(Integer, ForeignKey("data_sources.id"), primary_key=True)
+    external_id = Column(String, primary_key=True)
+    content_hash = Column(String, nullable=False)
+    last_seen_run_id = Column(Integer, ForeignKey("data_source_sync_runs.id"), nullable=True)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
+
+
+# Context types a Placement can be tagged with - descriptive/analytics grouping, not itself a
+# signal-requirement enforcer (a placement's own `signals` says what it actually needs).
+PLACEMENT_CONTEXT_TYPES = {
+    "product_page", "listing_page", "category_page", "homepage", "cart", "account",
+    "content_page", "custom",
+}
+
+# The context a caller may send to /placements/{slug}/recommend or .../preview - every key is
+# optional unless a placement's own `signals.required` names it.
+PLACEMENT_CONTEXT_SIGNALS = {
+    "current_item_id", "category_id", "collection_id", "user_id", "anonymous_id",
+    "session_id", "cart_item_ids", "locale", "custom_context",
+}
+
+# What a Placement's `strategy` field may be set to - the five real engines
+# (recommender.py's rec_content/rec_session/rec_collaborative/rec_hybrid/rec_popular) plus
+# "auto" (recommend_auto's own signal-based selection - not a new ML mode, see
+# application/api/placement_engine.py). `fallback_strategy` uses the same vocabulary.
+PLACEMENT_STRATEGIES = {"auto", "content", "session", "collaborative", "hybrid", "popular"}
+
+PLACEMENT_AUDIENCES = {"all", "anonymous", "identified"}
+
+
+class PlacementModel(Base):
+    """A named, persistent recommendation configuration ("what to recommend, where, in what
+    context, with what constraints") - the abstraction a developer configures once (by hand or
+    via the MCP admin tools) and the site then calls by `slug` from
+    POST /placements/{slug}/recommend, instead of picking a raw strategy endpoint per spot on
+    the site. Composite (client_id, slug) primary key, same shape as ClientEventTypeModel's
+    (client_id, event_type) - the whole point of a placement is to be referred to by a stable,
+    human-chosen string, not an opaque id.
+
+    Orchestration only: every strategy this resolves to is one of the existing
+    recommender.py functions, unchanged - see application/api/placement_engine.py."""
+    __tablename__ = "placements"
+
+    client_id = Column(Integer, ForeignKey("clients.id"), primary_key=True)
+    slug = Column(String, primary_key=True)
+    name = Column(String, nullable=False)
+    context_type = Column(String, nullable=False, default="custom", server_default="custom")
+    # The catalog namespace this placement recommends from - nullable, same "single catalog ->
+    # inferred" convention as the rest of the API (see app.py's resolve_catalog) when omitted.
+    product_type = Column(String, nullable=True)
+    limit = Column(Integer, nullable=False, default=10, server_default="10")
+    audience = Column(String, nullable=False, default="all", server_default="all")
+    strategy = Column(String, nullable=False, default="auto", server_default="auto")
+    # {"required": [...], "optional": [...]} - subset of PLACEMENT_CONTEXT_SIGNALS.
+    signals = Column(JSONB, nullable=False, default=dict)
+    fallback_strategy = Column(String, nullable=True)
+    # Attribute-based inclusion rules: category_in/category_not_in, in_stock_only,
+    # include_attributes/exclude_attributes - see application/api/placement_filters.py.
+    filters = Column(JSONB, nullable=False, default=dict)
+    # Behavioral rules distinct from attribute filtering - currently just exclude_current_item;
+    # kept as its own field (not folded into `filters`) per the brief's field list.
+    business_rules = Column(JSONB, nullable=False, default=dict)
+    # Reserved for a future placement-level tracking override - {} today.
+    tracking_configuration = Column(JSONB, nullable=False, default=dict)
+    enabled = Column(Boolean, nullable=False, default=True)
+    version = Column(Integer, nullable=False, default=1, server_default="1")
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
+
+    __table_args__ = (
+        Index("ix_placements_client", "client_id"),
+    )
+
+
 def init_db():
     Base.metadata.create_all(engine)
     # create_all only creates missing tables - it never alters an existing one, so columns,
@@ -399,12 +690,12 @@ def create_client(name: str) -> tuple[int, str, str]:
     """Returns (client_id, raw_secret_key, raw_public_key). Raw values are only ever
     available here - only their hashes are stored, so show/save them immediately, they
     can't be recovered later."""
-    raw_secret_key, raw_public_key = generate_api_key(), generate_api_key()
+    raw_secret_key, raw_public_key = generate_api_key("sk"), generate_api_key("pk")
     with SessionLocal() as session:
         client = ClientModel(
             name=name,
-            secret_key_hash=hash_api_key(raw_secret_key), secret_key_rotated_at=utcnow(),
-            public_key_hash=hash_api_key(raw_public_key), public_key_rotated_at=utcnow(),
+            secret_key_hash=hash_api_key(raw_secret_key), secret_key_hint=key_hint(raw_secret_key), secret_key_rotated_at=utcnow(),
+            public_key_hash=hash_api_key(raw_public_key), public_key_hint=key_hint(raw_public_key), public_key_rotated_at=utcnow(),
         )
         session.add(client)
         session.commit()
@@ -460,7 +751,27 @@ def seed_default_event_types(client_id: int) -> None:
         upsert_client_event_type(client_id, event_type, label, tier)
 
 
+def backfill_missing_default_event_types(client_id: int) -> None:
+    """Adds whichever DEFAULT_EVENT_TYPES this client doesn't have yet - insert-only, so a type
+    the tenant already customized (a different tier) keeps that customization. Exists because
+    seed_default_event_types only runs once, at account creation: a client created before
+    DEFAULT_EVENT_TYPES grew from its original (purchase, view) to today's six only ever got
+    those two, and has no other way to pick up the new ones. Self-heals every list call (see
+    get_client_event_types) - the same pattern set_client_contact_email uses - rather than a
+    one-off data migration, so it also covers whatever's added to DEFAULT_EVENT_TYPES next.
+    Note: this also means deleting one of these six brings it back on the next load - they're
+    the vocabulary's baseline, not meant to be permanently removed (only retuned or ignored)."""
+    with SessionLocal() as session:
+        existing = {
+            row[0] for row in session.query(ClientEventTypeModel.event_type).filter_by(client_id=client_id).all()
+        }
+    for event_type, label, tier in DEFAULT_EVENT_TYPES:
+        if event_type not in existing:
+            upsert_client_event_type(client_id, event_type, label, tier)
+
+
 def get_client_event_types(client_id: int) -> list[dict]:
+    backfill_missing_default_event_types(client_id)
     with SessionLocal() as session:
         rows = (
             session.query(ClientEventTypeModel)
@@ -617,6 +928,13 @@ def get_client_admin_row(client_id: int) -> Optional[dict]:
         return dict(row) if row else None
 
 
+def set_client_display_name(client_id: int, display_name: str) -> bool:
+    with SessionLocal() as session:
+        result = session.query(ClientModel).filter_by(id=client_id).update({"display_name": display_name})
+        session.commit()
+        return result > 0
+
+
 def rename_client(client_id: int, name: str) -> bool:
     with SessionLocal() as session:
         result = session.query(ClientModel).filter_by(id=client_id).update({"name": name})
@@ -638,16 +956,70 @@ def get_client_usage_by_day(client_id: int, days: int = 30) -> list[dict]:
 
 
 def get_client_by_supabase_user_id(supabase_user_id: str) -> Optional[dict]:
+    """The account's *primary* workspace - the oldest one, stable regardless of how many
+    others it may since have gained (see list_clients_by_supabase_user_id). Used to
+    bootstrap a brand-new account (POST /clients/me) and as the default workspace when a
+    dashboard call doesn't specify X-Workspace-Id."""
     with SessionLocal() as session:
-        client = session.query(ClientModel).filter_by(supabase_user_id=supabase_user_id).first()
+        client = (
+            session.query(ClientModel)
+            .filter_by(supabase_user_id=supabase_user_id)
+            .order_by(ClientModel.created_at.asc())
+            .first()
+        )
         if client is None:
             return None
         return {
-            "id": client.id, "name": client.name,
+            "id": client.id, "name": client.name, "display_name": client.display_name,
+            "secret_key_hint": client.secret_key_hint, "public_key_hint": client.public_key_hint,
             "has_public_key": client.public_key_hash is not None,
             "secret_key_rotated_at": client.secret_key_rotated_at,
             "public_key_rotated_at": client.public_key_rotated_at,
         }
+
+
+def get_client_self_by_id(client_id: int) -> Optional[dict]:
+    """Same shape as get_client_by_supabase_user_id, keyed by id instead - for every
+    self-service route once it has already resolved *which* of the account's workspaces
+    a call is about (see app.py's get_my_client_id / _resolve_my_client_id), rather than
+    always looking up the primary one again by supabase_user_id."""
+    with SessionLocal() as session:
+        client = session.get(ClientModel, client_id)
+        if client is None:
+            return None
+        return {
+            "id": client.id, "name": client.name, "display_name": client.display_name,
+            "secret_key_hint": client.secret_key_hint, "public_key_hint": client.public_key_hint,
+            "has_public_key": client.public_key_hash is not None,
+            "secret_key_rotated_at": client.secret_key_rotated_at,
+            "public_key_rotated_at": client.public_key_rotated_at,
+        }
+
+
+def list_clients_by_supabase_user_id(supabase_user_id: str) -> list[dict]:
+    """Every workspace this account owns, oldest first (index [0] is always the primary
+    workspace get_client_by_supabase_user_id returns) - GET /clients/me/workspaces, and
+    what app.py's get_my_client_id dependency validates X-Workspace-Id against."""
+    with SessionLocal() as session:
+        clients = (
+            session.query(ClientModel)
+            .filter_by(supabase_user_id=supabase_user_id)
+            .order_by(ClientModel.created_at.asc())
+            .all()
+        )
+        return [
+            {
+                "id": c.id, "name": c.name, "display_name": c.display_name,
+                "plan": c.plan, "is_active": c.is_active, "created_at": c.created_at,
+            }
+            for c in clients
+        ]
+
+
+def get_client_contact_email(client_id: int) -> Optional[str]:
+    with SessionLocal() as session:
+        client = session.get(ClientModel, client_id)
+        return client.contact_email if client else None
 
 
 def set_client_contact_email(client_id: int, email: Optional[str]) -> None:
@@ -664,12 +1036,12 @@ def set_client_contact_email(client_id: int, email: Optional[str]) -> None:
 
 def create_client_for_supabase_user(name: str, supabase_user_id: str, email: Optional[str] = None) -> tuple[int, str, str]:
     """Same contract as create_client() - the raw keys are only ever available here."""
-    raw_secret_key, raw_public_key = generate_api_key(), generate_api_key()
+    raw_secret_key, raw_public_key = generate_api_key("sk"), generate_api_key("pk")
     with SessionLocal() as session:
         client = ClientModel(
             name=name,
-            secret_key_hash=hash_api_key(raw_secret_key), secret_key_rotated_at=utcnow(),
-            public_key_hash=hash_api_key(raw_public_key), public_key_rotated_at=utcnow(),
+            secret_key_hash=hash_api_key(raw_secret_key), secret_key_hint=key_hint(raw_secret_key), secret_key_rotated_at=utcnow(),
+            public_key_hash=hash_api_key(raw_public_key), public_key_hint=key_hint(raw_public_key), public_key_rotated_at=utcnow(),
             supabase_user_id=supabase_user_id, contact_email=email,
         )
         session.add(client)
@@ -682,10 +1054,10 @@ def create_client_for_supabase_user(name: str, supabase_user_id: str, email: Opt
 def regenerate_secret_key(client_id: int) -> str:
     """Invalidates the current secret key and issues a new one - the only way to recover
     from a lost key, since the raw value is never stored (only its hash)."""
-    raw_key = generate_api_key()
+    raw_key = generate_api_key("sk")
     with SessionLocal() as session:
         session.query(ClientModel).filter_by(id=client_id).update({
-            "secret_key_hash": hash_api_key(raw_key), "secret_key_rotated_at": utcnow(),
+            "secret_key_hash": hash_api_key(raw_key), "secret_key_hint": key_hint(raw_key), "secret_key_rotated_at": utcnow(),
         })
         session.commit()
     return raw_key
@@ -695,10 +1067,10 @@ def regenerate_public_key(client_id: int) -> str:
     """Same as regenerate_secret_key, for the restricted public key - independent
     rotation, since the two keys are meant to live in different places (server env vs.
     client-side JS) with different exposure risk."""
-    raw_key = generate_api_key()
+    raw_key = generate_api_key("pk")
     with SessionLocal() as session:
         session.query(ClientModel).filter_by(id=client_id).update({
-            "public_key_hash": hash_api_key(raw_key), "public_key_rotated_at": utcnow(),
+            "public_key_hash": hash_api_key(raw_key), "public_key_hint": key_hint(raw_key), "public_key_rotated_at": utcnow(),
         })
         session.commit()
     return raw_key
@@ -716,14 +1088,14 @@ def revoke_secret_key(client_id: int) -> None:
     incident response on a leaked key). The client can self-serve a new one afterwards
     from their own account page."""
     with SessionLocal() as session:
-        session.query(ClientModel).filter_by(id=client_id).update({"secret_key_hash": None})
+        session.query(ClientModel).filter_by(id=client_id).update({"secret_key_hash": None, "secret_key_hint": None})
         session.commit()
 
 
 def revoke_public_key(client_id: int) -> None:
     """Same as revoke_secret_key, for the restricted public key."""
     with SessionLocal() as session:
-        session.query(ClientModel).filter_by(id=client_id).update({"public_key_hash": None})
+        session.query(ClientModel).filter_by(id=client_id).update({"public_key_hash": None, "public_key_hint": None})
         session.commit()
 
 
@@ -740,8 +1112,8 @@ def set_client_active(client_id: int, is_active: bool) -> bool:
 def delete_client(client_id: int) -> bool:
     """Permanently deletes a client and everything scoped to it (catalog, users,
     interactions, id mappings, recommendation traces, model version history, usage counters,
-    event type definitions) - there
-    is no undo. Rows are
+    event type definitions, developer keys, data sources and their sync history, placements) -
+    there is no undo. Rows are
     deleted table-by-table in application code rather than via an ON DELETE CASCADE
     constraint, so the full blast radius stays visible here instead of hidden in a
     schema-level constraint. Trained model artifact files on disk (model_versions.
@@ -759,6 +1131,20 @@ def delete_client(client_id: int) -> bool:
         session.query(ClientEventTypeModel).filter_by(client_id=client_id).delete()
         session.query(IdMapModel).filter_by(client_id=client_id).delete()
         session.query(RecommendationModel).filter_by(client_id=client_id).delete()
+        session.query(DeveloperKeyModel).filter_by(client_id=client_id).delete()
+        session.query(PlacementModel).filter_by(client_id=client_id).delete()
+        source_ids = [
+            row.id for row in session.query(DataSourceModel.id).filter_by(client_id=client_id).all()
+        ]
+        if source_ids:
+            run_ids = [
+                row.id for row in session.query(DataSourceSyncRunModel.id)
+                .filter(DataSourceSyncRunModel.data_source_id.in_(source_ids)).all()
+            ]
+            session.query(DataSourceItemModel).filter(DataSourceItemModel.data_source_id.in_(source_ids)).delete(synchronize_session=False)
+            if run_ids:
+                session.query(DataSourceSyncRunModel).filter(DataSourceSyncRunModel.id.in_(run_ids)).delete(synchronize_session=False)
+            session.query(DataSourceModel).filter(DataSourceModel.id.in_(source_ids)).delete(synchronize_session=False)
         session.delete(client)
         session.commit()
         return True
@@ -769,12 +1155,36 @@ def delete_client(client_id: int) -> bool:
 # against pandas, doesn't need to change)
 # ---------------------------------------------------------------------------
 
+# What the dashboard's catalog browser (and any future caller) can sort a page by - a fixed,
+# server-side allowlist rather than an arbitrary column name from the query string, so a request
+# can never sort by something like `embedding` or reach a column that doesn't exist.
+ITEM_SORT_COLUMNS = {
+    "updated_at": ProductModel.updated_at, "title": ProductModel.title, "price": ProductModel.price,
+}
+DEFAULT_ITEM_SORT = "-updated_at"
+
+
+def _item_sort_clause(sort: str):
+    descending = sort.startswith("-")
+    column = ITEM_SORT_COLUMNS.get(sort[1:] if descending else sort)
+    if column is None:
+        column = ITEM_SORT_COLUMNS[DEFAULT_ITEM_SORT.lstrip("-")]
+        descending = DEFAULT_ITEM_SORT.startswith("-")
+    # NULLS LAST regardless of direction: a row missing the sort field (e.g. no price) reads as
+    # "unknown", not as smaller than every priced row - sorting price ascending would otherwise
+    # put every unpriced item first.
+    ordered = column.desc() if descending else column.asc()
+    return ordered.nulls_last(), ProductModel.work_id
+
+
 def fetch_products(
     product_type: str,
     work_id: Optional[int] = None,
     count: Optional[int] = None,
     client_id: int = DEMO_CLIENT_ID,
     offset: Optional[int] = None,
+    search: Optional[str] = None,
+    sort: str = DEFAULT_ITEM_SORT,
 ) -> pd.DataFrame:
     query = select(ProductModel).where(
         ProductModel.client_id == client_id,
@@ -782,7 +1192,10 @@ def fetch_products(
     )
     if work_id is not None:
         query = query.where(ProductModel.work_id == work_id)
-    query = query.order_by(ProductModel.work_id)
+    if search:
+        needle = f"%{search.strip()}%"
+        query = query.where(or_(ProductModel.title.ilike(needle), ProductModel.description.ilike(needle)))
+    query = query.order_by(*_item_sort_clause(sort))
     if offset:
         query = query.offset(offset)
     if count is not None:
@@ -1138,9 +1551,28 @@ def fetch_item_properties(client_id: int, product_type: str, work_ids: list[int]
         return {r.work_id: r.properties for r in rows}
 
 
-def count_products_in_catalog(client_id: int, product_type: str) -> int:
+def count_products_in_catalog(client_id: int, product_type: str, search: Optional[str] = None) -> int:
     with SessionLocal() as session:
-        return session.query(ProductModel).filter_by(client_id=client_id, product_type=product_type).count()
+        query = session.query(ProductModel).filter_by(client_id=client_id, product_type=product_type)
+        if search:
+            needle = f"%{search.strip()}%"
+            query = query.filter(or_(ProductModel.title.ilike(needle), ProductModel.description.ilike(needle)))
+        return query.count()
+
+
+def delete_catalog(client_id: int, product_type: str) -> int:
+    """Forgets every item of this catalog - the same thing delete_product_profile does for one
+    item (the profile only; interactions recorded against it stay, still valid collaborative
+    signal), just for all of them at once. Also clears their id_map rows, so a later re-import
+    of the same external_id starts clean rather than reusing a stale internal id. Does NOT touch
+    data sources (connectors) configured for this product_type - deleting the catalog's data is a
+    separate decision from disconnecting where it came from; see DELETE /data-sources/{id} for
+    that. Returns how many items were removed."""
+    with SessionLocal() as session:
+        removed = session.query(ProductModel).filter_by(client_id=client_id, product_type=product_type).delete(synchronize_session=False)
+        session.query(IdMapModel).filter_by(client_id=client_id, product_type=product_type, kind=KIND_ITEM).delete(synchronize_session=False)
+        session.commit()
+        return removed
 
 
 def insert_interactions(rows: list[dict[str, Any]]) -> int:
@@ -1434,3 +1866,620 @@ def list_model_versions(client_id: int, product_type: str, limit: int = 20) -> l
             .all()
         )
         return [_model_version_row_to_dict(r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# Developer keys - see DeveloperKeyModel and ALLOWED_SCOPES above.
+# ---------------------------------------------------------------------------
+
+def _developer_key_row_to_dict(row: DeveloperKeyModel) -> dict:
+    return {
+        "id": row.id, "name": row.name, "key_hint": row.key_hint, "scopes": list(row.scopes or []),
+        "created_at": row.created_at, "last_used_at": row.last_used_at, "revoked_at": row.revoked_at,
+    }
+
+
+def create_developer_key(client_id: int, name: str, scopes: list[str]) -> tuple[dict, str]:
+    """Returns (row_dict, raw_key). The raw value is only ever available here - only its hash
+    is stored. Unknown scopes are dropped rather than rejected outright, so a client that was
+    minted with a scope this server version doesn't know about yet can't lock itself out."""
+    scopes = sorted(set(scopes) & ALLOWED_SCOPES)
+    raw_key = generate_api_key("lk")
+    with SessionLocal() as session:
+        row = DeveloperKeyModel(client_id=client_id, key_hash=hash_api_key(raw_key), key_hint=key_hint(raw_key), name=name, scopes=scopes)
+        session.add(row)
+        session.commit()
+        return _developer_key_row_to_dict(row), raw_key
+
+
+def list_developer_keys(client_id: int) -> list[dict]:
+    with SessionLocal() as session:
+        rows = (
+            session.query(DeveloperKeyModel)
+            .filter_by(client_id=client_id)
+            .order_by(DeveloperKeyModel.created_at.desc())
+            .all()
+        )
+        return [_developer_key_row_to_dict(r) for r in rows]
+
+
+def revoke_developer_key(client_id: int, key_id: int) -> bool:
+    with SessionLocal() as session:
+        result = (
+            session.query(DeveloperKeyModel)
+            .filter_by(client_id=client_id, id=key_id, revoked_at=None)
+            .update({"revoked_at": utcnow()})
+        )
+        session.commit()
+        return result > 0
+
+
+def get_client_and_scopes_by_developer_key(raw_key: str) -> Optional[tuple[int, set[str]]]:
+    """Resolves a raw developer key to (client_id, scopes) - None if unknown or revoked.
+    Deliberately independent of get_client_and_scope_by_api_key: a developer key is never a
+    valid credential for the secret/public-scoped endpoints, only for whatever calls this."""
+    key_hash = hash_api_key(raw_key)
+    with SessionLocal() as session:
+        row = session.query(DeveloperKeyModel).filter_by(key_hash=key_hash, revoked_at=None).first()
+        if row is None:
+            return None
+        session.query(DeveloperKeyModel).filter_by(id=row.id).update({"last_used_at": utcnow()})
+        session.commit()
+        return row.client_id, set(row.scopes or [])
+
+
+# ---------------------------------------------------------------------------
+# Data sources - see DataSourceModel/DataSourceSyncRunModel/DataSourceItemModel above.
+# Every lookup is scoped by client_id, which is the whole tenant-isolation guarantee: a
+# source that doesn't belong to the caller's client_id simply doesn't exist as far as any
+# of these functions are concerned (never a 403 that would leak whether the id exists for
+# another tenant).
+# ---------------------------------------------------------------------------
+
+def _data_source_row_to_dict(row: DataSourceModel) -> dict:
+    return {
+        "id": row.id, "client_id": row.client_id, "name": row.name, "type": row.type,
+        "product_type": row.product_type, "config": row.config or {},
+        "has_credentials": row.credentials_encrypted is not None,
+        "field_mapping": row.field_mapping, "sync_mode": row.sync_mode, "schedule": row.schedule,
+        "status": row.status, "last_sync_at": row.last_sync_at, "last_success_at": row.last_success_at,
+        "last_error": row.last_error, "cursor": row.cursor,
+        "created_at": row.created_at, "updated_at": row.updated_at,
+    }
+
+
+def create_data_source(
+    client_id: int, name: str, type_: str, product_type: str, config: dict,
+    sync_mode: str, credentials_encrypted: Optional[str] = None, schedule: Optional[str] = None,
+) -> dict:
+    with SessionLocal() as session:
+        row = DataSourceModel(
+            client_id=client_id, name=name, type=type_, product_type=product_type,
+            config=config, credentials_encrypted=credentials_encrypted,
+            sync_mode=sync_mode, schedule=schedule, status="draft",
+        )
+        session.add(row)
+        session.commit()
+        return _data_source_row_to_dict(row)
+
+
+def list_data_sources(client_id: int) -> list[dict]:
+    with SessionLocal() as session:
+        rows = session.query(DataSourceModel).filter_by(client_id=client_id).order_by(DataSourceModel.created_at.desc()).all()
+        return [_data_source_row_to_dict(r) for r in rows]
+
+
+def create_upgrade_request(client_id: int, payload: dict) -> dict:
+    with SessionLocal() as session:
+        row = UpgradeRequestModel(client_id=client_id, payload=payload)
+        session.add(row)
+        session.commit()
+        return {"id": row.id, "client_id": row.client_id, "created_at": row.created_at}
+
+
+def count_upgrade_requests_since(client_id: int, since: datetime) -> int:
+    with SessionLocal() as session:
+        return session.query(UpgradeRequestModel).filter(
+            UpgradeRequestModel.client_id == client_id, UpgradeRequestModel.created_at >= since,
+        ).count()
+
+
+def mark_upgrade_request_emailed(request_id: int) -> None:
+    with SessionLocal() as session:
+        session.query(UpgradeRequestModel).filter_by(id=request_id).update({"emailed_at": utcnow(), "email_error": None})
+        session.commit()
+
+
+def mark_upgrade_request_email_failed(request_id: int, error: str) -> None:
+    with SessionLocal() as session:
+        session.query(UpgradeRequestModel).filter_by(id=request_id).update({"email_error": error[:500]})
+        session.commit()
+
+
+def count_data_sources(client_id: int) -> int:
+    """Used to enforce PLAN_LIMITS' data_source_limit - the free plan gets exactly one
+    catalog connection; more requires the Pro plan."""
+    with SessionLocal() as session:
+        return session.query(DataSourceModel).filter_by(client_id=client_id).count()
+
+
+def get_data_source(client_id: int, data_source_id: int) -> Optional[dict]:
+    with SessionLocal() as session:
+        row = session.query(DataSourceModel).filter_by(client_id=client_id, id=data_source_id).first()
+        return _data_source_row_to_dict(row) if row else None
+
+
+def _get_data_source_row(session, client_id: int, data_source_id: int) -> Optional[DataSourceModel]:
+    return session.query(DataSourceModel).filter_by(client_id=client_id, id=data_source_id).first()
+
+
+def update_data_source(client_id: int, data_source_id: int, **fields: Any) -> Optional[dict]:
+    """Generic field-by-field update - callers pass only the columns they want changed
+    (name, config, field_mapping, sync_mode, schedule, credentials_encrypted, status,
+    last_sync_at, last_success_at, last_error, cursor, push_secret_hash)."""
+    with SessionLocal() as session:
+        row = _get_data_source_row(session, client_id, data_source_id)
+        if row is None:
+            return None
+        for key, value in fields.items():
+            setattr(row, key, value)
+        row.updated_at = utcnow()
+        session.commit()
+        return _data_source_row_to_dict(row)
+
+
+def delete_data_source(client_id: int, data_source_id: int) -> bool:
+    with SessionLocal() as session:
+        row = _get_data_source_row(session, client_id, data_source_id)
+        if row is None:
+            return False
+        run_ids = [r.id for r in session.query(DataSourceSyncRunModel.id).filter_by(data_source_id=row.id).all()]
+        session.query(DataSourceItemModel).filter_by(data_source_id=row.id).delete()
+        if run_ids:
+            session.query(DataSourceSyncRunModel).filter(DataSourceSyncRunModel.id.in_(run_ids)).delete(synchronize_session=False)
+        session.delete(row)
+        session.commit()
+        return True
+
+
+def get_data_source_by_id_any_client(data_source_id: int) -> Optional[dict]:
+    """Not tenant-scoped - only for the push ingress (POST /data-sources/{id}/push), which
+    authenticates with the source's own push secret rather than a tenant API key, so it has
+    no client_id to scope by yet when it first looks the row up."""
+    with SessionLocal() as session:
+        row = session.get(DataSourceModel, data_source_id)
+        return _data_source_row_to_dict(row) if row else None
+
+
+def set_data_source_push_secret_hash(data_source_id: int, secret_hash: Optional[str]) -> None:
+    with SessionLocal() as session:
+        session.query(DataSourceModel).filter_by(id=data_source_id).update({"push_secret_hash": secret_hash})
+        session.commit()
+
+
+def verify_data_source_push_secret(data_source_id: int, raw_secret: str) -> bool:
+    with SessionLocal() as session:
+        row = session.get(DataSourceModel, data_source_id)
+        if row is None or row.push_secret_hash is None:
+            return False
+        return row.push_secret_hash == hash_api_key(raw_secret)
+
+
+def get_data_source_credentials_encrypted(client_id: int, data_source_id: int) -> Optional[str]:
+    """The raw encrypted blob, for the sync engine's own use only - never returned by any API
+    response (_data_source_row_to_dict exposes just `has_credentials: bool`)."""
+    with SessionLocal() as session:
+        row = _get_data_source_row(session, client_id, data_source_id)
+        return row.credentials_encrypted if row else None
+
+
+def get_last_item_write_at(client_id: int, product_type: str) -> Optional[datetime]:
+    """Most recent ProductModel.updated_at for this catalog - used by push-mode sources
+    (WooCommerce, generic webhook) to report "last sync" activity that actually happened
+    outside the sync engine (see the WooCommerce connector's docstring)."""
+    with SessionLocal() as session:
+        return session.query(ProductModel.updated_at).filter_by(
+            client_id=client_id, product_type=product_type,
+        ).order_by(ProductModel.updated_at.desc()).limit(1).scalar()
+
+
+# ---------------------------------------------------------------------------
+# Data source sync runs - one row per sync attempt, written by sync_engine.SyncEngine.
+# ---------------------------------------------------------------------------
+
+def _sync_run_row_to_dict(row: DataSourceSyncRunModel) -> dict:
+    return {
+        "id": row.id, "data_source_id": row.data_source_id, "mode": row.mode, "status": row.status,
+        "started_at": row.started_at, "finished_at": row.finished_at,
+        "items_fetched": row.items_fetched, "items_upserted": row.items_upserted,
+        "items_deleted": row.items_deleted, "items_failed": row.items_failed,
+        "error_summary": row.error_summary,
+    }
+
+
+def start_sync_run(data_source_id: int, mode: str) -> dict:
+    with SessionLocal() as session:
+        row = DataSourceSyncRunModel(data_source_id=data_source_id, mode=mode, status="running")
+        session.add(row)
+        session.commit()
+        return _sync_run_row_to_dict(row)
+
+
+def finish_sync_run(
+    run_id: int, status: str, items_fetched: int, items_upserted: int,
+    items_deleted: int, items_failed: int, error_summary: Optional[str] = None,
+) -> None:
+    with SessionLocal() as session:
+        session.query(DataSourceSyncRunModel).filter_by(id=run_id).update({
+            "status": status, "finished_at": utcnow(), "items_fetched": items_fetched,
+            "items_upserted": items_upserted, "items_deleted": items_deleted,
+            "items_failed": items_failed, "error_summary": error_summary,
+        })
+        session.commit()
+
+
+def list_sync_runs(data_source_id: int, limit: int = 20) -> list[dict]:
+    with SessionLocal() as session:
+        rows = (
+            session.query(DataSourceSyncRunModel)
+            .filter_by(data_source_id=data_source_id)
+            .order_by(DataSourceSyncRunModel.started_at.desc())
+            .limit(limit)
+            .all()
+        )
+        return [_sync_run_row_to_dict(r) for r in rows]
+
+
+def get_sync_run(data_source_id: int, run_id: int) -> Optional[dict]:
+    with SessionLocal() as session:
+        row = session.query(DataSourceSyncRunModel).filter_by(id=run_id, data_source_id=data_source_id).first()
+        return _sync_run_row_to_dict(row) if row else None
+
+
+def count_syncs_today(data_source_id: int) -> int:
+    """How many sync runs of any outcome were already started today for this source - used
+    to enforce PLAN_LIMITS' manual_sync_daily_limit, same day-boundary convention as
+    count_trainings_today."""
+    with SessionLocal() as session:
+        start_of_day = utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        return session.query(DataSourceSyncRunModel).filter(
+            DataSourceSyncRunModel.data_source_id == data_source_id,
+            DataSourceSyncRunModel.started_at >= start_of_day,
+        ).count()
+
+
+# ---------------------------------------------------------------------------
+# Data source items - content-hash + tombstone bookkeeping, written by sync_engine.
+# ---------------------------------------------------------------------------
+
+def get_data_source_item_hashes(data_source_id: int) -> dict[str, str]:
+    """external_id -> content_hash for every item this source has ever produced - the
+    baseline a full sync diffs against to find deletions (an id present here but absent
+    from the new listing) and to skip re-upserting an id whose hash hasn't changed."""
+    with SessionLocal() as session:
+        rows = session.query(DataSourceItemModel.external_id, DataSourceItemModel.content_hash).filter_by(data_source_id=data_source_id).all()
+        return {r.external_id: r.content_hash for r in rows}
+
+
+def upsert_data_source_item_hashes(data_source_id: int, run_id: int, hashes: dict[str, str]) -> None:
+    if not hashes:
+        return
+    with SessionLocal() as session:
+        for external_id, content_hash in hashes.items():
+            stmt = pg_insert(DataSourceItemModel).values(
+                data_source_id=data_source_id, external_id=external_id,
+                content_hash=content_hash, last_seen_run_id=run_id, updated_at=utcnow(),
+            ).on_conflict_do_update(
+                index_elements=["data_source_id", "external_id"],
+                set_={"content_hash": content_hash, "last_seen_run_id": run_id, "updated_at": utcnow()},
+            )
+            session.execute(stmt)
+        session.commit()
+
+
+def delete_data_source_item_hashes(data_source_id: int, external_ids: list[str]) -> None:
+    if not external_ids:
+        return
+    with SessionLocal() as session:
+        session.query(DataSourceItemModel).filter(
+            DataSourceItemModel.data_source_id == data_source_id,
+            DataSourceItemModel.external_id.in_(external_ids),
+        ).delete(synchronize_session=False)
+        session.commit()
+
+
+# ---------------------------------------------------------------------------
+# Placements - see PlacementModel above. Every lookup is scoped by client_id, same
+# tenant-isolation guarantee as the data-source functions: a slug that belongs to another
+# tenant simply doesn't exist as far as any of these are concerned.
+# ---------------------------------------------------------------------------
+
+def _placement_row_to_dict(row: PlacementModel) -> dict:
+    return {
+        "client_id": row.client_id, "slug": row.slug, "name": row.name,
+        "context_type": row.context_type, "product_type": row.product_type,
+        "limit": row.limit, "audience": row.audience, "strategy": row.strategy,
+        "signals": row.signals or {}, "fallback_strategy": row.fallback_strategy,
+        "filters": row.filters or {}, "business_rules": row.business_rules or {},
+        "tracking_configuration": row.tracking_configuration or {},
+        "enabled": row.enabled, "version": row.version,
+        "created_at": row.created_at, "updated_at": row.updated_at,
+    }
+
+
+def create_placement(client_id: int, slug: str, **fields: Any) -> dict:
+    with SessionLocal() as session:
+        row = PlacementModel(client_id=client_id, slug=slug, **fields)
+        session.add(row)
+        session.commit()
+        return _placement_row_to_dict(row)
+
+
+def list_placements(client_id: int) -> list[dict]:
+    with SessionLocal() as session:
+        rows = session.query(PlacementModel).filter_by(client_id=client_id).order_by(PlacementModel.created_at.desc()).all()
+        return [_placement_row_to_dict(r) for r in rows]
+
+
+def get_placement(client_id: int, slug: str) -> Optional[dict]:
+    with SessionLocal() as session:
+        row = session.get(PlacementModel, {"client_id": client_id, "slug": slug})
+        return _placement_row_to_dict(row) if row else None
+
+
+def update_placement(client_id: int, slug: str, **fields: Any) -> Optional[dict]:
+    """Generic field-by-field update, like update_data_source - bumps `version` on every
+    call, whatever changed, so a caller can tell a config has moved on without diffing it."""
+    with SessionLocal() as session:
+        row = session.get(PlacementModel, {"client_id": client_id, "slug": slug})
+        if row is None:
+            return None
+        for key, value in fields.items():
+            setattr(row, key, value)
+        row.version += 1
+        row.updated_at = utcnow()
+        session.commit()
+        return _placement_row_to_dict(row)
+
+
+def delete_placement(client_id: int, slug: str) -> bool:
+    with SessionLocal() as session:
+        row = session.get(PlacementModel, {"client_id": client_id, "slug": slug})
+        if row is None:
+            return False
+        session.delete(row)
+        session.commit()
+        return True
+
+
+# ---------------------------------------------------------------------------
+# Session identity - linking an anonymous session's past interactions to a user once they're
+# known, and the read-only counts get_placement_health / the MCP validator tools are built on.
+# ---------------------------------------------------------------------------
+
+def link_session_to_user(client_id: int, product_type: str, session_id: str, internal_user_id: int) -> int:
+    """The one UPDATE IdMapModel's own sibling, InteractionModel, already documented as the
+    whole mechanism ("lets a later job stitch an anonymous session's history onto the user
+    once they log in ... one UPDATE is all it takes") - only rows not already attributed to a
+    user (user_id IS NULL) are touched, so a session that already has its own history stays
+    that way rather than being silently reassigned. Returns how many rows were updated."""
+    with SessionLocal() as session:
+        result = session.query(InteractionModel).filter(
+            InteractionModel.client_id == client_id, InteractionModel.product_type == product_type,
+            InteractionModel.session_id == session_id, InteractionModel.user_id.is_(None),
+        ).update({"user_id": internal_user_id}, synchronize_session=False)
+        session.commit()
+        return result
+
+
+def count_recent_recommendation_calls(client_id: int, placement: str, since) -> dict[str, int]:
+    """total / with an item_id / with a session_id, for get_placement_health's "recommendations
+    requested" / "current item supplied" / "anonymous session supplied" checks."""
+    with SessionLocal() as session:
+        rows = session.query(RecommendationModel.item_id, RecommendationModel.session_id).filter(
+            RecommendationModel.client_id == client_id, RecommendationModel.placement == placement,
+            RecommendationModel.created_at >= since,
+        ).all()
+        return {
+            "total": len(rows),
+            "with_item": sum(1 for r in rows if r.item_id is not None),
+            "with_session": sum(1 for r in rows if r.session_id is not None),
+        }
+
+
+def count_recent_interactions_by_type(client_id: int, event_type: str, since, placement: Optional[str] = None, until=None) -> int:
+    """Placement-scoped for impression/click (only what this placement itself surfaced);
+    catalog-wide (placement=None) for view/add_to_cart/purchase, which aren't always tagged to
+    one placement - a store-wide funnel event, not a recommendation-attribution one. `until`:
+    open-ended (through now) unless given - only the performance dashboard's summary bounds it."""
+    with SessionLocal() as session:
+        query = session.query(InteractionModel).filter(
+            InteractionModel.client_id == client_id, InteractionModel.event_type == event_type,
+            InteractionModel.occurred_at >= since,
+        )
+        if until is not None:
+            query = query.filter(InteractionModel.occurred_at <= until)
+        if placement is not None:
+            query = query.filter(InteractionModel.placement == placement)
+        return query.count()
+
+
+def list_recent_recommendation_calls(client_id: int, placement: str, since, limit: int = 20) -> list[dict]:
+    with SessionLocal() as session:
+        rows = (
+            session.query(RecommendationModel)
+            .filter(RecommendationModel.client_id == client_id, RecommendationModel.placement == placement, RecommendationModel.created_at >= since)
+            .order_by(RecommendationModel.created_at.desc())
+            .limit(limit)
+            .all()
+        )
+        return [
+            {
+                "recommendation_id": r.recommendation_id, "strategy": r.strategy, "item_id": r.item_id,
+                "user_id": r.user_id, "session_id": r.session_id, "created_at": r.created_at,
+            }
+            for r in rows
+        ]
+
+
+def list_recent_interactions(client_id: int, event_types: list[str], since, limit: int = 20, placement: Optional[str] = None) -> list[dict]:
+    """external item_id, resolved from the internal work_id each row actually stores - see
+    IdMapModel. `placement` narrows to one placement's own tagged rows when given."""
+    with SessionLocal() as session:
+        query = session.query(InteractionModel).filter(
+            InteractionModel.client_id == client_id, InteractionModel.event_type.in_(event_types),
+            InteractionModel.occurred_at >= since,
+        )
+        if placement is not None:
+            query = query.filter(InteractionModel.placement == placement)
+        rows = query.order_by(InteractionModel.occurred_at.desc()).limit(limit).all()
+
+    external_by_product_type: dict[str, dict[int, str]] = {}
+    results = []
+    for r in rows:
+        externals = external_by_product_type.get(r.product_type)
+        if externals is None:
+            externals = resolve_external_ids(client_id, r.product_type, KIND_ITEM, [row.work_id for row in rows if row.product_type == r.product_type])
+            external_by_product_type[r.product_type] = externals
+        results.append({
+            "event_type": r.event_type, "item_id": externals.get(r.work_id, str(r.work_id)),
+            "session_id": r.session_id, "occurred_at": r.occurred_at,
+        })
+    return results
+
+
+def recommendation_performance_summary(client_id: int, since, until=None, placement: Optional[str] = None) -> dict[str, Any]:
+    """Recommendations served, impressions and clicks received (and CTR) in [since, until] - the
+    always-available Free-tier totals, and the top line the Pro detail view (timeseries/
+    by-placement/revenue) extends. No pre-aggregation table exists yet - plain counts over
+    indexed columns, fine at today's scale."""
+    with SessionLocal() as session:
+        rec_query = session.query(func.count(RecommendationModel.recommendation_id)).filter(
+            RecommendationModel.client_id == client_id, RecommendationModel.created_at >= since,
+        )
+        if until is not None:
+            rec_query = rec_query.filter(RecommendationModel.created_at <= until)
+        if placement is not None:
+            rec_query = rec_query.filter(RecommendationModel.placement == placement)
+        served = rec_query.scalar() or 0
+
+    impressions = count_recent_interactions_by_type(client_id, "impression", since, placement=placement, until=until)
+    clicks = count_recent_interactions_by_type(client_id, "click", since, placement=placement, until=until)
+    ctr = round(clicks / impressions, 4) if impressions else 0.0
+    return {"recommendations_served": served, "impressions": impressions, "clicks": clicks, "ctr": ctr}
+
+
+def recommendation_performance_timeseries(client_id: int, since, until=None, placement: Optional[str] = None) -> list[dict[str, Any]]:
+    """One row per calendar day with any activity in [since, until] - the Pro-only trend."""
+    with SessionLocal() as session:
+        rec_query = session.query(
+            func.date_trunc("day", RecommendationModel.created_at).label("day"),
+            func.count(RecommendationModel.recommendation_id).label("served"),
+        ).filter(RecommendationModel.client_id == client_id, RecommendationModel.created_at >= since)
+        if until is not None:
+            rec_query = rec_query.filter(RecommendationModel.created_at <= until)
+        if placement is not None:
+            rec_query = rec_query.filter(RecommendationModel.placement == placement)
+        served_by_day = {row.day.date(): row.served for row in rec_query.group_by("day").all()}
+
+        interaction_query = session.query(
+            func.date_trunc("day", InteractionModel.occurred_at).label("day"),
+            InteractionModel.event_type,
+            func.count(InteractionModel.id).label("n"),
+        ).filter(
+            InteractionModel.client_id == client_id, InteractionModel.occurred_at >= since,
+            InteractionModel.event_type.in_(["impression", "click"]),
+        )
+        if until is not None:
+            interaction_query = interaction_query.filter(InteractionModel.occurred_at <= until)
+        if placement is not None:
+            interaction_query = interaction_query.filter(InteractionModel.placement == placement)
+        interaction_rows = interaction_query.group_by("day", InteractionModel.event_type).all()
+
+    impressions_by_day: dict[Any, int] = {}
+    clicks_by_day: dict[Any, int] = {}
+    for row in interaction_rows:
+        day = row.day.date()
+        (impressions_by_day if row.event_type == "impression" else clicks_by_day)[day] = row.n
+
+    days = sorted(set(served_by_day) | set(impressions_by_day) | set(clicks_by_day))
+    result = []
+    for day in days:
+        impressions = impressions_by_day.get(day, 0)
+        clicks = clicks_by_day.get(day, 0)
+        result.append({
+            "date": day.isoformat(),
+            "recommendations_served": served_by_day.get(day, 0),
+            "impressions": impressions,
+            "clicks": clicks,
+            "ctr": round(clicks / impressions, 4) if impressions else 0.0,
+        })
+    return result
+
+
+def recommendation_performance_by_placement(client_id: int, since, until=None) -> list[dict[str, Any]]:
+    """One row per placement with any activity in [since, until] - the Pro-only breakdown."""
+    with SessionLocal() as session:
+        rec_query = session.query(
+            RecommendationModel.placement, func.count(RecommendationModel.recommendation_id).label("served"),
+        ).filter(
+            RecommendationModel.client_id == client_id, RecommendationModel.created_at >= since,
+            RecommendationModel.placement.isnot(None),
+        )
+        if until is not None:
+            rec_query = rec_query.filter(RecommendationModel.created_at <= until)
+        served_rows = rec_query.group_by(RecommendationModel.placement).all()
+
+        interaction_query = session.query(
+            InteractionModel.placement, InteractionModel.event_type, func.count(InteractionModel.id).label("n"),
+        ).filter(
+            InteractionModel.client_id == client_id, InteractionModel.occurred_at >= since,
+            InteractionModel.event_type.in_(["impression", "click"]), InteractionModel.placement.isnot(None),
+        )
+        if until is not None:
+            interaction_query = interaction_query.filter(InteractionModel.occurred_at <= until)
+        interaction_rows = interaction_query.group_by(InteractionModel.placement, InteractionModel.event_type).all()
+
+    served_by_placement = {row.placement: row.served for row in served_rows}
+    impressions_by_placement: dict[str, int] = {}
+    clicks_by_placement: dict[str, int] = {}
+    for row in interaction_rows:
+        (impressions_by_placement if row.event_type == "impression" else clicks_by_placement)[row.placement] = row.n
+
+    placements = sorted(set(served_by_placement) | set(impressions_by_placement) | set(clicks_by_placement))
+    result = []
+    for slug in placements:
+        impressions = impressions_by_placement.get(slug, 0)
+        clicks = clicks_by_placement.get(slug, 0)
+        result.append({
+            "placement": slug,
+            "recommendations_served": served_by_placement.get(slug, 0),
+            "impressions": impressions,
+            "clicks": clicks,
+            "ctr": round(clicks / impressions, 4) if impressions else 0.0,
+        })
+    return result
+
+
+def recommendation_attributed_revenue(client_id: int, since, until=None, placement: Optional[str] = None) -> dict[str, Any]:
+    """Purchases that carry a recommendation_id - i.e. actually attributable to a
+    recommendation, not every purchase the catalog ever recorded. Price comes from
+    properties.price, the same free-form convention every purchase event already uses."""
+    with SessionLocal() as session:
+        query = session.query(InteractionModel).filter(
+            InteractionModel.client_id == client_id, InteractionModel.event_type == "purchase",
+            InteractionModel.occurred_at >= since, InteractionModel.recommendation_id.isnot(None),
+        )
+        if until is not None:
+            query = query.filter(InteractionModel.occurred_at <= until)
+        if placement is not None:
+            query = query.filter(InteractionModel.placement == placement)
+        rows = query.all()
+
+    purchases = len(rows)
+    revenue = 0.0
+    for r in rows:
+        price = (r.properties or {}).get("price")
+        if isinstance(price, (int, float)):
+            revenue += price * (r.quantity or 1)
+    return {"purchases": purchases, "revenue": round(revenue, 2)}

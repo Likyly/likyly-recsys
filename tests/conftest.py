@@ -32,6 +32,13 @@ os.environ["DATABASE_URL"] = TEST_DATABASE_URL
 os.environ["SUPABASE_URL"] = "https://example.invalid"
 os.environ.pop("SENTRY_DSN", None)
 
+from cryptography.fernet import Fernet  # noqa: E402
+
+# A fresh key per test session - fine, since nothing here needs decrypted credentials to
+# survive across runs (unlike production, where rotating this key would make every already-
+# stored data source's credentials undecryptable - see crypto.py's module docstring).
+os.environ.setdefault("LIKYLY_DATA_SOURCE_ENCRYPTION_KEY", Fernet.generate_key().decode())
+
 sys.path[:0] = [str(ROOT / "application" / "api"), str(ROOT / "application" / "utils")]
 
 

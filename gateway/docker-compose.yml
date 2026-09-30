@@ -1,0 +1,109 @@
+# Gateway layer for recsys-api: APISIX (routing/rate-limiting, embedded
+# dashboard) + Hoppscotch (API testing tool). Deployed on the droplet
+# alongside the existing recsys-api compose stack (see gateway/README.md) -
+# not built/run locally.
+#
+# Network layout:
+#   - licenses_web: the droplet's existing shared network (recsys-api,
+#     likyly-website, xp-flightdeck-api, datatoform, caddy all live here).
+#     Only apisix and hoppscotch (the frontend) join it - the minimum needed
+#     for Caddy to reach them and for apisix to reach recsys-api by name.
+#   - gateway_net: private to this compose file. etcd and hoppscotch-db stay
+#     here only, off-limits to every other, unrelated container on
+#     licenses_web.
+services:
+  etcd:
+    image: bitnamilegacy/etcd:3.5.11
+    container_name: gateway-etcd
+    restart: unless-stopped
+    environment:
+      ETCD_ENABLE_V2: "true"
+      ALLOW_NONE_AUTHENTICATION: "yes"
+      ETCD_ADVERTISE_CLIENT_URLS: "http://etcd:2379"
+      ETCD_LISTEN_CLIENT_URLS: "http://0.0.0.0:2379"
+    volumes:
+      - etcd_data:/bitnami/etcd
+    networks:
+      - gateway_net
+
+  apisix:
+    image: apache/apisix:3.18.0-debian
+    container_name: apisix
+    restart: unless-stopped
+    depends_on:
+      - etcd
+    env_file: ./apisix.env
+    volumes:
+      - ./apisix_conf/config.yaml:/usr/local/apisix/conf/config.yaml:ro
+    ports:
+      # Admin API + embedded dashboard (http://<droplet>:9180/ui/ via SSH
+      # tunnel only) - never published beyond loopback, never proxied by Caddy.
+      - "127.0.0.1:9180:9180"
+    networks:
+      - gateway_net
+      - licenses_web
+
+  hoppscotch-db:
+    image: postgres:15
+    container_name: hoppscotch-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_DB: hoppscotch
+    # POSTGRES_PASSWORD comes from here, not a compose-level ${VAR} - env_file
+    # only reaches the container's own runtime env, so hoppscotch.env (which
+    # hoppscotch itself also reads via env_file below) must define both
+    # HOPPSCOTCH_DB_PASSWORD (used in its DATABASE_URL) and POSTGRES_PASSWORD
+    # (this image's own required var name) with the same value.
+    env_file: ./hoppscotch.env
+    volumes:
+      - hoppscotch_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - gateway_net
+
+  # One-shot: runs the backend's Prisma migrations against hoppscotch-db.
+  # The aio image's backend fails to start without this having run first
+  # (confirmed by trial: "Error: Database migration not found").
+  hoppscotch-migrate:
+    image: hoppscotch/hoppscotch:latest
+    container_name: hoppscotch-migrate
+    restart: "no"
+    env_file: ./hoppscotch.env
+    working_dir: /dist/backend
+    entrypoint: sh
+    command: ["-c", "pnpm exec prisma migrate deploy"]
+    depends_on:
+      hoppscotch-db:
+        condition: service_healthy
+    networks:
+      - gateway_net
+
+  hoppscotch:
+    image: hoppscotch/hoppscotch:latest
+    container_name: hoppscotch
+    restart: unless-stopped
+    env_file: ./hoppscotch.env
+    depends_on:
+      hoppscotch-migrate:
+        condition: service_completed_successfully
+    ports:
+      # Confirmed by inspecting the running container: its internal Caddy
+      # (subpath router for frontend/backend/admin) listens on 80, not 3000.
+      - "127.0.0.1:3000:80"
+    networks:
+      - gateway_net
+      - licenses_web
+
+networks:
+  licenses_web:
+    external: true
+  gateway_net:
+
+volumes:
+  etcd_data:
+  hoppscotch_db_data:

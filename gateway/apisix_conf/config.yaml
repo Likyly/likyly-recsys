@@ -1,0 +1,34 @@
+apisix:
+  node_listen: 9080
+
+deployment:
+  role: traditional
+  role_traditional:
+    config_provider: etcd
+
+  admin:
+    admin_key_required: true
+    admin_key:
+      - name: admin
+        key: ${{ADMIN_KEY}}   # from gateway/apisix.env, never committed
+        role: admin
+    enable_admin_ui: true      # embedded dashboard, served at :9180/ui/
+    admin_listen:
+      ip: 0.0.0.0
+      port: 9180
+    # Confirmed against the real deployment: a request arriving through the
+    # host-published 127.0.0.1:9180 port is NAT'd by Docker, so APISIX sees
+    # it coming from gateway_net's bridge gateway, not 127.0.0.1 - omitting
+    # allow_admin does NOT mean "allow all" (APISIX's own compiled-in default
+    # restricts to 127.0.0.0/24 and rejects it). Allowlist gateway_net's
+    # actual subnet instead (confirmed via `docker network inspect
+    # gateway_gateway_net`) plus real loopback for completeness.
+    allow_admin:
+      - "172.22.0.0/16"
+      - "127.0.0.1/32"
+
+  etcd:
+    host:
+      - "http://etcd:2379"
+    prefix: "/apisix"
+    timeout: 30

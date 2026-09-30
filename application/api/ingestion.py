@@ -21,11 +21,11 @@ if _utils_dir not in sys.path:
 
 
 from db import (  # noqa: E402
-    DEFAULT_EVENT_TIER, KIND_ITEM, KIND_USER, count_products_for_client, delete_product_profile,
-    delete_user_data, fetch_products, fetch_user_rows, get_client_event_type_weights,
-    get_client_plan, get_plan_limits, insert_interactions, product_exists,
-    resolve_external_ids, resolve_internal_ids, upsert_client_event_type, upsert_product_profile,
-    upsert_user, update_product_embedding, fetch_item_properties,
+    DEFAULT_EVENT_TIER, DEFAULT_ITEM_SORT, EVENT_TYPE_ALIASES, KIND_ITEM, KIND_USER, count_products_for_client,
+    delete_product_profile, delete_user_data, fetch_products, fetch_user_rows,
+    get_client_event_type_weights, get_client_plan, get_plan_limits, insert_interactions,
+    list_product_types_for_client, plan_limit_message, product_exists, resolve_external_ids, resolve_internal_ids, upsert_client_event_type,
+    upsert_product_profile, upsert_user, update_product_embedding, fetch_item_properties,
 )
 from ids import numeric_alias  # noqa: E402
 from schemas import Event, ItemUpsert, UserUpsert  # noqa: E402
@@ -95,9 +95,24 @@ def _check_plan_limit(client_id: int, new_items: int) -> None:
     stay possible even once the free-tier catalog is full."""
     if new_items <= 0:
         return
-    product_limit = get_plan_limits(get_client_plan(client_id))["product_limit"]
+    plan = get_client_plan(client_id)
+    product_limit = get_plan_limits(plan)["product_limit"]
     if product_limit is not None and count_products_for_client(client_id) + new_items > product_limit:
-        raise PlanLimitError(f"Free plan limit reached: {product_limit} products max. Upgrade your plan to add more products.")
+        raise PlanLimitError(plan_limit_message(plan, f"{product_limit} products max"))
+
+
+def _check_index_limit(client_id: int, product_type: str) -> None:
+    """An index is a catalog namespace (product_type) holding items - it comes into being with its
+    first item. Writing into an index the workspace already has is always fine; opening one more
+    than the plan allows is refused, so the free plan's single index can't be sidestepped by
+    pushing items straight into a differently named catalog instead of through a data source."""
+    plan = get_client_plan(client_id)
+    index_limit = get_plan_limits(plan)["index_limit"]
+    if index_limit is None:
+        return
+    existing = set(list_product_types_for_client(client_id))
+    if product_type not in existing and len(existing) >= index_limit:
+        raise PlanLimitError(plan_limit_message(plan, f"{index_limit} catalog{'' if index_limit == 1 else 's'} max"))
 
 
 def upsert_item(client_id: int, product_type: str, item_id: str, payload: ItemUpsert) -> bool:
@@ -106,6 +121,7 @@ def upsert_item(client_id: int, product_type: str, item_id: str, payload: ItemUp
     internal = resolve_internal_ids(client_id, product_type, KIND_ITEM, [item_id], create=True)[item_id]
     is_new = not product_exists(client_id, product_type, internal)
     if is_new:
+        _check_index_limit(client_id, product_type)
         _check_plan_limit(client_id, 1)
 
     properties = build_item_properties(payload)
@@ -147,15 +163,22 @@ def upsert_items_batch(client_id: int, product_type: str, entries: list) -> Batc
 
     errors: list[dict[str, Any]] = []
     to_embed: list[tuple[int, str, str, Optional[str], Optional[str]]] = []
-    product_limit = get_plan_limits(get_client_plan(client_id))["product_limit"]
+    plan = get_client_plan(client_id)
+    limits = get_plan_limits(plan)
+    product_limit = limits["product_limit"]
     current_count = count_products_for_client(client_id) if product_limit is not None else 0
+    index_limit = limits["index_limit"]
+    known_indexes = set(list_product_types_for_client(client_id)) if index_limit is not None else set()
 
     succeeded = 0
     for index, entry in enumerate(entries):
         internal = mapping[entry.item_id]
         is_new = not product_exists(client_id, product_type, internal)
+        if is_new and index_limit is not None and product_type not in known_indexes and len(known_indexes) >= index_limit:
+            errors.append({"index": index, "id": entry.item_id, "message": plan_limit_message(plan, f"{index_limit} catalog{'' if index_limit == 1 else 's'} max")})
+            continue
         if is_new and product_limit is not None and current_count >= product_limit:
-            errors.append({"index": index, "id": entry.item_id, "message": f"Free plan limit reached: {product_limit} products max"})
+            errors.append({"index": index, "id": entry.item_id, "message": plan_limit_message(plan, f"{product_limit} products max")})
             continue
         properties = build_item_properties(entry)
         columns = derive_item_columns(properties)
@@ -165,6 +188,7 @@ def upsert_items_batch(client_id: int, product_type: str, entries: list) -> Batc
         )
         if is_new:
             current_count += 1
+            known_indexes.add(product_type)
         succeeded += 1
         to_embed.append((internal, entry.title, _embedding_text(entry.title, entry.description, columns["genre_1"]), entry.description, columns["genre_1"]))
 
@@ -195,17 +219,22 @@ def delete_items(client_id: int, product_type: str, item_ids: list[str]) -> list
 def fetch_items(
     client_id: int, product_type: str, *, item_id: Optional[str] = None,
     limit: Optional[int] = None, offset: Optional[int] = None,
+    search: Optional[str] = None, sort: str = DEFAULT_ITEM_SORT,
 ) -> list[dict[str, Any]]:
     """Catalog rows as dicts: item_id (external), the structured columns, and `properties` -
     stored, or synthesized from the columns for rows written before the column existed.
-    An unknown item_id yields []."""
+    An unknown item_id yields []. `search`/`sort` are ignored when `item_id` is given (a
+    single-row lookup has nothing to search or sort)."""
     work_id = None
     if item_id is not None:
         work_id = resolve_internal_ids(client_id, product_type, KIND_ITEM, [item_id]).get(item_id)
         if work_id is None:
             return []
 
-    df = fetch_products(product_type, work_id=work_id, count=limit, client_id=client_id, offset=offset)
+    df = fetch_products(
+        product_type, work_id=work_id, count=limit, client_id=client_id, offset=offset,
+        search=search if work_id is None else None, sort=sort,
+    )
     if df.empty:
         return []
     records = json.loads(df.to_json(orient="records"))
@@ -359,6 +388,12 @@ def record_events(client_id: int, product_type: str, events: list[tuple[str, Eve
     was already recorded is skipped, which is what makes a retried purchase harmless."""
     if not events:
         return EventOutcome(0, 0, False)
+
+    # Clearer public names (product_view, recommendation_impression, recommendation_click)
+    # normalize to their canonical, already-weighted type here - the earliest point any event
+    # enters the system - so every caller (raw API, MCP, the SDK) lands on the same tuned
+    # training weight regardless of which name it used; see db.EVENT_TYPE_ALIASES.
+    events = [(EVENT_TYPE_ALIASES.get(event_type, event_type), event) for event_type, event in events]
 
     weights = ensure_event_types(client_id, {event_type for event_type, _ in events})
     items = resolve_internal_ids(client_id, product_type, KIND_ITEM, [e.item_id for _, e in events if e.item_id], create=True)

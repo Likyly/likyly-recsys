@@ -45,6 +45,11 @@ PUBLIC_OK = [
     ("POST", "/events/purchase", {"session_id": "s", "item_id": "SKU-NIKE-001"}),
     ("POST", "/events/click", {"session_id": "s", "item_id": "SKU-NIKE-001"}),
     ("POST", "/events/batch", {"events": [{"event_type": "view", "session_id": "s", "item_id": "a"}]}),
+    ("POST", "/events/identify", {"user_id": "u", "session_id": "s"}),
+    # Unlike the rest of PUBLIC_OK this one 404s for a nonexistent placement rather than
+    # returning items - still exactly the "not 401/403" bar this list checks; a real,
+    # end-to-end run is tests/test_placements.py's job.
+    ("POST", "/placements/does-not-exist/recommend", {"context": {}}),
 ]
 
 
@@ -114,7 +119,10 @@ def test_public_scope_matches_the_openapi_declaration(http):
         ("GET", "/getRec/collaborative/{user_id}/{count}"), ("GET", "/getRec/hybrid/{user_id}/{product_id}/{count}"),
         ("GET", "/getRec/session"), ("GET", "/getRec/sessionForUser/{user_id}/{count}"),
         ("GET", "/getRec/contentVec/{product_id}/{count}"),
-        ("POST", "/events/view"), ("POST", "/events/purchase"), ("POST", "/events/batch"), ("POST", "/events/{event_type}"),
+        ("POST", "/events/view"), ("POST", "/events/purchase"), ("POST", "/events/batch"), ("POST", "/events/identify"), ("POST", "/events/{event_type}"),
+        # Deliberate, reviewed addition (Placements feature): same safety level as POST
+        # /getRec - see scoped_auth.public_ok_client_id.
+        ("POST", "/placements/{slug}/recommend"),
     }
     assert normalized == expected_paths
     assert allowed  # PUBLIC_OK covers each of the above

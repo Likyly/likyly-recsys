@@ -15,6 +15,8 @@ import db
 import migrate
 
 LEGACY_SCHEMA = (Path(__file__).parent / "fixtures" / "legacy_schema.sql").read_text()
+# Every migration file, in order - a legacy database gets all of them on its first boot.
+ALL_MIGRATIONS = [f.stem for f in sorted(migrate.MIGRATIONS_DIR.glob("*.sql"))]
 MIGRATION_DB = "likyly_migration_test"
 Q = {"data_product_type": "movies"}
 SECRET, PUBLIC = "legacy-secret-key", "legacy-public-key"
@@ -93,7 +95,7 @@ def test_migration_also_works_on_a_database_without_create_all(legacy_engine):
     connection.close()
     engine = create_engine(_url(f"{MIGRATION_DB}_bare"))
     try:
-        assert migrate.run_migrations(engine) == ["0001_public_api_ids_sessions_recommendations"]
+        assert migrate.run_migrations(engine) == ALL_MIGRATIONS
         assert rows(engine, "SELECT kind, external_id, internal_id FROM id_map ORDER BY kind") == [("item", "9", 9), ("user", "4", 4)]
     finally:
         engine.dispose()
@@ -109,9 +111,16 @@ def rows(engine, sql):
 
 def test_migration_is_applied_once_and_recorded(migrated):
     engine, _, applied = migrated
-    assert applied == ["0001_public_api_ids_sessions_recommendations"]
-    assert rows(engine, "SELECT version FROM schema_migrations") == [("0001_public_api_ids_sessions_recommendations",)]
+    assert applied == ALL_MIGRATIONS
+    assert rows(engine, "SELECT version FROM schema_migrations ORDER BY version") == [(version,) for version in ALL_MIGRATIONS]
     assert migrate.run_migrations(engine) == []  # idempotent
+
+
+def test_existing_workspaces_keep_their_name_and_get_an_empty_display_name(migrated):
+    engine, _, _ = migrated
+    result = rows(engine, "SELECT name, display_name FROM clients ORDER BY id")
+    assert result and all(display_name is None for _, display_name in result)
+    assert all(name for name, _ in result)
 
 
 def test_migration_is_safe_to_replay_by_hand(migrated):

@@ -1,0 +1,42 @@
+# Not deployed automatically - the live Caddyfile is at
+# /home/deployer/app/licenses/caddy/Caddyfile on the droplet and fronts
+# several unrelated domains (xp-flightdeck, likyly, datatoform). Merge these
+# two changes into it by hand, then reload Caddy - don't replace the file
+# wholesale.
+#
+# Both diffs below are just: reverse_proxy recsys-api:6061 -> apisix:9080.
+# Everything else in each block (strip_prefix, encode, etc.) stays as-is.
+
+# --- 1. www.likyly.com block: recsys-api route within it -------------------
+# BEFORE:
+#   handle /recsys-api* {
+#       uri strip_prefix /recsys-api
+#       reverse_proxy recsys-api:6061
+#   }
+# AFTER:
+  handle /recsys-api* {
+      uri strip_prefix /recsys-api
+      reverse_proxy apisix:9080
+  }
+
+# --- 2. api.likyly.com block -------------------------------------------------
+# BEFORE:
+#   api.likyly.com {
+#       encode zstd gzip
+#       reverse_proxy recsys-api:6061
+#   }
+# AFTER:
+api.likyly.com {
+    encode zstd gzip
+    reverse_proxy apisix:9080
+}
+
+# --- 3. New block: Hoppscotch -----------------------------------------------
+# Not in the recsys-api request path - routed directly, bypassing APISIX.
+# Port 80, not 3000: confirmed by inspecting the running container - its
+# internal Caddy (subpath router for frontend/backend/admin) listens on 80.
+# The host-published 127.0.0.1:3000 (docker-compose.yml) is unrelated to
+# this - container-to-container traffic uses the container's real port.
+hoppscotch.likyly.com {
+    reverse_proxy hoppscotch:80
+}

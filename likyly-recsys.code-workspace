@@ -1,0 +1,17 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../likyly-website"
+		},
+		{
+			"path": "../likyly-wordpress"
+		},
+		{
+			"path": "../likyly-site-sandbox"
+		}
+	],
+	"settings": {}
+}

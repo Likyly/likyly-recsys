@@ -8,9 +8,15 @@ venv/
 __pycache__/
 .vercel
 application/api/.env*
+gateway/hoppscotch.env
+gateway/apisix.env
 credentials.json
 ploomber-cloud.json
 deploy.sh
 credentials.json
 supervisord.log
 solara-docker
+mlflow_artifacts/
+# local Claude Code permissions - can embed pasted API keys, never commit
+.claude/settings.local.json
+node_modules/

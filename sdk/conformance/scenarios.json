@@ -1,0 +1,2037 @@
+{
+  "defaults": {
+    "apiKey": "sk_test_conformance",
+    "baseUrl": "https://api.example.test",
+    "userAgentPrefix": "likyly-"
+  },
+  "scenarios": [
+    {
+      "id": "items.upsert",
+      "call": {
+        "resource": "items",
+        "method": "upsert",
+        "args": [
+          "SKU-123",
+          {
+            "title": "Nike Air Max",
+            "description": "Running shoe",
+            "properties": {
+              "category": "shoes",
+              "brand": "Nike",
+              "price": 129.9
+            }
+          }
+        ]
+      },
+      "request": {
+        "method": "PUT",
+        "path": "/items/SKU-123",
+        "query": {},
+        "body": {
+          "title": "Nike Air Max",
+          "description": "Running shoe",
+          "properties": {
+            "category": "shoes",
+            "brand": "Nike",
+            "price": 129.9
+          }
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {},
+        "body": {
+          "item_id": "SKU-123",
+          "title": "Nike Air Max",
+          "description": "Running shoe",
+          "properties": {
+            "category": "shoes",
+            "brand": "Nike",
+            "price": 129.9
+          }
+        }
+      },
+      "expect": {
+        "itemId": "SKU-123",
+        "title": "Nike Air Max",
+        "properties.brand": "Nike"
+      }
+    },
+    {
+      "id": "items.upsert.url-id",
+      "call": {
+        "resource": "items",
+        "method": "upsert",
+        "args": [
+          "gid://shopify/Product/123",
+          {
+            "title": "Shopify item"
+          }
+        ]
+      },
+      "request": {
+        "method": "PUT",
+        "path": "/items/gid%3A%2F%2Fshopify%2FProduct%2F123",
+        "query": {},
+        "body": {
+          "title": "Shopify item"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": {
+          "item_id": "gid://shopify/Product/123",
+          "title": "Shopify item",
+          "properties": {}
+        }
+      },
+      "expect": {
+        "itemId": "gid://shopify/Product/123"
+      },
+      "note": "ids are opaque strings; every character outside RFC 3986 unreserved is percent-encoded, '/' included"
+    },
+    {
+      "id": "items.get",
+      "call": {
+        "resource": "items",
+        "method": "get",
+        "args": [
+          "SKU-123"
+        ]
+      },
+      "request": {
+        "method": "GET",
+        "path": "/items/SKU-123",
+        "query": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": {
+          "item_id": "SKU-123",
+          "title": "Nike Air Max",
+          "description": "Running shoe",
+          "properties": {
+            "category": "shoes",
+            "brand": "Nike",
+            "price": 129.9
+          }
+        }
+      },
+      "expect": {
+        "itemId": "SKU-123",
+        "description": "Running shoe"
+      }
+    },
+    {
+      "id": "items.list",
+      "call": {
+        "resource": "items",
+        "method": "list",
+        "args": [
+          {
+            "limit": 100,
+            "offset": 200
+          }
+        ]
+      },
+      "request": {
+        "method": "GET",
+        "path": "/items",
+        "query": {
+          "limit": "100",
+          "offset": "200"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "X-Total-Count": "1234"
+        },
+        "body": [
+          {
+            "item_id": "SKU-123",
+            "title": "Nike Air Max",
+            "description": "Running shoe",
+            "properties": {
+              "category": "shoes",
+              "brand": "Nike",
+              "price": 129.9
+            }
+          }
+        ]
+      },
+      "expect": {
+        "items.0.itemId": "SKU-123",
+        "total": 1234,
+        "limit": 100,
+        "offset": 200
+      }
+    },
+    {
+      "id": "items.list.catalog",
+      "call": {
+        "resource": "items",
+        "method": "list",
+        "args": []
+      },
+      "request": {
+        "method": "GET",
+        "path": "/items",
+        "query": {
+          "data_product_type": "shop"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "X-Total-Count": "0"
+        },
+        "body": []
+      },
+      "expect": {
+        "total": 0
+      },
+      "config": {
+        "catalog": "shop"
+      },
+      "note": "catalog client option -> data_product_type"
+    },
+    {
+      "id": "items.delete",
+      "call": {
+        "resource": "items",
+        "method": "delete",
+        "args": [
+          "SKU-123"
+        ]
+      },
+      "request": {
+        "method": "DELETE",
+        "path": "/items/SKU-123",
+        "query": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": {
+          "message": "Item 'SKU-123' deleted from data_product_type=default"
+        }
+      }
+    },
+    {
+      "id": "items.upsertMany",
+      "call": {
+        "resource": "items",
+        "method": "upsertMany",
+        "args": [
+          [
+            {
+              "itemId": "SKU-1",
+              "title": "A",
+              "properties": {
+                "category": "x"
+              }
+            },
+            {
+              "itemId": "SKU-2",
+              "title": "B",
+              "description": "d"
+            }
+          ]
+        ]
+      },
+      "request": {
+        "method": "POST",
+        "path": "/items/import",
+        "query": {},
+        "body": {
+          "items": [
+            {
+              "item_id": "SKU-1",
+              "title": "A",
+              "properties": {
+                "category": "x"
+              }
+            },
+            {
+              "item_id": "SKU-2",
+              "title": "B",
+              "description": "d"
+            }
+          ]
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": {
+          "received": 2,
+          "succeeded": 2,
+          "failed": 0,
+          "errors": []
+        }
+      },
+      "expect": {
+        "received": 2,
+        "succeeded": 2,
+        "failed": 0
+      }
+    },
+    {
+      "id": "items.deleteMany",
+      "call": {
+        "resource": "items",
+        "method": "deleteMany",
+        "args": [
+          [
+            "SKU-1",
+            "SKU-2"
+          ]
+        ]
+      },
+      "request": {
+        "method": "POST",
+        "path": "/items/delete",
+        "query": {},
+        "body": {
+          "item_ids": [
+            "SKU-1",
+            "SKU-2"
+          ]
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": {
+          "received": 2,
+          "succeeded": 1,
+          "failed": 1,
+          "errors": [
+            {
+              "index": 1,
+              "id": "SKU-2",
+              "message": "No such item"
+            }
+          ]
+        }
+      },
+      "expect": {
+        "failed": 1,
+        "errors.0.id": "SKU-2",
+        "errors.0.index": 1
+      }
+    },
+    {
+      "id": "users.upsert",
+      "call": {
+        "resource": "users",
+        "method": "upsert",
+        "args": [
+          "user_123",
+          {
+            "properties": {
+              "country": "FR",
+              "segment": "premium",
+              "language": "fr"
+            }
+          }
+        ]
+      },
+      "request": {
+        "method": "PUT",
+        "path": "/users/user_123",
+        "query": {},
+        "body": {
+          "properties": {
+            "country": "FR",
+            "segment": "premium",
+            "language": "fr"
+          }
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {},
+        "body": {
+          "user_id": "user_123",
+          "properties": {
+            "country": "FR",
+            "segment": "premium",
+            "language": "fr"
+          }
+        }
+      },
+      "expect": {
+        "userId": "user_123",
+        "properties.segment": "premium"
+      }
+    },
+    {
+      "id": "users.get",
+      "call": {
+        "resource": "users",
+        "method": "get",
+        "args": [
+          "user_123"
+        ]
+      },
+      "request": {
+        "method": "GET",
+        "path": "/users/user_123",
+        "query": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": {
+          "user_id": "user_123",
+          "properties": {
+            "country": "FR",
+            "segment": "premium",
+            "language": "fr"
+          }
+        }
+      },
+      "expect": {
+        "userId": "user_123"
+      }
+    },
+    {
+      "id": "users.list",
+      "call": {
+        "resource": "users",
+        "method": "list",
+        "args": [
+          {
+            "limit": 50
+          }
+        ]
+      },
+      "request": {
+        "method": "GET",
+        "path": "/users",
+        "query": {
+          "limit": "50"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "X-Total-Count": "1"
+        },
+        "body": [
+          {
+            "user_id": "user_123",
+            "properties": {
+              "country": "FR",
+              "segment": "premium",
+              "language": "fr"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "users.0.userId": "user_123",
+        "total": 1
+      }
+    },
+    {
+      "id": "users.delete",
+      "call": {
+        "resource": "users",
+        "method": "delete",
+        "args": [
+          "user_123"
+        ]
+      },
+      "request": {
+        "method": "DELETE",
+        "path": "/users/user_123",
+        "query": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": {
+          "message": "User 'user_123' deleted from data_product_type=default"
+        }
+      }
+    },
+    {
+      "id": "users.import",
+      "call": {
+        "resource": "users",
+        "method": "import",
+        "args": [
+          [
+            {
+              "userId": "u1",
+              "properties": {
+                "country": "FR"
+              }
+            },
+            {
+              "userId": "u2"
+            }
+          ]
+        ]
+      },
+      "request": {
+        "method": "POST",
+        "path": "/users/import",
+        "query": {},
+        "body": {
+          "users": [
+            {
+              "user_id": "u1",
+              "properties": {
+                "country": "FR"
+              }
+            },
+            {
+              "user_id": "u2"
+            }
+          ]
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": {
+          "received": 2,
+          "succeeded": 2,
+          "failed": 0,
+          "errors": []
+        }
+      },
+      "expect": {
+        "succeeded": 2
+      }
+    },
+    {
+      "id": "events.view.identified",
+      "call": {
+        "resource": "events",
+        "method": "view",
+        "args": [
+          {
+            "userId": "user_123",
+            "itemId": "SKU-456"
+          }
+        ]
+      },
+      "request": {
+        "method": "POST",
+        "path": "/events/view",
+        "query": {},
+        "body": {
+          "user_id": "user_123",
+          "item_id": "SKU-456"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": {
+          "message": "View event recorded",
+          "event_id": null,
+          "duplicate": false
+        }
+      },
+      "expect": {
+        "duplicate": false
+      }
+    },
+    {
+      "id": "events.view.anonymous",
+      "call": {
+        "resource": "events",
+        "method": "view",
+        "args": [
+          {
+            "sessionId": "sess_123",
+            "itemId": "SKU-456"
+          }
+        ]
+      },
+      "request": {
+        "method": "POST",
+        "path": "/events/view",
+        "query": {},
+        "body": {
+          "session_id": "sess_123",
+          "item_id": "SKU-456"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": {
+          "message": "click event recorded",
+          "event_id": null,
+          "duplicate": false
+        }
+      }
+    },
+    {
+      "id": "events.view.user-and-session",
+      "call": {
+        "resource": "events",
+        "method": "view",
+        "args": [
+          {
+            "userId": "user_789",
+            "sessionId": "sess_123",
+            "itemId": "SKU-456"
+          }
+        ]
+      },
+      "request": {
+        "method": "POST",
+        "path": "/events/view",
+        "query": {},
+        "body": {
+          "user_id": "user_789",
+          "session_id": "sess_123",
+          "item_id": "SKU-456"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": {
+          "message": "click event recorded",
+          "event_id": null,
+          "duplicate": false
+        }
+      }
+    },
+    {
+      "id": "events.impression",
+      "call": {
+        "resource": "events",
+        "method": "impression",
+        "args": [
+          {
+            "userId": "user_123",
+            "itemId": "SKU-456",
+            "recommendationId": "rec_01K5Z3W8Q9M2X7T4N6V1B0C8DF",
+            "placement": "homepage"
+          }
+        ]
+      },
+      "request": {
+        "method": "POST",
+        "path": "/events/impression",
+        "query": {},
+        "body": {
+          "user_id": "user_123",
+          "item_id": "SKU-456",
+          "recommendation_id": "rec_01K5Z3W8Q9M2X7T4N6V1B0C8DF",
+          "placement": "homepage"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": {
+          "message": "click event recorded",
+          "event_id": null,
+          "duplicate": false
+        }
+      }
+    },
+    {
+      "id": "events.click",
+      "call": {
+        "resource": "events",
+        "method": "click",
+        "args": [
+          {
+            "userId": "user_123",
+            "itemId": "SKU-456",
+            "recommendationId": "rec_01K5Z3W8Q9M2X7T4N6V1B0C8DF",
+            "placement": "homepage",
+            "properties": {
+              "campaign": "summer",
+              "orderId": "kept-verbatim"
+            }
+          }
+        ]
+      },
+      "request": {
+        "method": "POST",
+        "path": "/events/click",
+        "query": {},
+        "body": {
+          "user_id": "user_123",
+          "item_id": "SKU-456",
+          "recommendation_id": "rec_01K5Z3W8Q9M2X7T4N6V1B0C8DF",
+          "placement": "homepage",
+          "properties": {
+            "campaign": "summer",
+            "orderId": "kept-verbatim"
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": {
+          "message": "click event recorded",
+          "event_id": null,
+          "duplicate": false
+        }
+      },
+      "note": "keys inside `properties` are the developer's own and are never renamed"
+    },
+    {
+      "id": "events.addToCart",
+      "call": {
+        "resource": "events",
+        "method": "addToCart",
+        "args": [
+          {
+            "userId": "user_123",
+            "itemId": "SKU-456",
+            "placement": "product_page",
+            "quantity": 1
+          }
+        ]
+      },
+      "request": {
+        "method": "POST",
+        "path": "/events/add_to_cart",
+        "query": {},
+        "body": {
+          "user_id": "user_123",
+          "item_id": "SKU-456",
+          "placement": "product_page",
+          "quantity": 1
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": {
+          "message": "click event recorded",
+          "event_id": null,
+          "duplicate": false
+        }
+      }
+    },
+    {
+      "id": "events.removeFromCart",
+      "call": {
+        "resource": "events",
+        "method": "removeFromCart",
+        "args": [
+          {
+            "userId": "user_123",
+            "itemId": "SKU-456",
+            "quantity": 1
+          }
+        ]
+      },
+      "request": {
+        "method": "POST",
+        "path": "/events/remove_from_cart",
+        "query": {},
+        "body": {
+          "user_id": "user_123",
+          "item_id": "SKU-456",
+          "quantity": 1
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": {
+          "message": "click event recorded",
+          "event_id": null,
+          "duplicate": false
+        }
+      }
+    },
+    {
+      "id": "events.purchase",
+      "call": {
+        "resource": "events",
+        "method": "purchase",
+        "args": [
+          {
+            "eventId": "purchase_order_9281_item_456",
+            "userId": "user_123",
+            "itemId": "SKU-456",
+            "recommendationId": "rec_01K5Z3W8Q9M2X7T4N6V1B0C8DF",
+            "placement": "cart",
+            "quantity": 1,
+            "properties": {
+              "price": 129.9,
+              "currency": "EUR",
+              "orderId": "ORDER-9281"
+            }
+          }
+        ]
+      },
+      "request": {
+        "method": "POST",
+        "path": "/events/purchase",
+        "query": {},
+        "body": {
+          "event_id": "purchase_order_9281_item_456",
+          "user_id": "user_123",
+          "item_id": "SKU-456",
+          "recommendation_id": "rec_01K5Z3W8Q9M2X7T4N6V1B0C8DF",
+          "placement": "cart",
+          "quantity": 1,
+          "properties": {
+            "price": 129.9,
+            "currency": "EUR",
+            "orderId": "ORDER-9281"
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": {
+          "message": "purchase event already recorded (duplicate event_id ignored)",
+          "event_id": "purchase_order_9281_item_456",
+          "duplicate": true
+        }
+      },
+      "expect": {
+        "duplicate": true,
+        "eventId": "purchase_order_9281_item_456"
+      }
+    },
+    {
+      "id": "events.track.custom",
+      "call": {
+        "resource": "events",
+        "method": "track",
+        "args": [
+          "favorite",
+          {
+            "userId": "user_123",
+            "itemId": "SKU-456"
+          }
+        ]
+      },
+      "request": {
+        "method": "POST",
+        "path": "/events/favorite",
+        "query": {},
+        "body": {
+          "user_id": "user_123",
+          "item_id": "SKU-456"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": {
+          "message": "favorite event recorded",
+          "event_id": null,
+          "duplicate": false
+        }
+      },
+      "note": "event types are open strings"
+    },
+    {
+      "id": "events.track.occurredAt",
+      "call": {
+        "resource": "events",
+        "method": "track",
+        "args": [
+          "view",
+          {
+            "userId": "u",
+            "itemId": "i",
+            "occurredAt": "2026-09-24T10:30:00Z"
+          }
+        ]
+      },
+      "request": {
+        "method": "POST",
+        "path": "/events/view",
+        "query": {},
+        "body": {
+          "user_id": "u",
+          "item_id": "i",
+          "occurred_at": "2026-09-24T10:30:00Z"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": {
+          "message": "click event recorded",
+          "event_id": null,
+          "duplicate": false
+        }
+      }
+    },
+    {
+      "id": "events.trackMany",
+      "call": {
+        "resource": "events",
+        "method": "trackMany",
+        "args": [
+          [
+            {
+              "type": "view",
+              "userId": "user_123",
+              "itemId": "SKU-1"
+            },
+            {
+              "type": "click",
+              "sessionId": "s",
+              "itemId": "SKU-2",
+              "eventId": "e2"
+            }
+          ]
+        ]
+      },
+      "request": {
+        "method": "POST",
+        "path": "/events/batch",
+        "query": {},
+        "body": {
+          "events": [
+            {
+              "event_type": "view",
+              "user_id": "user_123",
+              "item_id": "SKU-1"
+            },
+            {
+              "event_type": "click",
+              "session_id": "s",
+              "item_id": "SKU-2",
+              "event_id": "e2"
+            }
+          ]
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": {
+          "received": 2,
+          "accepted": 2,
+          "duplicates": 0
+        }
+      },
+      "expect": {
+        "received": 2,
+        "accepted": 2,
+        "duplicates": 0
+      }
+    },
+    {
+      "id": "recommendations.get.user",
+      "call": {
+        "resource": "recommendations",
+        "method": "get",
+        "args": [
+          {
+            "userId": "user_123",
+            "placement": "homepage",
+            "limit": 10
+          }
+        ]
+      },
+      "request": {
+        "method": "POST",
+        "path": "/getRec",
+        "query": {},
+        "body": {
+          "user_id": "user_123",
+          "placement": "homepage",
+          "count": 10
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": {
+          "recommendation_id": "rec_01K5Z3W8Q9M2X7T4N6V1B0C8DF",
+          "strategy": "hybrid",
+          "placement": "homepage",
+          "items": [
+            {
+              "item_id": "SKU-456",
+              "score": 0.934,
+              "title": "Adidas Boston",
+              "description": "Racing shoe",
+              "properties": {
+                "category": "shoes"
+              },
+              "explanation": {
+                "reason": "Similaire à « Nike Air Max »",
+                "content_similarity": 0.91,
+                "collaborative_score": 0.96,
+                "source_item_ids": [
+                  "SKU-123"
+                ],
+                "similar_users": [
+                  {
+                    "user_id": "user_9",
+                    "shared_item_ids": [
+                      "SKU-123"
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "item_id": "gid://shopify/Product/9",
+              "score": 0.5,
+              "title": "Boot",
+              "properties": {}
+            }
+          ]
+        }
+      },
+      "expect": {
+        "recommendationId": "rec_01K5Z3W8Q9M2X7T4N6V1B0C8DF",
+        "strategy": "hybrid",
+        "placement": "homepage",
+        "items.0.itemId": "SKU-456",
+        "items.0.score": 0.934,
+        "items.0.title": "Adidas Boston",
+        "items.0.explanation.reason": "Similaire à « Nike Air Max »",
+        "items.0.explanation.contentSimilarity": 0.91,
+        "items.0.explanation.similarUsers.0.userId": "user_9",
+        "items.1.itemId": "gid://shopify/Product/9"
+      },
+      "note": "limit -> count"
+    },
+    {
+      "id": "recommendations.get.item",
+      "call": {
+        "resource": "recommendations",
+        "method": "get",
+        "args": [
+          {
+            "itemId": "SKU-456",
+            "placement": "product_page",
+            "limit": 6
+          }
+        ]
+      },
+      "request": {
+        "method": "POST",
+        "path": "/getRec",
+        "query": {},
+        "body": {
+          "item_id": "SKU-456",
+          "placement": "product_page",
+          "count": 6
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": {
+          "recommendation_id": "rec_01K5Z3W8Q9M2X7T4N6V1B0C8DF",
+          "strategy": "hybrid",
+          "placement": "homepage",
+          "items": [
+            {
+              "item_id": "SKU-456",
+              "score": 0.934,
+              "title": "Adidas Boston",
+              "description": "Racing shoe",
+              "properties": {
+                "category": "shoes"
+              },
+              "explanation": {
+                "reason": "Similaire à « Nike Air Max »",
+                "content_similarity": 0.91,
+                "collaborative_score": 0.96,
+                "source_item_ids": [
+                  "SKU-123"
+                ],
+                "similar_users": [
+                  {
+                    "user_id": "user_9",
+                    "shared_item_ids": [
+                      "SKU-123"
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "item_id": "gid://shopify/Product/9",
+              "score": 0.5,
+              "title": "Boot",
+              "properties": {}
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "recommendations.get.user-and-item",
+      "call": {
+        "resource": "recommendations",
+        "method": "get",
+        "args": [
+          {
+            "userId": "user_123",
+            "itemId": "SKU-456",
+            "placement": "product_page",
+            "limit": 6
+          }
+        ]
+      },
+      "request": {
+        "method": "POST",
+        "path": "/getRec",
+        "query": {},
+        "body": {
+          "user_id": "user_123",
+          "item_id": "SKU-456",
+          "placement": "product_page",
+          "count": 6
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": {
+          "recommendation_id": "rec_01K5Z3W8Q9M2X7T4N6V1B0C8DF",
+          "strategy": "hybrid",
+          "placement": "homepage",
+          "items": [
+            {
+              "item_id": "SKU-456",
+              "score": 0.934,
+              "title": "Adidas Boston",
+              "description": "Racing shoe",
+              "properties": {
+                "category": "shoes"
+              },
+              "explanation": {
+                "reason": "Similaire à « Nike Air Max »",
+                "content_similarity": 0.91,
+                "collaborative_score": 0.96,
+                "source_item_ids": [
+                  "SKU-123"
+                ],
+                "similar_users": [
+                  {
+                    "user_id": "user_9",
+                    "shared_item_ids": [
+                      "SKU-123"
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "item_id": "gid://shopify/Product/9",
+              "score": 0.5,
+              "title": "Boot",
+              "properties": {}
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "recommendations.get.session",
+      "call": {
+        "resource": "recommendations",
+        "method": "get",
+        "args": [
+          {
+            "sessionId": "sess_123",
+            "viewedItemIds": [
+              "SKU-123",
+              "SKU-456"
+            ],
+            "placement": "homepage",
+            "limit": 10
+          }
+        ]
+      },
+      "request": {
+        "method": "POST",
+        "path": "/getRec",
+        "query": {},
+        "body": {
+          "session_id": "sess_123",
+          "viewed_item_ids": [
+            "SKU-123",
+            "SKU-456"
+          ],
+          "placement": "homepage",
+          "count": 10
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": {
+          "recommendation_id": "rec_01K5Z3W8Q9M2X7T4N6V1B0C8DF",
+          "strategy": "session",
+          "placement": "homepage",
+          "items": [
+            {
+              "item_id": "SKU-456",
+              "score": 0.934,
+              "title": "Adidas Boston",
+              "description": "Racing shoe",
+              "properties": {
+                "category": "shoes"
+              },
+              "explanation": {
+                "reason": "Similaire à « Nike Air Max »",
+                "content_similarity": 0.91,
+                "collaborative_score": 0.96,
+                "source_item_ids": [
+                  "SKU-123"
+                ],
+                "similar_users": [
+                  {
+                    "user_id": "user_9",
+                    "shared_item_ids": [
+                      "SKU-123"
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "item_id": "gid://shopify/Product/9",
+              "score": 0.5,
+              "title": "Boot",
+              "properties": {}
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "recommendations.get.nothing",
+      "call": {
+        "resource": "recommendations",
+        "method": "get",
+        "args": [
+          {
+            "placement": "homepage",
+            "limit": 10
+          }
+        ]
+      },
+      "request": {
+        "method": "POST",
+        "path": "/getRec",
+        "query": {},
+        "body": {
+          "placement": "homepage",
+          "count": 10
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": {
+          "recommendation_id": "rec_01K5Z3W8Q9M2X7T4N6V1B0C8DF",
+          "strategy": "popular",
+          "placement": "homepage",
+          "items": [
+            {
+              "item_id": "SKU-456",
+              "score": 0.934,
+              "title": "Adidas Boston",
+              "description": "Racing shoe",
+              "properties": {
+                "category": "shoes"
+              },
+              "explanation": {
+                "reason": "Similaire à « Nike Air Max »",
+                "content_similarity": 0.91,
+                "collaborative_score": 0.96,
+                "source_item_ids": [
+                  "SKU-123"
+                ],
+                "similar_users": [
+                  {
+                    "user_id": "user_9",
+                    "shared_item_ids": [
+                      "SKU-123"
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "item_id": "gid://shopify/Product/9",
+              "score": 0.5,
+              "title": "Boot",
+              "properties": {}
+            }
+          ]
+        }
+      },
+      "expect": {
+        "strategy": "popular"
+      },
+      "note": "popular fallback is the backend's; the SDK adds nothing"
+    },
+    {
+      "id": "recommendations.get.no-args",
+      "call": {
+        "resource": "recommendations",
+        "method": "get",
+        "args": []
+      },
+      "request": {
+        "method": "POST",
+        "path": "/getRec",
+        "query": {},
+        "body": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": {
+          "recommendation_id": "rec_X",
+          "strategy": "popular",
+          "items": []
+        }
+      },
+      "expect": {
+        "items.length": 0
+      }
+    },
+    {
+      "id": "recommendations.popular",
+      "call": {
+        "resource": "recommendations",
+        "method": "popular",
+        "args": [
+          {
+            "limit": 5,
+            "placement": "homepage"
+          }
+        ]
+      },
+      "request": {
+        "method": "GET",
+        "path": "/getRec/popular/5",
+        "query": {
+          "response_format": "object",
+          "placement": "homepage"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": {
+          "recommendation_id": "rec_01K5Z3W8Q9M2X7T4N6V1B0C8DF",
+          "strategy": "popular",
+          "placement": "homepage",
+          "items": [
+            {
+              "item_id": "SKU-456",
+              "score": 0.934,
+              "title": "Adidas Boston",
+              "description": "Racing shoe",
+              "properties": {
+                "category": "shoes"
+              },
+              "explanation": {
+                "reason": "Similaire à « Nike Air Max »",
+                "content_similarity": 0.91,
+                "collaborative_score": 0.96,
+                "source_item_ids": [
+                  "SKU-123"
+                ],
+                "similar_users": [
+                  {
+                    "user_id": "user_9",
+                    "shared_item_ids": [
+                      "SKU-123"
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "item_id": "gid://shopify/Product/9",
+              "score": 0.5,
+              "title": "Boot",
+              "properties": {}
+            }
+          ]
+        }
+      },
+      "expect": {
+        "strategy": "popular"
+      }
+    },
+    {
+      "id": "recommendations.similar",
+      "call": {
+        "resource": "recommendations",
+        "method": "similar",
+        "args": [
+          {
+            "itemId": "SKU-456",
+            "limit": 6
+          }
+        ]
+      },
+      "request": {
+        "method": "GET",
+        "path": "/getRec/content/SKU-456/6",
+        "query": {
+          "response_format": "object"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": {
+          "recommendation_id": "rec_01K5Z3W8Q9M2X7T4N6V1B0C8DF",
+          "strategy": "content",
+          "placement": "homepage",
+          "items": [
+            {
+              "item_id": "SKU-456",
+              "score": 0.934,
+              "title": "Adidas Boston",
+              "description": "Racing shoe",
+              "properties": {
+                "category": "shoes"
+              },
+              "explanation": {
+                "reason": "Similaire à « Nike Air Max »",
+                "content_similarity": 0.91,
+                "collaborative_score": 0.96,
+                "source_item_ids": [
+                  "SKU-123"
+                ],
+                "similar_users": [
+                  {
+                    "user_id": "user_9",
+                    "shared_item_ids": [
+                      "SKU-123"
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "item_id": "gid://shopify/Product/9",
+              "score": 0.5,
+              "title": "Boot",
+              "properties": {}
+            }
+          ]
+        }
+      },
+      "expect": {
+        "strategy": "content"
+      }
+    },
+    {
+      "id": "recommendations.collaborative",
+      "call": {
+        "resource": "recommendations",
+        "method": "collaborative",
+        "args": [
+          {
+            "userId": "user_123",
+            "limit": 3,
+            "sessionId": "sess_1"
+          }
+        ]
+      },
+      "request": {
+        "method": "GET",
+        "path": "/getRec/collaborative/user_123/3",
+        "query": {
+          "response_format": "object",
+          "session_id": "sess_1"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": {
+          "recommendation_id": "rec_01K5Z3W8Q9M2X7T4N6V1B0C8DF",
+          "strategy": "collaborative",
+          "placement": "homepage",
+          "items": [
+            {
+              "item_id": "SKU-456",
+              "score": 0.934,
+              "title": "Adidas Boston",
+              "description": "Racing shoe",
+              "properties": {
+                "category": "shoes"
+              },
+              "explanation": {
+                "reason": "Similaire à « Nike Air Max »",
+                "content_similarity": 0.91,
+                "collaborative_score": 0.96,
+                "source_item_ids": [
+                  "SKU-123"
+                ],
+                "similar_users": [
+                  {
+                    "user_id": "user_9",
+                    "shared_item_ids": [
+                      "SKU-123"
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "item_id": "gid://shopify/Product/9",
+              "score": 0.5,
+              "title": "Boot",
+              "properties": {}
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "recommendations.hybrid",
+      "call": {
+        "resource": "recommendations",
+        "method": "hybrid",
+        "args": [
+          {
+            "userId": "user_123",
+            "itemId": "SKU-456",
+            "limit": 4,
+            "alpha": 0.7
+          }
+        ]
+      },
+      "request": {
+        "method": "GET",
+        "path": "/getRec/hybrid/user_123/SKU-456/4",
+        "query": {
+          "response_format": "object",
+          "alpha": "0.7"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": {
+          "recommendation_id": "rec_01K5Z3W8Q9M2X7T4N6V1B0C8DF",
+          "strategy": "hybrid",
+          "placement": "homepage",
+          "items": [
+            {
+              "item_id": "SKU-456",
+              "score": 0.934,
+              "title": "Adidas Boston",
+              "description": "Racing shoe",
+              "properties": {
+                "category": "shoes"
+              },
+              "explanation": {
+                "reason": "Similaire à « Nike Air Max »",
+                "content_similarity": 0.91,
+                "collaborative_score": 0.96,
+                "source_item_ids": [
+                  "SKU-123"
+                ],
+                "similar_users": [
+                  {
+                    "user_id": "user_9",
+                    "shared_item_ids": [
+                      "SKU-123"
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "item_id": "gid://shopify/Product/9",
+              "score": 0.5,
+              "title": "Boot",
+              "properties": {}
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "recommendations.session.list",
+      "call": {
+        "resource": "recommendations",
+        "method": "session",
+        "args": [
+          {
+            "viewedItemIds": [
+              "SKU-123",
+              "SKU-456"
+            ],
+            "limit": 3
+          }
+        ]
+      },
+      "request": {
+        "method": "GET",
+        "path": "/getRec/session",
+        "query": {
+          "response_format": "object",
+          "viewed_item_ids": "SKU-123,SKU-456",
+          "count": "3"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": {
+          "recommendation_id": "rec_01K5Z3W8Q9M2X7T4N6V1B0C8DF",
+          "strategy": "session",
+          "placement": "homepage",
+          "items": [
+            {
+              "item_id": "SKU-456",
+              "score": 0.934,
+              "title": "Adidas Boston",
+              "description": "Racing shoe",
+              "properties": {
+                "category": "shoes"
+              },
+              "explanation": {
+                "reason": "Similaire à « Nike Air Max »",
+                "content_similarity": 0.91,
+                "collaborative_score": 0.96,
+                "source_item_ids": [
+                  "SKU-123"
+                ],
+                "similar_users": [
+                  {
+                    "user_id": "user_9",
+                    "shared_item_ids": [
+                      "SKU-123"
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "item_id": "gid://shopify/Product/9",
+              "score": 0.5,
+              "title": "Boot",
+              "properties": {}
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "recommendations.session.user",
+      "call": {
+        "resource": "recommendations",
+        "method": "session",
+        "args": [
+          {
+            "userId": "user_123",
+            "limit": 3
+          }
+        ]
+      },
+      "request": {
+        "method": "GET",
+        "path": "/getRec/sessionForUser/user_123/3",
+        "query": {
+          "response_format": "object"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": {
+          "recommendation_id": "rec_01K5Z3W8Q9M2X7T4N6V1B0C8DF",
+          "strategy": "session",
+          "placement": "homepage",
+          "items": [
+            {
+              "item_id": "SKU-456",
+              "score": 0.934,
+              "title": "Adidas Boston",
+              "description": "Racing shoe",
+              "properties": {
+                "category": "shoes"
+              },
+              "explanation": {
+                "reason": "Similaire à « Nike Air Max »",
+                "content_similarity": 0.91,
+                "collaborative_score": 0.96,
+                "source_item_ids": [
+                  "SKU-123"
+                ],
+                "similar_users": [
+                  {
+                    "user_id": "user_9",
+                    "shared_item_ids": [
+                      "SKU-123"
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "item_id": "gid://shopify/Product/9",
+              "score": 0.5,
+              "title": "Boot",
+              "properties": {}
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "errors.401",
+      "call": {
+        "resource": "items",
+        "method": "get",
+        "args": [
+          "SKU-123"
+        ]
+      },
+      "request": {
+        "method": "GET",
+        "path": "/items/SKU-123",
+        "query": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "X-Request-ID": "req_A"
+        },
+        "body": {
+          "detail": "Missing X-API-Key header",
+          "request_id": "req_A"
+        }
+      },
+      "error": {
+        "class": "AuthenticationError",
+        "statusCode": 401,
+        "requestId": "req_A",
+        "message": "Missing X-API-Key header"
+      }
+    },
+    {
+      "id": "errors.403",
+      "call": {
+        "resource": "items",
+        "method": "get",
+        "args": [
+          "SKU-123"
+        ]
+      },
+      "request": {
+        "method": "GET",
+        "path": "/items/SKU-123",
+        "query": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "X-Request-ID": "req_B"
+        },
+        "body": {
+          "detail": "This endpoint requires the secret API key - the restricted public key can't be used here",
+          "request_id": "req_B"
+        }
+      },
+      "error": {
+        "class": "PermissionDeniedError",
+        "statusCode": 403,
+        "requestId": "req_B"
+      }
+    },
+    {
+      "id": "errors.404",
+      "call": {
+        "resource": "items",
+        "method": "get",
+        "args": [
+          "SKU-123"
+        ]
+      },
+      "request": {
+        "method": "GET",
+        "path": "/items/SKU-123",
+        "query": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "X-Request-ID": "req_C"
+        },
+        "body": {
+          "detail": "No item 'SKU-123' in data_product_type=default",
+          "request_id": "req_C"
+        }
+      },
+      "error": {
+        "class": "NotFoundError",
+        "statusCode": 404
+      }
+    },
+    {
+      "id": "errors.422",
+      "call": {
+        "resource": "items",
+        "method": "get",
+        "args": [
+          "SKU-123"
+        ]
+      },
+      "request": {
+        "method": "GET",
+        "path": "/items/SKU-123",
+        "query": {}
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "X-Request-ID": "req_D"
+        },
+        "body": {
+          "detail": [
+            {
+              "type": "value_error",
+              "loc": [
+                "body"
+              ],
+              "msg": "Value error, at least one of user_id or session_id is required",
+              "input": {}
+            }
+          ],
+          "request_id": "req_D"
+        }
+      },
+      "error": {
+        "class": "ValidationError",
+        "statusCode": 422,
+        "requestId": "req_D"
+      }
+    },
+    {
+      "id": "errors.429",
+      "call": {
+        "resource": "items",
+        "method": "get",
+        "args": [
+          "SKU-123"
+        ]
+      },
+      "request": {
+        "method": "GET",
+        "path": "/items/SKU-123",
+        "query": {}
+      },
+      "response": {
+        "status": 429,
+        "headers": {
+          "Retry-After": "7"
+        },
+        "body": {
+          "detail": "rate limited"
+        }
+      },
+      "error": {
+        "class": "RateLimitError",
+        "statusCode": 429,
+        "retryAfter": 7
+      }
+    },
+    {
+      "id": "errors.500",
+      "call": {
+        "resource": "items",
+        "method": "get",
+        "args": [
+          "SKU-123"
+        ]
+      },
+      "request": {
+        "method": "GET",
+        "path": "/items/SKU-123",
+        "query": {}
+      },
+      "response": {
+        "status": 500,
+        "headers": {
+          "X-Request-ID": "req_E"
+        },
+        "body": {
+          "detail": "Internal server error - quote this request_id when reporting it",
+          "request_id": "req_E"
+        }
+      },
+      "error": {
+        "class": "ApiError",
+        "statusCode": 500,
+        "requestId": "req_E"
+      }
+    },
+    {
+      "id": "errors.502.plain",
+      "call": {
+        "resource": "items",
+        "method": "get",
+        "args": [
+          "SKU-123"
+        ]
+      },
+      "request": {
+        "method": "GET",
+        "path": "/items/SKU-123",
+        "query": {}
+      },
+      "response": {
+        "status": 502,
+        "headers": {},
+        "body": null
+      },
+      "error": {
+        "class": "ApiError",
+        "statusCode": 502
+      }
+    },
+    {
+      "id": "placements.recommend",
+      "call": {
+        "resource": "placements",
+        "method": "recommend",
+        "args": [
+          {
+            "placement": "pdp-related",
+            "context": {
+              "itemId": "SKU-456",
+              "userId": "user_123",
+              "sessionId": "sess_abc"
+            },
+            "limit": 4
+          }
+        ]
+      },
+      "request": {
+        "method": "POST",
+        "path": "/placements/pdp-related/recommend",
+        "query": {},
+        "body": {
+          "context": {
+            "current_item_id": "SKU-456",
+            "user_id": "user_123",
+            "session_id": "sess_abc"
+          },
+          "limit": 4
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": {
+          "recommendation_id": "rec_01K5Z3W8Q9M2X7T4N6V1B0C8DF",
+          "placement": "pdp-related",
+          "strategy_used": "hybrid",
+          "items": [
+            {
+              "item_id": "SKU-456",
+              "score": 0.9,
+              "title": "Adidas Boston",
+              "properties": {
+                "category": "shoes"
+              }
+            }
+          ]
+        }
+      },
+      "expect": {
+        "strategyUsed": "hybrid",
+        "placement": "pdp-related",
+        "recommendationId": "rec_01K5Z3W8Q9M2X7T4N6V1B0C8DF"
+      }
+    },
+    {
+      "id": "placements.recommend.no-context",
+      "call": {
+        "resource": "placements",
+        "method": "recommend",
+        "args": [
+          {
+            "placement": "homepage-personalized"
+          }
+        ]
+      },
+      "request": {
+        "method": "POST",
+        "path": "/placements/homepage-personalized/recommend",
+        "query": {},
+        "body": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": {
+          "recommendation_id": "rec_01K5Z3W8Q9M2X7T4N6V1B0C8DG",
+          "placement": "homepage-personalized",
+          "strategy_used": "popular",
+          "items": []
+        }
+      },
+      "expect": {
+        "strategyUsed": "popular",
+        "items": []
+      }
+    },
+    {
+      "id": "events.identify",
+      "call": {
+        "resource": "events",
+        "method": "identify",
+        "args": [
+          {
+            "userId": "user_123",
+            "sessionId": "sess_abc"
+          }
+        ]
+      },
+      "request": {
+        "method": "POST",
+        "path": "/events/identify",
+        "query": {},
+        "body": {
+          "user_id": "user_123",
+          "session_id": "sess_abc"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {},
+        "body": {
+          "linked_interactions": 3
+        }
+      },
+      "expect": {
+        "linkedInteractions": 3
+      }
+    }
+  ]
+}

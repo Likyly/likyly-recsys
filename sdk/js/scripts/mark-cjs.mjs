@@ -1,0 +1,3 @@
+// The package is "type": "module"; the CommonJS build needs its own package.json to say otherwise.
+import { writeFileSync } from "node:fs";
+writeFileSync(new URL("../dist/cjs/package.json", import.meta.url), '{"type":"commonjs"}\n');

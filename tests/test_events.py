@@ -56,6 +56,30 @@ class TestGenericEvents:
         registered = {e["event_type"] for e in db.get_client_event_types(tenant.client_id)}
         assert {"impression", "view", "click", "add_to_cart", "remove_from_cart", "purchase"} <= registered
 
+    def test_a_tenant_older_than_todays_default_types_gets_the_new_ones_backfilled(self, tenant):
+        # Simulates an account created back when DEFAULT_EVENT_TYPES was only (purchase, view) -
+        # seed_default_event_types only ever ran once, at creation, so this client's row never
+        # picked up impression/click/add_to_cart/remove_from_cart on its own.
+        with db.SessionLocal() as session:
+            session.query(db.ClientEventTypeModel).filter(
+                db.ClientEventTypeModel.client_id == tenant.client_id,
+                db.ClientEventTypeModel.event_type.notin_(["purchase", "view"]),
+            ).delete(synchronize_session=False)
+            session.commit()
+        with db.SessionLocal() as session:
+            raw = {
+                row[0] for row in session.query(db.ClientEventTypeModel.event_type).filter_by(client_id=tenant.client_id).all()
+            }
+        assert raw == {"purchase", "view"}
+
+        registered = {e["event_type"] for e in db.get_client_event_types(tenant.client_id)}
+        assert registered >= {"purchase", "view", "impression", "click", "add_to_cart", "remove_from_cart"}
+
+    def test_backfill_never_overwrites_a_tier_the_tenant_already_changed(self, tenant):
+        db.upsert_client_event_type(tenant.client_id, "view", "Vue", "fort")  # customized away from the default "faible"
+        registered = {e["event_type"]: e["tier"] for e in db.get_client_event_types(tenant.client_id)}
+        assert registered["view"] == "fort"
+
     def test_unknown_event_type_is_auto_registered(self, http, seeded):
         assert "reservation" not in {e["event_type"] for e in db.get_client_event_types(seeded.client_id)}
         assert track(http, seeded, "reservation", {"user_id": "u", "item_id": "SKU-NIKE-001"}).status_code == 200

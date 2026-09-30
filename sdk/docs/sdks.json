@@ -1,0 +1,657 @@
+{
+  "version": "1.0.0",
+  "sdks": [
+    {
+      "id": "typescript",
+      "slug": "typescript",
+      "dir": "js",
+      "name": "TypeScript / JavaScript",
+      "short": "TypeScript",
+      "fence": "js",
+      "example": "examples/quickstart.mjs",
+      "package": "@likyly/sdk",
+      "registry": "npm",
+      "install": "npm install @likyly/sdk",
+      "requires": "Node.js 18 or later, or any runtime that has `fetch` (Bun, Deno, Cloudflare Workers, browsers). ESM and CommonJS builds, TypeScript types included, no runtime dependency.",
+      "case": "camel",
+      "specialNames": {},
+      "errors": {
+        "base": "LikylyError",
+        "validation": "ValidationError",
+        "network": "NetworkError",
+        "timeout": "TimeoutError",
+        "api": "ApiError",
+        "authentication": "AuthenticationError",
+        "permissionDenied": "PermissionDeniedError",
+        "notFound": "NotFoundError",
+        "rateLimit": "RateLimitError",
+        "fields": "`statusCode`, `requestId`, `retryAfter` (seconds), `body`",
+        "catch": "instanceof"
+      },
+      "config": [
+        [
+          "API key",
+          "`apiKey`",
+          "required"
+        ],
+        [
+          "Base URL",
+          "`baseUrl`",
+          "`https://api.likyly.com`"
+        ],
+        [
+          "Catalog",
+          "`catalog`",
+          "your only catalog"
+        ],
+        [
+          "Timeout",
+          "`timeout` (milliseconds)",
+          "10 000"
+        ],
+        [
+          "Retries",
+          "`maxRetries`",
+          "2"
+        ],
+        [
+          "User-Agent suffix",
+          "`userAgent`",
+          "none"
+        ],
+        [
+          "Custom HTTP",
+          "`fetch`",
+          "global `fetch`"
+        ]
+      ],
+      "perCall": "Every method takes a last `options` argument: `{ signal, timeout, maxRetries }` (an `AbortSignal` cancels the call).",
+      "notes": [
+        "Identifiers are plain strings and are never coerced: `itemId: 42` is a type error, and a JavaScript caller passing a number gets a `ValidationError`.",
+        "Request and response fields are `camelCase` (`itemId`, `recommendationId`); the keys inside `properties` are yours and are never renamed."
+      ],
+      "context": "",
+      "installFence": "sh",
+      "fr": {
+        "requires": "Node.js 18 ou plus récent, ou tout environnement disposant de `fetch` (Bun, Deno, Cloudflare Workers, navigateurs). Builds ESM et CommonJS, types TypeScript inclus, aucune dépendance à l'exécution.",
+        "perCall": "Chaque méthode accepte un dernier argument `options` : `{ signal, timeout, maxRetries }` (un `AbortSignal` annule l'appel).",
+        "notes": [
+          "Les identifiants sont de simples chaînes, jamais converties : `itemId: 42` est une erreur de type, et un appelant JavaScript qui passe un nombre reçoit une `ValidationError`.",
+          "Les champs des requêtes et des réponses sont en `camelCase` (`itemId`, `recommendationId`) ; les clés à l'intérieur de `properties` vous appartiennent et ne sont jamais renommées."
+        ]
+      }
+    },
+    {
+      "id": "php",
+      "slug": "php",
+      "dir": "php",
+      "name": "PHP",
+      "short": "PHP",
+      "fence": "php",
+      "example": "examples/quickstart.php",
+      "package": "likyly/sdk",
+      "registry": "Packagist",
+      "install": "composer require likyly/sdk",
+      "requires": "PHP 8.1 or later. Depends on Guzzle 7 (`guzzlehttp/guzzle`); works in any framework, or none.",
+      "case": "camel",
+      "specialNames": {},
+      "errors": {
+        "base": "LikylyException",
+        "validation": "ValidationException",
+        "network": "NetworkException",
+        "timeout": "TimeoutException",
+        "api": "ApiException",
+        "authentication": "AuthenticationException",
+        "permissionDenied": "PermissionDeniedException",
+        "notFound": "NotFoundException",
+        "rateLimit": "RateLimitException",
+        "namespace": "Likyly\\Exception",
+        "fields": "`$statusCode`, `$requestId`, `$retryAfter` (seconds), `$body`",
+        "catch": "catch"
+      },
+      "config": [
+        [
+          "API key",
+          "`apiKey`",
+          "required"
+        ],
+        [
+          "Base URL",
+          "`baseUrl`",
+          "`https://api.likyly.com`"
+        ],
+        [
+          "Catalog",
+          "`catalog`",
+          "your only catalog"
+        ],
+        [
+          "Timeout",
+          "`timeout` (seconds)",
+          "10"
+        ],
+        [
+          "Retries",
+          "`maxRetries`",
+          "2"
+        ],
+        [
+          "User-Agent suffix",
+          "`userAgent`",
+          "none"
+        ],
+        [
+          "Custom HTTP",
+          "`httpClient` (a Guzzle `ClientInterface`)",
+          "a new Guzzle client"
+        ]
+      ],
+      "perCall": "Every method takes a last `array $options = []` argument: `['timeout' => 2.0, 'maxRetries' => 0]`.",
+      "notes": [
+        "Use named arguments (PHP 8): `events()->view(userId: 'user_123', itemId: 'SKU-1')`. Identifiers are strings and are never coerced: with `declare(strict_types=1)` an integer is a `TypeError`.",
+        "Batch methods (`upsertMany`, `trackMany`, `users()->import`) take arrays of arrays with the same `camelCase` keys as the named arguments. The keys inside `properties` are yours and are never renamed."
+      ],
+      "context": "",
+      "initPrelude": "<?php\n\nrequire __DIR__ . '/vendor/autoload.php'; // Composer's autoloader\n",
+      "installFence": "sh",
+      "fr": {
+        "requires": "PHP 8.1 ou plus récent. Dépend de Guzzle 7 (`guzzlehttp/guzzle`) ; fonctionne dans n'importe quel framework, ou sans.",
+        "perCall": "Chaque méthode accepte un dernier argument `array $options = []` : `['timeout' => 2.0, 'maxRetries' => 0]`.",
+        "notes": [
+          "Utilisez les arguments nommés (PHP 8) : `events()->view(userId: 'user_123', itemId: 'SKU-1')`. Les identifiants sont des chaînes, jamais converties : avec `declare(strict_types=1)`, un entier lève une `TypeError`.",
+          "Les méthodes par lot (`upsertMany`, `trackMany`, `users()->import`) prennent des tableaux de tableaux avec les mêmes clés `camelCase` que les arguments nommés. Les clés de `properties` vous appartiennent et ne sont jamais renommées."
+        ]
+      }
+    },
+    {
+      "id": "python",
+      "slug": "python",
+      "dir": "python",
+      "name": "Python",
+      "short": "Python",
+      "fence": "python",
+      "example": "examples/quickstart.py",
+      "package": "likyly",
+      "registry": "PyPI",
+      "install": "pip install likyly",
+      "requires": "Python 3.9 or later. Depends on `httpx`. Fully typed (`py.typed`). Sync (`Likyly`) and asyncio (`AsyncLikyly`) clients with the same methods.",
+      "case": "snake",
+      "specialNames": {
+        "items.import": "import_",
+        "users.import": "import_"
+      },
+      "errors": {
+        "base": "LikylyError",
+        "validation": "ValidationError",
+        "network": "NetworkError",
+        "timeout": "RequestTimeoutError",
+        "api": "ApiError",
+        "authentication": "AuthenticationError",
+        "permissionDenied": "PermissionDeniedError",
+        "notFound": "NotFoundError",
+        "rateLimit": "RateLimitError",
+        "fields": "`.status_code`, `.request_id`, `.retry_after` (seconds), `.body`",
+        "catch": "except"
+      },
+      "config": [
+        [
+          "API key",
+          "`api_key`",
+          "required"
+        ],
+        [
+          "Base URL",
+          "`base_url`",
+          "`https://api.likyly.com`"
+        ],
+        [
+          "Catalog",
+          "`catalog`",
+          "your only catalog"
+        ],
+        [
+          "Timeout",
+          "`timeout` (seconds)",
+          "10"
+        ],
+        [
+          "Retries",
+          "`max_retries`",
+          "2"
+        ],
+        [
+          "User-Agent suffix",
+          "`user_agent`",
+          "none"
+        ],
+        [
+          "Custom HTTP",
+          "`http_client` (an `httpx.Client` / `httpx.AsyncClient`)",
+          "a new client"
+        ]
+      ],
+      "perCall": "Every method takes a keyword-only `options=RequestOptions(timeout=2.0, max_retries=0)`.",
+      "notes": [
+        "Async code: `async with AsyncLikyly(api_key=...) as likyly:` then `await likyly.recommendations.get(...)`. Use `with Likyly(...) as likyly:` (or call `close()`) to release the connection pool.",
+        "`import` is a Python keyword, so the batch import is `items.import_(...)` / `users.import_(...)`. Fields are `snake_case` (`item_id`, `recommendation_id`); the keys inside `properties` are yours and are never renamed."
+      ],
+      "context": "",
+      "installFence": "sh",
+      "fr": {
+        "requires": "Python 3.9 ou plus récent. Dépend de `httpx`. Entièrement typé (`py.typed`). Clients synchrone (`Likyly`) et asyncio (`AsyncLikyly`) avec les mêmes méthodes.",
+        "perCall": "Chaque méthode accepte `options=RequestOptions(timeout=2.0, max_retries=0)` (argument nommé).",
+        "notes": [
+          "Code async : `async with AsyncLikyly(api_key=...) as likyly:` puis `await likyly.recommendations.get(...)`. Utilisez `with Likyly(...) as likyly:` (ou `close()`) pour libérer le pool de connexions.",
+          "`import` est un mot-clé Python : l'import par lot s'appelle `items.import_(...)` / `users.import_(...)`. Les champs sont en `snake_case` (`item_id`, `recommendation_id`) ; les clés de `properties` vous appartiennent et ne sont jamais renommées."
+        ]
+      }
+    },
+    {
+      "id": "java",
+      "slug": "java",
+      "dir": "java",
+      "name": "Java",
+      "short": "Java",
+      "fence": "java",
+      "example": "examples/Quickstart.java",
+      "package": "com.likyly:likyly-sdk",
+      "registry": "Maven Central",
+      "install": "<dependency>\n  <groupId>com.likyly</groupId>\n  <artifactId>likyly-sdk</artifactId>\n  <version>1.0.0</version>\n</dependency>",
+      "installFence": "xml",
+      "requires": "Java 17 or later. Uses the JDK's built-in `java.net.http.HttpClient` and Jackson for JSON. Thread-safe.",
+      "case": "camel",
+      "specialNames": {
+        "items.import": "importItems",
+        "users.import": "importUsers"
+      },
+      "errors": {
+        "base": "LikylyException",
+        "validation": "ValidationException",
+        "network": "NetworkException",
+        "timeout": "TimeoutException",
+        "api": "ApiException",
+        "authentication": "AuthenticationException",
+        "permissionDenied": "PermissionDeniedException",
+        "notFound": "NotFoundException",
+        "rateLimit": "RateLimitException",
+        "namespace": "com.likyly.error",
+        "fields": "`statusCode()`, `requestId()`, `retryAfter()` (seconds), `body()`",
+        "catch": "catch"
+      },
+      "config": [
+        [
+          "API key",
+          "`apiKey(...)`",
+          "required"
+        ],
+        [
+          "Base URL",
+          "`baseUrl(...)`",
+          "`https://api.likyly.com`"
+        ],
+        [
+          "Catalog",
+          "`catalog(...)`",
+          "your only catalog"
+        ],
+        [
+          "Timeout",
+          "`timeout(Duration)`",
+          "10 s"
+        ],
+        [
+          "Retries",
+          "`maxRetries(...)`",
+          "2"
+        ],
+        [
+          "User-Agent suffix",
+          "`userAgent(...)`",
+          "none"
+        ],
+        [
+          "Custom HTTP",
+          "`httpClient(java.net.http.HttpClient)` or `transport(Transport)`",
+          "a shared `HttpClient`"
+        ]
+      ],
+      "perCall": "Configure timeout and retries on the client; build a second client for a different policy.",
+      "notes": [
+        "Models are immutable records with builders (`EventInput.builder()...build()`). Calls are blocking: run them on a virtual thread or an executor if you need concurrency.",
+        "`import` is a Java keyword, so the batch imports are `items().importItems(...)` and `users().importUsers(...)`. The keys inside `properties` (a `Map<String, Object>`) are yours and are never renamed."
+      ],
+      "context": "The snippets are statements: put them in a method (`main`, a service, a Spring bean...). Calls are blocking.\n\n",
+      "fr": {
+        "requires": "Java 17 ou plus récent. Utilise le `java.net.http.HttpClient` du JDK et Jackson pour le JSON. Thread-safe.",
+        "perCall": "Le délai et les tentatives se règlent sur le client ; construisez un second client pour une autre politique.",
+        "notes": [
+          "Les modèles sont des records immuables avec builders (`EventInput.builder()...build()`). Les appels sont bloquants : utilisez un thread virtuel ou un executor pour la concurrence.",
+          "`import` est un mot-clé Java : les imports par lot sont `items().importItems(...)` et `users().importUsers(...)`. Les clés de `properties` (une `Map<String, Object>`) vous appartiennent et ne sont jamais renommées."
+        ],
+        "context": "Les extraits sont des instructions : placez-les dans une méthode (`main`, un service, un bean Spring...). Les appels sont bloquants."
+      }
+    },
+    {
+      "id": "dotnet",
+      "slug": "dotnet",
+      "dir": "dotnet",
+      "name": ".NET",
+      "short": ".NET",
+      "fence": "csharp",
+      "example": "examples/Quickstart/Program.cs",
+      "package": "Likyly",
+      "registry": "NuGet",
+      "install": "dotnet add package Likyly",
+      "requires": ".NET 8 or later. No dependency beyond the framework (`HttpClient`, `System.Text.Json`). Async everywhere, `CancellationToken` on every call.",
+      "case": "pascal",
+      "suffix": "Async",
+      "specialNames": {},
+      "errors": {
+        "base": "LikylyException",
+        "validation": "ValidationException",
+        "network": "NetworkException",
+        "timeout": "RequestTimeoutException",
+        "api": "ApiException",
+        "authentication": "AuthenticationException",
+        "permissionDenied": "PermissionDeniedException",
+        "notFound": "NotFoundException",
+        "rateLimit": "RateLimitException",
+        "fields": "`StatusCode`, `RequestId`, `RetryAfter` (seconds), `Body`",
+        "catch": "catch"
+      },
+      "config": [
+        [
+          "API key",
+          "`ApiKey`",
+          "required"
+        ],
+        [
+          "Base URL",
+          "`BaseUrl`",
+          "`https://api.likyly.com`"
+        ],
+        [
+          "Catalog",
+          "`Catalog`",
+          "your only catalog"
+        ],
+        [
+          "Timeout",
+          "`Timeout` (`TimeSpan`)",
+          "10 s"
+        ],
+        [
+          "Retries",
+          "`MaxRetries`",
+          "2"
+        ],
+        [
+          "User-Agent suffix",
+          "`UserAgent`",
+          "none"
+        ],
+        [
+          "Custom HTTP",
+          "`new LikylyClient(options, httpClient)`",
+          "a new `HttpClient`"
+        ]
+      ],
+      "perCall": "Pass a `CancellationToken` as the last argument; the client's `Timeout` applies per attempt. Register `LikylyClient` as a singleton (`services.AddSingleton(...)`).",
+      "notes": [
+        "Request and response models are C# records/classes with nullable annotations; identifiers are strings and are never coerced. The keys inside `Properties` (a `Dictionary<string, object?>`) are yours and are never renamed."
+      ],
+      "context": "The snippets are top-level statements (`Program.cs`); in a class, put them in an `async` method.\n\n",
+      "installFence": "sh",
+      "fr": {
+        "requires": ".NET 8 ou plus récent. Aucune dépendance hors framework (`HttpClient`, `System.Text.Json`). Asynchrone partout, `CancellationToken` sur chaque appel.",
+        "perCall": "Passez un `CancellationToken` en dernier argument ; le `Timeout` du client s'applique à chaque tentative. Enregistrez `LikylyClient` en singleton (`services.AddSingleton(...)`).",
+        "notes": [
+          "Les modèles de requête et de réponse sont des records/classes C# avec annotations de nullabilité ; les identifiants sont des chaînes, jamais converties. Les clés de `Properties` (un `Dictionary<string, object?>`) vous appartiennent et ne sont jamais renommées."
+        ],
+        "context": "Les extraits sont des instructions de niveau supérieur (`Program.cs`) ; dans une classe, placez-les dans une méthode `async`."
+      }
+    },
+    {
+      "id": "go",
+      "slug": "go",
+      "dir": "go",
+      "name": "Go",
+      "short": "Go",
+      "fence": "go",
+      "example": "examples/quickstart/main.go",
+      "package": "github.com/likyly/likyly-go",
+      "registry": "Go modules",
+      "install": "go get github.com/likyly/likyly-go",
+      "requires": "Go 1.21 or later. Standard library only. Every call takes a `context.Context`. Safe for concurrent use.",
+      "case": "pascal",
+      "specialNames": {},
+      "errors": {
+        "base": "error",
+        "validation": "*ValidationError",
+        "network": "*NetworkError",
+        "timeout": "*TimeoutError",
+        "api": "*APIError",
+        "authentication": "*AuthenticationError",
+        "permissionDenied": "*PermissionDeniedError",
+        "notFound": "*NotFoundError",
+        "rateLimit": "*RateLimitError",
+        "fields": "`StatusCode`, `RequestID`, `RetryAfter` (`time.Duration`), `Body`",
+        "catch": "errors.As"
+      },
+      "config": [
+        [
+          "API key",
+          "first argument of `New`",
+          "required"
+        ],
+        [
+          "Base URL",
+          "`WithBaseURL`",
+          "`https://api.likyly.com`"
+        ],
+        [
+          "Catalog",
+          "`WithCatalog`",
+          "your only catalog"
+        ],
+        [
+          "Timeout",
+          "`WithTimeout` (`time.Duration`)",
+          "10 s"
+        ],
+        [
+          "Retries",
+          "`WithMaxRetries`",
+          "2"
+        ],
+        [
+          "User-Agent suffix",
+          "`WithUserAgent`",
+          "none"
+        ],
+        [
+          "Custom HTTP",
+          "`WithHTTPClient` (any `Doer`, e.g. `*http.Client`)",
+          "`http.DefaultClient`"
+        ]
+      ],
+      "perCall": "Cancel or set a deadline through the `context.Context`. Per-call options go last: `WithRequestTimeout(d)`, `WithRequestMaxRetries(n)`.",
+      "notes": [
+        "Optional fields use zero values as \"not set\" (`Limit: 0` = the API's default). `HybridOptions.Alpha` is a `*float64` so that `0` is expressible. Test errors with `errors.As`; a `*ValidationError` from a 422 also matches `*APIError`.",
+        "Request and response fields are `PascalCase` structs; the keys inside `Properties` (a `map[string]any`) are yours and are never renamed."
+      ],
+      "context": "The snippets run inside `func main()`; `log.Fatal` keeps them short, handle errors as you see fit.\n\n",
+      "installFence": "sh",
+      "fr": {
+        "requires": "Go 1.21 ou plus récent. Bibliothèque standard uniquement. Chaque appel prend un `context.Context`. Utilisable en concurrence.",
+        "perCall": "Annulation et échéance via le `context.Context`. Les options par appel viennent en dernier : `WithRequestTimeout(d)`, `WithRequestMaxRetries(n)`.",
+        "notes": [
+          "Les champs optionnels utilisent la valeur zéro comme « non renseigné » (`Limit: 0` = valeur par défaut de l'API). `HybridOptions.Alpha` est un `*float64` pour que `0` reste exprimable. Testez les erreurs avec `errors.As` ; une `*ValidationError` issue d'un 422 correspond aussi à `*APIError`.",
+          "Les champs des requêtes et des réponses sont des structs en `PascalCase` ; les clés de `Properties` (une `map[string]any`) vous appartiennent et ne sont jamais renommées."
+        ],
+        "context": "Les extraits s'exécutent dans `func main()` ; `log.Fatal` les garde courts, gérez les erreurs comme vous le souhaitez."
+      }
+    },
+    {
+      "id": "ruby",
+      "slug": "ruby",
+      "dir": "ruby",
+      "name": "Ruby",
+      "short": "Ruby",
+      "fence": "ruby",
+      "example": "examples/quickstart.rb",
+      "package": "likyly",
+      "registry": "RubyGems",
+      "install": "gem install likyly\n# or in your Gemfile:\ngem \"likyly\"",
+      "installFence": "sh",
+      "requires": "Ruby 3.0 or later. No dependency (standard library `net/http` and `json`), no Rails required. Thread-safe.",
+      "case": "snake",
+      "specialNames": {},
+      "errors": {
+        "base": "Likyly::Error",
+        "validation": "Likyly::ValidationError",
+        "network": "Likyly::NetworkError",
+        "timeout": "Likyly::TimeoutError",
+        "api": "Likyly::ApiError",
+        "authentication": "Likyly::AuthenticationError",
+        "permissionDenied": "Likyly::PermissionDeniedError",
+        "notFound": "Likyly::NotFoundError",
+        "rateLimit": "Likyly::RateLimitError",
+        "fields": "`#status_code`, `#request_id`, `#retry_after` (seconds), `#body`",
+        "catch": "rescue"
+      },
+      "config": [
+        [
+          "API key",
+          "`api_key:`",
+          "required"
+        ],
+        [
+          "Base URL",
+          "`base_url:`",
+          "`https://api.likyly.com`"
+        ],
+        [
+          "Catalog",
+          "`catalog:`",
+          "your only catalog"
+        ],
+        [
+          "Timeout",
+          "`timeout:` (seconds)",
+          "10"
+        ],
+        [
+          "Retries",
+          "`max_retries:`",
+          "2"
+        ],
+        [
+          "User-Agent suffix",
+          "`user_agent:`",
+          "none"
+        ],
+        [
+          "Custom HTTP",
+          "`transport:` (anything answering `call(method, url, headers, body, timeout)`)",
+          "`Net::HTTP`"
+        ]
+      ],
+      "perCall": "Every method also accepts `timeout:` and `max_retries:` keywords.",
+      "notes": [
+        "Rails: create one client in an initializer (`LIKYLY = Likyly::Client.new(api_key: Rails.application.credentials.likyly_secret_key)`); nothing in the gem depends on Rails.",
+        "Fields are `snake_case` keywords (`item_id:`, `recommendation_id:`); the keys inside `properties` are yours and are never renamed. Results are `Struct`s (`recs.items.first.item_id`)."
+      ],
+      "context": "",
+      "fr": {
+        "requires": "Ruby 3.0 ou plus récent. Aucune dépendance (`net/http` et `json` de la bibliothèque standard), Rails non requis. Thread-safe.",
+        "perCall": "Chaque méthode accepte aussi les mots-clés `timeout:` et `max_retries:`.",
+        "notes": [
+          "Rails : créez un client dans un initializer (`LIKYLY = Likyly::Client.new(api_key: Rails.application.credentials.likyly_secret_key)`) ; rien dans le gem ne dépend de Rails.",
+          "Les champs sont des mots-clés en `snake_case` (`item_id:`, `recommendation_id:`) ; les clés de `properties` vous appartiennent et ne sont jamais renommées. Les résultats sont des `Struct` (`recs.items.first.item_id`)."
+        ]
+      }
+    },
+    {
+      "id": "rust",
+      "slug": "rust",
+      "dir": "rust",
+      "name": "Rust",
+      "short": "Rust",
+      "fence": "rust",
+      "example": "examples/quickstart.rs",
+      "package": "likyly",
+      "registry": "crates.io",
+      "install": "cargo add likyly tokio --features tokio/macros,tokio/rt-multi-thread",
+      "requires": "Async (Tokio). Built on `reqwest` with rustls, `serde` types for every request and response. The `Likyly` client is `Clone` and cheap to share.",
+      "case": "snake",
+      "specialNames": {},
+      "errors": {
+        "base": "likyly::Error",
+        "validation": "Error::Validation",
+        "network": "Error::Network",
+        "timeout": "Error::Timeout",
+        "api": "Error::Api",
+        "authentication": "Error::Authentication",
+        "permissionDenied": "Error::PermissionDenied",
+        "notFound": "Error::NotFound",
+        "rateLimit": "Error::RateLimit",
+        "fields": "`status_code()`, `request_id()`, `retry_after()` (`Duration`), `body()`",
+        "catch": "match"
+      },
+      "config": [
+        [
+          "API key",
+          "`Likyly::new(key)` / `Likyly::builder(key)`",
+          "required"
+        ],
+        [
+          "Base URL",
+          "`.base_url(..)`",
+          "`https://api.likyly.com`"
+        ],
+        [
+          "Catalog",
+          "`.catalog(..)`",
+          "your only catalog"
+        ],
+        [
+          "Timeout",
+          "`.timeout(Duration)`",
+          "10 s"
+        ],
+        [
+          "Retries",
+          "`.max_retries(..)`",
+          "2"
+        ],
+        [
+          "User-Agent suffix",
+          "`.user_agent(..)`",
+          "none"
+        ],
+        [
+          "Custom HTTP",
+          "`.transport(Arc<dyn Transport>)`, or `ReqwestTransport::with_client(..)`",
+          "`reqwest`"
+        ]
+      ],
+      "perCall": "`client.with_options(RequestOptions { timeout, max_retries })` returns a copy of the client with different limits; dropping a future cancels the call.",
+      "notes": [
+        "`Error` is `#[non_exhaustive]`: keep a wildcard arm. The API-derived variants carry a boxed `ApiError` (`e.status_code`, `e.request_id`, `e.retry_after`).",
+        "Request and response fields are `snake_case`; optional fields are `Option<_>`, and `..Default::default()` fills the rest. The keys inside `Properties` (a `serde_json::Map`) are yours and are never renamed."
+      ],
+      "context": "Every call is async: the snippets below run inside `#[tokio::main] async fn main() -> Result<(), likyly::Error>`.\n\n",
+      "installFence": "sh",
+      "fr": {
+        "requires": "Asynchrone (Tokio). Construit sur `reqwest` avec rustls, types `serde` pour chaque requête et réponse. Le client `Likyly` est `Clone` et se partage à moindre coût.",
+        "perCall": "`client.with_options(RequestOptions { timeout, max_retries })` renvoie une copie du client avec d'autres limites ; abandonner un future annule l'appel.",
+        "notes": [
+          "`Error` est `#[non_exhaustive]` : gardez un bras générique. Les variantes issues de l'API portent un `ApiError` boxé (`e.status_code`, `e.request_id`, `e.retry_after`).",
+          "Les champs des requêtes et des réponses sont en `snake_case` ; les champs optionnels sont des `Option<_>`, et `..Default::default()` complète le reste. Les clés de `Properties` (une `serde_json::Map`) vous appartiennent et ne sont jamais renommées."
+        ],
+        "context": "Chaque appel est asynchrone : les extraits ci-dessous s'exécutent dans un `#[tokio::main] async fn main() -> Result<(), likyly::Error>`."
+      }
+    }
+  ]
+}

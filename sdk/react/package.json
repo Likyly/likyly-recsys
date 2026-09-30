@@ -1,0 +1,37 @@
+{
+  "name": "@likyly/react",
+  "version": "0.1.0",
+  "description": "React bindings for @likyly/sdk: useRecommendations (headless) and <LikylyRecommendations> (ready-to-use) for LIKYLY placements.",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
+    "./package.json": "./package.json"
+  },
+  "files": ["dist", "README.md"],
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.test.json --noEmit",
+    "test": "rm -rf dist/test && tsc -p tsconfig.test.json && node --test \"dist/test/test/*.test.js\""
+  },
+  "dependencies": {
+    "@likyly/sdk": "file:../js"
+  },
+  "peerDependencies": {
+    "react": "^18.0.0 || ^19.0.0",
+    "react-dom": "^18.0.0 || ^19.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "react": "^18.3.0",
+    "react-dom": "^18.3.0",
+    "typescript": "^5.5.4"
+  }
+}

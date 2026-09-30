@@ -47,7 +47,8 @@ def test_every_operation_has_summary_description_tag_and_documented_errors(api, 
         assert operation.get("responses"), where
         if operation.get("x-required-key") or operation.get("security"):
             assert "401" in operation["responses"], f"{where}: 401 not documented"
-        if operation.get("x-required-key") == "secret":
+        required_key = operation.get("x-required-key")
+        if required_key == "secret" or (required_key or "").startswith("scope:"):
             assert "403" in operation["responses"], f"{where}: 403 not documented"
         if operation.get("parameters") or operation.get("requestBody"):
             assert "422" in operation["responses"], f"{where}: 422 not documented"
@@ -65,14 +66,22 @@ def test_operation_ids_are_unique_and_meaningful(spec):
 def test_security_is_declared_for_every_protected_operation(spec):
     assert spec["components"]["securitySchemes"]["APIKeyHeader"]["name"] == "X-API-Key"
     assert spec["components"]["securitySchemes"]["bearerAuth"]["scheme"] == "bearer"
+    # The push ingress isn't authenticated with a tenant API key at all - it's a per-source
+    # shared secret (X-Push-Secret), issued when a webhook/push data source is created. It
+    # deliberately carries neither security scheme.
+    no_api_key = {"/data-sources/{data_source_id}/push"}
     for path, method, operation in operations(spec):
-        if path in ("/openapi.json", "/docs"):
+        if path in ("/openapi.json", "/docs") or path in no_api_key:
             continue
         if path.startswith("/clients/me") or path.startswith("/admin"):
             assert operation["security"] == [{"bearerAuth": []}], f"{method} {path}"
         else:
             assert operation.get("security") == [{"APIKeyHeader": []}], f"{method} {path}"
-            assert operation["x-required-key"] in ("secret", "public")
+            required_key = operation["x-required-key"]
+            # "secret"/"public" - the original two-key model. "scope:<name>" - the secret key
+            # or a developer key carrying that scope (see /data-sources*'s require_scope).
+            # "any" - any of the three key kinds, no specific scope (see GET /data-sources/types).
+            assert required_key in ("secret", "public", "any") or required_key.startswith("scope:"), f"{method} {path}: {required_key}"
 
 
 def test_deprecations_are_declared(spec):
@@ -116,9 +125,10 @@ def test_public_json_is_snake_case(spec):
     for name, schema in spec["components"]["schemas"].items():
         for prop_name in schema.get("properties", {}):
             assert re.fullmatch(r"[a-z][a-z0-9_]*", prop_name), f"{name}.{prop_name}"
+    header_names = {"X-API-Key", "X-Push-Secret", "X-Workspace-Id"}
     for path, _method, operation in operations(spec):
         for parameter in operation.get("parameters", []):
-            assert re.fullmatch(r"[a-z][a-z0-9_]*", parameter["name"]) or parameter["name"] == "X-API-Key", f"{path}: {parameter['name']}"
+            assert re.fullmatch(r"[a-z][a-z0-9_]*", parameter["name"]) or parameter["name"] in header_names, f"{path}: {parameter['name']}"
 
 
 def test_request_and_response_schemas_carry_examples(spec):
@@ -132,7 +142,17 @@ def test_request_and_response_schemas_carry_examples(spec):
 
 
 def test_placement_is_a_free_string_never_an_enum_or_a_resource(spec):
-    assert not any("placement" in path.lower() for path in spec["paths"])
+    # Historically true without exception (no /placements* resource existed). Deliberately no
+    # longer absolute: /placements* IS now a resource (Placement - the recommended
+    # orchestration abstraction, see docs/placements.md), and /clients/me/placements* is that
+    # same resource's read-only dashboard mirror (Supabase-session-gated, see
+    # list_my_placements/get_my_placement_health) - not a new "placement" attribution field.
+    # The *attribution* field this test actually guards (Event/RecommendationRequest/
+    # RecommendationResponse's free-string `placement`, and the query param of the same name
+    # on the legacy strategy-specific endpoints) is untouched and still never an enum, which
+    # is what the rest of this test checks below.
+    exempt_prefixes = ("/placements", "/clients/me/placements")
+    assert not any("placement" in path.lower() for path in spec["paths"] if not path.startswith(exempt_prefixes))
     for name in ("Event", "RecommendationRequest", "RecommendationResponse"):
         placement = spec["components"]["schemas"][name]["properties"]["placement"]
         assert "enum" not in json.dumps(placement)
@@ -150,7 +170,7 @@ def test_placement_is_accepted_by_every_recommendation_entry_point(spec):
 
 def test_the_generic_event_route_remains_and_batch_is_documented(spec):
     assert "post" in spec["paths"]["/events/{event_type}"] and "post" in spec["paths"]["/events/batch"]
-    assert not [p for p in spec["paths"] if p.startswith("/events/") and p not in ("/events/purchase", "/events/view", "/events/batch", "/events/{event_type}")]
+    assert not [p for p in spec["paths"] if p.startswith("/events/") and p not in ("/events/purchase", "/events/view", "/events/batch", "/events/identify", "/events/{event_type}")]
 
 
 def test_docs_page_and_schema_endpoints_are_served(http):
