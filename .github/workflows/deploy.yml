@@ -142,8 +142,40 @@ jobs:
           # services, and building recsys-api's heavy ML deps (torch, sentence-
           # transformers) locally repeatedly filled it, causing both a rsync failure
           # and a production outage on 2026-09-02.
-          cd ~/app/licenses
+          # Own compose project, written from this repo on every deploy. It used to be a
+          # service of ~/app/licenses/docker-compose.yml, but that folder is rsynced
+          # (--delete) from the licenses repo, which wiped the service on 2026-11-02.
+          # Joins the licenses_web network so Caddy still reaches it as recsys-api:6061,
+          # and reuses the existing model volume.
+          cd ~/app/recsys-env
+          cat > docker-compose.yml <<'COMPOSE'
+          name: recsys-api
+          services:
+            recsys-api:
+              image: ghcr.io/likyly/recsys-api:latest
+              container_name: recsys-api
+              expose:
+                - "6061"
+              volumes:
+                - ./application/api/.env:/srv/application/api/.env:ro
+                - recsys_model_data:/srv/model
+              networks: [web]
+              restart: unless-stopped
+          networks:
+            web:
+              name: licenses_web
+              external: true
+          volumes:
+            recsys_model_data:
+              name: licenses_recsys_model_data
+              external: true
+          COMPOSE
           docker compose pull recsys-api
+          # One-time migration: the running container still belongs to the old "licenses"
+          # compose project and holds the recsys-api name. No-op afterwards.
+          if [ "$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project" }}' recsys-api 2>/dev/null)" = "licenses" ]; then
+            docker rm -f recsys-api
+          fi
           docker compose up -d recsys-api
           docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}"
 
