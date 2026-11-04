@@ -28,9 +28,12 @@ export function repoName(dir) {
   return top ? top.split(/[\\/]/).pop() : null;
 }
 
-/** Whether the setup branch already exists (the wizard ran here before). */
-export function branchExists(dir) {
-  return git(dir, ["rev-parse", "--verify", "--quiet", `refs/heads/${BRANCH}`]) !== null;
+/** The branch uninstall works on, when the developer picks a branch of its own. */
+export const UNINSTALL_BRANCH = "likyly/uninstall";
+
+/** Whether a branch already exists (e.g. the wizard ran here before). */
+export function branchExists(dir, name = BRANCH) {
+  return git(dir, ["rev-parse", "--verify", "--quiet", `refs/heads/${name}`]) !== null;
 }
 
 /** `{ path: "M" | "A" | "D" | "?" }` for every changed or untracked (not ignored) file. */
@@ -54,10 +57,10 @@ export function ignored(dir, paths) {
   return res.stdout ? res.stdout.split("\n").filter(Boolean) : [];
 }
 
-/** Start the setup branch from where the developer is. Uncommitted work comes along, untouched. */
-export function createBranch(dir) {
-  const exists = git(dir, ["rev-parse", "--verify", "--quiet", `refs/heads/${BRANCH}`]) !== null;
-  const ok = git(dir, exists ? ["switch", BRANCH] : ["switch", "-c", BRANCH]) !== null;
+/** Start a branch from where the developer is. Uncommitted work comes along, untouched. */
+export function createBranch(dir, name = BRANCH) {
+  const exists = branchExists(dir, name);
+  const ok = git(dir, exists ? ["switch", name] : ["switch", "-c", name]) !== null;
   return { ok, existed: exists };
 }
 

@@ -126,11 +126,18 @@ URL, or call the push endpoint from their own code when products change.
 
 ## Phase 3: Integrate
 
-**Work where the developer can review it.** Before editing any file, run `git branch --show-current`
-and `git status --short`. If the project is a git repository on its default branch (main,
-master...), switch to `likyly/setup` (`git switch likyly/setup`, or `git switch -c likyly/setup`
-when it does not exist; the wizard usually created it) and say so in one line. Their uncommitted
-work comes along untouched: never stash, reset, checkout or restore a file you did not write
+**Always ask on which branch, before editing any file.** Run `git branch --show-current` and
+`git status --short`, then ask in one question with numbered choices, and wait for the answer -
+every time, even when the developer seems to be on the right branch already:
+
+- On `likyly/setup` (the wizard's branch): "1. Keep working on likyly/setup - recommended ·
+  2. Cancel".
+- On any other branch `<b>`: "1. On a new branch likyly/setup (from `<b>`, which stays as is) -
+  recommended · 2. Directly on `<b>` · 3. Cancel". Choice 1: `git switch likyly/setup`, or
+  `git switch -c likyly/setup` when it does not exist.
+- Not a git repository: "I'll change files directly (no git to review them). 1. Go · 2. Cancel".
+
+Then say in one line where you work. Their uncommitted work comes along untouched: never stash, reset, checkout or restore a file you did not write
 yourself. Never commit or push unless the developer asks; when they ask for a pull request,
 commit only the files you changed (not their pending work), push the branch and open it with
 `gh pr create`.
@@ -221,8 +228,9 @@ no list of optional clean-ups.
 **Commands**
 | Command | What it does |
 |---|---|
+| `/likyly-help` | Lists these commands and what you can ask in plain words |
 | `/likyly-clear-cache [placement]` | Shows fresh recommendations right away (otherwise they refresh within the hour) |
-| `/likyly-uninstall` | Removes LIKYLY from this project, after showing what it will remove |
+| `/likyly-uninstall` | Removes LIKYLY from this project: shows what it will remove, asks on which branch |
 
 **Next:** <one action, in one short sentence>
 ```

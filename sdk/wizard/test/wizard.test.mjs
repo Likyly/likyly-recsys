@@ -162,7 +162,17 @@ test("end to end: mcp add for Claude Code installs the skill", () => {
   assert.equal(res.status, 0, res.stderr);
   assert.ok(existsSync(join(dir, ".mcp.json")));
   assert.match(readFileSync(join(dir, ".claude/skills/likyly/SKILL.md"), "utf8"), /name: likyly/);
-  assert.match(readFileSync(join(dir, ".claude/commands/likyly-clear-cache.md"), "utf8"), /npx -y @likyly\/wizard cache clear \$ARGUMENTS/);
+  // Run from this checkout (not from npm): the commands call this very file.
+  assert.match(readFileSync(join(dir, ".claude/commands/likyly-clear-cache.md"), "utf8"), /node \S+likyly-wizard\.mjs cache clear \$ARGUMENTS/);
+  assert.match(readFileSync(join(dir, ".claude/commands/likyly-uninstall.md"), "utf8"), /uninstall --yes --branch new/);
+  assert.match(readFileSync(join(dir, ".claude/commands/likyly-help.md"), "utf8"), /\/likyly-clear-cache \[placement\]/);
+});
+
+test("commands call npx from the npm package, the file itself from a checkout", async () => {
+  const { wizardInvocation } = await import("../src/setup.mjs");
+  assert.equal(wizardInvocation("/Users/me/.npm/_npx/abc/node_modules/@likyly/wizard/bin/likyly-wizard.mjs"), "npx -y @likyly/wizard");
+  assert.equal(wizardInvocation("/repo/sdk/wizard/bin/likyly-wizard.mjs"), "node /repo/sdk/wizard/bin/likyly-wizard.mjs");
+  assert.equal(wizardInvocation(undefined), "npx -y @likyly/wizard");
 });
 
 test("the plan lists what will be run, written and connected", () => {
@@ -281,7 +291,7 @@ test("uninstall removes only what the wizard added, after a dry run that removes
   assert.equal(existsSync(join(dir, "components/likyly-provider.tsx")), false);
   assert.equal(existsSync(join(dir, ".mcp.json")), false, "only LIKYLY was in it");
   assert.deepEqual(JSON.parse(readFileSync(join(dir, ".cursor/mcp.json"), "utf8")), { mcpServers: { other: { command: "x" } } });
-  for (const gone of [".claude/skills/likyly", ".claude/commands/likyly-clear-cache.md", ".claude/commands/likyly-uninstall.md", ".likyly"]) {
+  for (const gone of [".claude/skills/likyly", ".claude/commands/likyly-help.md", ".claude/commands/likyly-clear-cache.md", ".claude/commands/likyly-uninstall.md", ".likyly"]) {
     assert.equal(existsSync(join(dir, gone)), false, gone);
   }
   assert.equal(readFileSync(join(dir, "src/page.tsx"), "utf8"), 'import { LikylyRecommendations } from "@likyly/react";\n', "code is never edited");
@@ -333,4 +343,28 @@ test("mcp: LIKYLY_API_URL and LIKYLY_MCP_SERVER give a local server config", asy
   const prod = serverEntry("claude-code");
   assert.equal(prod.command, "npx");
   assert.equal(prod.env.LIKYLY_BASE_URL, "https://api.likyly.com");
+});
+
+test("uninstall --branch new works on likyly/uninstall; --branch current stays", () => {
+  const dir = project({ ...pkg({ next: "16", react: "19" }), "app/": "" });
+  const g = (...args) => spawnSync("git", args, { cwd: dir, encoding: "utf8" });
+  g("init", "-q", "-b", "main");
+  g("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "init");
+  assert.equal(runCli(["--yes", "--no-install", "--public-key", "pk_test", "--editor", "claude-code", "--dir", dir], dir).status, 0);
+  const res = runCli(["uninstall", "--yes", "--branch", "new", "--dir", dir], dir);
+  assert.equal(res.status, 0, res.stdout + res.stderr);
+  assert.match(res.stdout, /On a new branch likyly\/uninstall/);
+  assert.equal(g("branch", "--show-current").stdout.trim(), "likyly/uninstall");
+  assert.equal(existsSync(join(dir, ".mcp.json")), false);
+
+  g("switch", "-q", "main");
+  assert.equal(runCli(["--yes", "--no-install", "--public-key", "pk_test", "--editor", "claude-code", "--dir", dir], dir).status, 0);
+  const stay = runCli(["uninstall", "--yes", "--branch", "current", "--dir", dir], dir);
+  assert.equal(stay.status, 0, stay.stdout + stay.stderr);
+  assert.equal(g("branch", "--show-current").stdout.trim(), "main");
+});
+
+test("help is a command too", () => {
+  assert.equal(parseArgs(["help"]).command, "help");
+  assert.throws(() => parseArgs(["uninstall", "--branch", "elsewhere"]), /--branch expects new or current/);
 });

@@ -321,6 +321,12 @@ function App({ opts: initialOpts, result }) {
               Your project {repo.name ? <Text bold>{repo.name}</Text> : "here"} is a git repository, on branch <Text bold>{current}</Text>.
             </Text>
           </Box>
+        ) : repo && !opts.dryRun ? (
+          <Box marginBottom={1}>
+            <Text color={C.muted}>
+              Your project {repo.name ? <Text bold>{repo.name}</Text> : "here"} is on branch <Text bold>{current}</Text>, made for this setup: the changes go there (never committed).
+            </Text>
+          </Box>
         ) : null}
         <Select
           items={[
@@ -333,7 +339,7 @@ function App({ opts: initialOpts, result }) {
                   },
                   { label: `Directly on ${current}`, value: "go", hint: "the branch you are on" },
                 ]
-              : [{ label: "Set it up", value: "go", hint: opts.dryRun ? "(dry run)" : undefined }]),
+              : [{ label: repo && !opts.dryRun ? `Set it up on ${current}` : "Set it up", value: "go", hint: opts.dryRun ? "(dry run)" : undefined }]),
             ...(installMode(opts, project) === "run"
               ? [{ label: offerBranch ? "Same as the first, but skip the package install" : "Set it up, but skip the package install", value: "noinstall" }]
               : []),

@@ -87,6 +87,32 @@ async function uninstall(opts) {
       return 0;
     }
   }
+  // In a git repository, always settle the branch: a branch of its own (recommended), or this one.
+  const git = await import("./git.mjs");
+  if (git.isRepo(opts.dir)) {
+    const current = git.currentBranch(opts.dir) ?? "HEAD";
+    let where = opts.branch;
+    if (!where && current === git.UNINSTALL_BRANCH) where = "current";
+    if (!where && opts.yes) where = "current";
+    if (!where) {
+      const { createInterface } = await import("node:readline/promises");
+      const rl = createInterface({ input: process.stdin, output: process.stdout });
+      console.log(paint("1", "\nWhere should the removal go?") + paint("2", ` (it never commits; your project is on branch ${current})`));
+      console.log(`  1. On a new branch ${git.UNINSTALL_BRANCH} ${paint("2", `- from ${current}, which stays as is (recommended)`)}`);
+      console.log(`  2. Directly on ${current}`);
+      const answer = (await rl.question("Choose [1/2, Enter = 1] ")).trim();
+      rl.close();
+      where = answer === "2" ? "current" : "new";
+    }
+    if (where === "new" && current !== git.UNINSTALL_BRANCH) {
+      const made = git.createBranch(opts.dir, git.UNINSTALL_BRANCH);
+      if (!made.ok) {
+        console.log(paint("31", `\nCould not switch to ${git.UNINSTALL_BRANCH}: nothing was removed.`));
+        return 1;
+      }
+      console.log(paint("32", `\n✓ ${made.existed ? "Back on the branch" : "On a new branch"} ${git.UNINSTALL_BRANCH}`) + paint("2", ` (from ${current}; your pending changes came along)`));
+    } else console.log(paint("2", `\nOn ${current}.`));
+  }
   console.log("");
   const results = await runUninstall(opts.dir, plan, (l) => console.log(paint("2", `    ${l}`)));
   for (const r of results) console.log(`  ${r.ok ? paint("32", "✓") : paint("31", "✗")} ${r.label}`);

@@ -29,12 +29,15 @@ ${blue("Commands")}
                  (uses your developer key from .likyly/credentials.env)
   uninstall      remove what the wizard added (SDK, key, MCP config, skill, commands),
                  after showing the plan; your code and your LIKYLY account are not touched
+  help           this help
 
 ${blue("Options")}
   --dir <path>           project folder ${dim("(default: current folder)")}
   --public-key <key>     your LIKYLY public key ${dim("(asked otherwise)")}
   --editor <ids>         claude-code,cursor,vscode ${dim("(default: the detected ones)")}
   --placement <slug>     with cache clear: the placement to empty (default: all)
+  --branch <new|current> with uninstall, in a git repository: work on a new branch
+                         likyly/uninstall, or on the current one (asked otherwise)
   --hosted               use the hosted MCP server (mcp.likyly.com) instead of npx
   --no-install           do not run the package manager
   --dry-run              show what would happen, write nothing
@@ -44,7 +47,7 @@ ${blue("Options")}
 `;
 
 export function parseArgs(argv) {
-  const opts = { command: "install", dir: process.cwd(), yes: false, dryRun: false, install: true, hosted: false, editors: null, publicKey: null, placement: null };
+  const opts = { command: "install", dir: process.cwd(), yes: false, dryRun: false, install: true, hosted: false, editors: null, publicKey: null, placement: null, branch: null };
   const positional = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -62,6 +65,10 @@ export function parseArgs(argv) {
     else if (a === "--dir") opts.dir = next();
     else if (a === "--public-key") opts.publicKey = next();
     else if (a === "--placement") opts.placement = next();
+    else if (a === "--branch") {
+      opts.branch = next();
+      if (!["new", "current"].includes(opts.branch)) throw new Error(`--branch expects new or current, got: ${opts.branch}`);
+    }
     else if (a === "--editor" || a === "--editors") opts.editors = next().split(",").map((s) => s.trim()).filter(Boolean);
     else if (a.startsWith("-")) throw new Error(`unknown option: ${a}`);
     else positional.push(a);
@@ -78,6 +85,7 @@ export function parseArgs(argv) {
     else if (cmd === "detect") opts.command = "detect";
     else if (cmd === "uninstall") opts.command = "uninstall";
     else if (cmd === "install") opts.command = "install";
+    else if (cmd === "help") opts.command = "help";
     else throw new Error(`unknown command: ${cmd}`);
   }
   opts.dir = resolve(opts.dir);

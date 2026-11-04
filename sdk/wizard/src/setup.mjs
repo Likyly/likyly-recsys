@@ -2,8 +2,8 @@
 // creates, never overwrites something the developer already has.
 
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync, appendFileSync } from "node:fs";
+import { dirname, join, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -185,35 +185,88 @@ export function writeCredentials(dir, developerKey, { dryRun = false, account = 
   return { path };
 }
 
+/**
+ * How the Claude Code commands call the wizard: through npx when it runs from the npm package,
+ * or the very file that is running when it was started from a local checkout (not on npm).
+ */
+export function wizardInvocation(argv1 = process.argv[1]) {
+  let bin = argv1 ? resolvePath(argv1) : "";
+  try {
+    bin = realpathSync(bin);
+  } catch {
+    // keep the path as given
+  }
+  if (!bin || /[\\/](_npx|node_modules)[\\/]/.test(bin) || !/likyly-wizard\.mjs$/.test(bin)) return "npx -y @likyly/wizard";
+  return `node ${bin.includes(" ") ? JSON.stringify(bin) : bin}`;
+}
+
+export const CLAUDE_COMMANDS = ["likyly-help.md", "likyly-clear-cache.md", "likyly-uninstall.md"];
+
 // Claude Code slash command: the exact `cache clear` CLI, run by Claude Code itself (the `!`
 // line executes before the model sees the prompt), so the result is the API's, not a guess.
-const CLEAR_CACHE_COMMAND = `---
-description: Empty LIKYLY's recommendation cache (one placement, or all of them)
+const clearCacheCommand = (w) => `---
+description: Show fresh LIKYLY recommendations right away (empties the cache of one placement, or all)
 argument-hint: [placement-slug]
-allowed-tools: Bash(npx -y @likyly/wizard cache clear:*)
+allowed-tools: Bash(${w} cache clear:*)
 ---
-!\`npx -y @likyly/wizard cache clear $ARGUMENTS\`
+!\`${w} cache clear $ARGUMENTS\`
 
 Repeat the result above to the developer as is, in one or two lines. Do nothing else.
 `;
 
-// Uninstall removes files: the plan is shown, and only a confirmation from the developer lets
-// Claude Code run it for real.
-const UNINSTALL_COMMAND = `---
+// Uninstall changes files: the plan is shown, then the developer chooses whether to proceed and
+// on which branch; only then does Claude Code run it for real.
+const uninstallCommand = (w) => `---
 description: Remove LIKYLY from this project (shows the plan, asks before removing)
-allowed-tools: Bash(npx -y @likyly/wizard uninstall:*)
+allowed-tools: Bash(${w} uninstall:*), Bash(git branch --show-current), Bash(git rev-parse:*)
 ---
-!\`npx -y @likyly/wizard uninstall --dry-run\`
+!\`${w} uninstall --dry-run\`
 
-Show the developer the plan above as is, then ask whether to proceed. Only if they confirm, run
-\`npx -y @likyly/wizard uninstall --yes\` and show its result. If the plan lists files where the
-code still uses LIKYLY, offer to remove that code and restore what those pages showed before.
+Current branch: !\`git branch --show-current 2>/dev/null || echo "(not a git repository)"\`
+
+Show the developer the plan above as is. Then ask, in one question with numbered choices:
+
+- In a git repository: "1. Remove it on a new branch likyly/uninstall (from <current branch>,
+  which stays as is) - recommended · 2. Remove it directly on <current branch> · 3. Cancel".
+- Not a git repository: "1. Remove it · 2. Cancel".
+
+Wait for the answer. Choice 1 in a git repository: run \`${w} uninstall --yes --branch new\`;
+choice 2: \`${w} uninstall --yes --branch current\`; not a git repository:
+\`${w} uninstall --yes\`. Cancel: change nothing. Show the result as is. If the plan lists files
+where the code still uses LIKYLY, offer to remove that code (on the same branch) and restore what
+those pages showed before.
 `;
 
-/** Install /likyly-clear-cache and /likyly-uninstall for Claude Code (`.claude/commands/`). */
-export function writeClaudeCommands(dir, { dryRun = false } = {}) {
+// Static help: no shell, so it works even when the wizard or the MCP server is unreachable.
+const helpCommand = (w) => `---
+description: List the LIKYLY commands and what each one does
+---
+Show the developer exactly this, nothing more:
+
+**LIKYLY commands**
+
+| Command | What it does |
+|---|---|
+| \`/likyly-help\` | This list |
+| \`/likyly-clear-cache [placement]\` | Shows fresh recommendations right away (otherwise they refresh within the hour) |
+| \`/likyly-uninstall\` | Removes LIKYLY from this project: shows what it will remove, asks on which branch |
+
+**Ask in plain words**
+- "Connect my catalog and add recommendations to my product page" - the full setup
+- "Check my LIKYLY integration" - what works, what's missing
+- "Change the recommendations on my product page" - placement settings
+
+**In a terminal**: \`${w} cache clear\` · \`${w} uninstall\` · \`${w} help\`
+`;
+
+/** Install /likyly-help, /likyly-clear-cache and /likyly-uninstall for Claude Code (`.claude/commands/`). */
+export function writeClaudeCommands(dir, { dryRun = false, invocation = wizardInvocation() } = {}) {
   const folder = join(dir, ".claude", "commands");
-  const files = { "likyly-clear-cache.md": CLEAR_CACHE_COMMAND, "likyly-uninstall.md": UNINSTALL_COMMAND };
+  const files = {
+    "likyly-help.md": helpCommand(invocation),
+    "likyly-clear-cache.md": clearCacheCommand(invocation),
+    "likyly-uninstall.md": uninstallCommand(invocation),
+  };
   if (!dryRun) {
     mkdirSync(folder, { recursive: true });
     for (const [name, content] of Object.entries(files)) writeFileSync(join(folder, name), content);

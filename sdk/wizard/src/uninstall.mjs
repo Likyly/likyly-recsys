@@ -6,7 +6,7 @@ import { existsSync, readFileSync, readdirSync, rmSync, statSync, unlinkSync, wr
 import { join, relative } from "node:path";
 import { detectProject, EDITORS } from "./frameworks.mjs";
 import { configPath } from "./mcp.mjs";
-import { commandExists, runAsync, starterContent } from "./setup.mjs";
+import { CLAUDE_COMMANDS, commandExists, runAsync, starterContent } from "./setup.mjs";
 
 const ENV_FILES = [".env", ".env.local"];
 const KEY_LINE = /^\s*(NEXT_PUBLIC_|VITE_|PUBLIC_|NUXT_PUBLIC_|REACT_APP_)?LIKYLY_KEY\s*=.*$/;
@@ -114,7 +114,7 @@ export function planUninstall(dir) {
   }
 
   // Claude Code skill and commands, and the credentials folder.
-  for (const rel of [".claude/skills/likyly", ".claude/commands/likyly-clear-cache.md", ".claude/commands/likyly-uninstall.md", ".likyly"]) {
+  for (const rel of [".claude/skills/likyly", ...CLAUDE_COMMANDS.map((f) => `.claude/commands/${f}`), ".likyly"]) {
     const path = join(dir, rel);
     if (existsSync(path)) steps.push({ label: `Delete ${rel}${rel === ".likyly" ? " (your developer key for this project)" : ""}`, run: () => rmSync(path, { recursive: true, force: true }) });
   }

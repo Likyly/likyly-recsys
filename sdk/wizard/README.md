@@ -41,9 +41,11 @@ Cursor with the prompt copied). Your assistant then connects the catalog, create
 wires it into your pages and validates the integration - ask it in plain words ("check my LIKYLY
 integration", "empty the LIKYLY cache"), there are no commands to learn.
 
-In Claude Code the same are `/likyly-clear-cache [placement]` and `/likyly-uninstall`,
-installed with the skill: Claude Code runs the command itself and shows its result (uninstall
-shows the plan and asks before removing anything).
+In Claude Code the same are `/likyly-clear-cache [placement]` and `/likyly-uninstall`, plus
+`/likyly-help` (the list of commands), installed with the skill: Claude Code runs the command
+itself and shows its result. Uninstall shows the plan, then asks whether to proceed and on which
+branch: a new `likyly/uninstall` branch (recommended) or the current one. When the wizard runs
+from a local checkout instead of npm, the commands call that checkout.
 
 `uninstall` removes the SDK packages, the public key line, the starter file (unless you edited
 it), the `likyly` server from each assistant's MCP config, the skill, the commands and
@@ -63,6 +65,8 @@ npx @likyly/wizard detect          # print what was detected, change nothing
 npx @likyly/wizard cache clear     # empty LIKYLY's recommendation cache, every placement
 npx @likyly/wizard cache clear pdp-related   # ... or one placement
 npx @likyly/wizard uninstall       # remove what the wizard added (shows the plan, asks first; --dry-run to only look)
+npx @likyly/wizard uninstall --yes --branch new   # ... without questions, on a new likyly/uninstall branch (or --branch current)
+npx @likyly/wizard help            # the list of commands
 npx @likyly/wizard --yes --public-key pk_... --editor claude-code,cursor   # CI, no prompts
 npx @likyly/wizard --dry-run       # show what would happen
 npx @likyly/wizard --hosted        # hosted MCP (mcp.likyly.com) instead of npx
