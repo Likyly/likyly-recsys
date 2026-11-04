@@ -39,8 +39,9 @@ jobs:
       - run: npm test
 
   react:
-    # @likyly/react depends on @likyly/sdk via a local file: reference (not published to npm
-    # yet - see sdk/react/README.md) - sdk/js must be built first so that dependency resolves.
+    # @likyly/react declares @likyly/sdk by version (what npm users will install), but CI tests it
+    # against the SDK in this repository: sdk/js is built first, then linked in with
+    # `npm install --no-save ../js` (package.json is left as is).
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -48,7 +49,7 @@ jobs:
         with: { node-version: 22 }
       - run: npm ci && npm run build
         working-directory: sdk/js
-      - run: npm install && npm run build && npm test
+      - run: npm install --no-save ../js && npm run build && npm test
         working-directory: sdk/react
 
   python:
