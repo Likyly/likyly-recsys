@@ -10,6 +10,7 @@ _finalize_recommendation/present_records/Catalog live in app.py and are imported
 inside the one route that needs them (recommend), to avoid a circular import - app.py mounts
 this router, so a module-level import the other way round isn't possible.
 """
+import importlib
 import os
 import sys
 from typing import List
@@ -30,6 +31,18 @@ from schemas import (  # noqa: E402
 from scoped_auth import public_ok_client_id, require_scope  # noqa: E402
 
 router = APIRouter(prefix="/placements", tags=["placements"])
+
+
+def _app_module():
+    """The already-loaded app module, for _finalize_recommendation (imported lazily: app.py
+    mounts this router, so a top-level import would be circular). In production app.py runs as
+    a script (`python app.py`, see the Dockerfile), so it lives in sys.modules as "__main__":
+    a plain `from app import ...` would load it a second time, re-register its Prometheus
+    metrics and fail every call with "Duplicated timeseries in CollectorRegistry"."""
+    main = sys.modules.get("__main__")
+    if main is not None and hasattr(main, "_finalize_recommendation"):
+        return main
+    return importlib.import_module("app")
 
 
 def _errors(*codes: int) -> dict:
@@ -188,9 +201,7 @@ def recommend(slug: str, payload: PlacementRecommendRequest, background_tasks: B
     except service.ValidationError as error:
         raise _invalid(error)
 
-    from app import _finalize_recommendation  # deferred import - avoids a circular import at module load time (app.py mounts this router)
-
-    recommendation_id = _finalize_recommendation(
+    recommendation_id = _app_module()._finalize_recommendation(
         client_id=client_id, product_type=placement["product_type"], strategy=result.strategy_used,
         origin="placement", presented=items, background_tasks=background_tasks, response=response,
         user_id=context_dict.get("user_id"), session_id=context_dict.get("session_id") or context_dict.get("anonymous_id"),
