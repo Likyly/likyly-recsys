@@ -28,12 +28,13 @@ public sealed class LikylyClientOptions
 }
 
 /// <summary>
-/// The LIKYLY client. Four things to know:
+/// The LIKYLY client. Five things to know:
 /// <code>
 /// client.Items            your catalog
 /// client.Users            your users (optional)
 /// client.Events           what visitors do
-/// client.Recommendations  what to show them
+/// client.Placements       what to show them, as configured per placement (recommended)
+/// client.Recommendations  what to show them, one strategy per call (advanced)
 /// </code>
 /// Thread-safe: create one and share it. With dependency injection, register it as a singleton and pass an
 /// <c>HttpClient</c> from <c>IHttpClientFactory</c>: <c>new LikylyClient(options, httpClientFromFactory)</c>.
@@ -84,6 +85,7 @@ public sealed class LikylyClient
         Users = new UsersResource(http);
         Events = new EventsResource(http);
         Recommendations = new RecommendationsResource(http);
+        Placements = new PlacementsResource(http);
     }
 
     public ItemsResource Items { get; }
@@ -93,4 +95,6 @@ public sealed class LikylyClient
     public EventsResource Events { get; }
 
     public RecommendationsResource Recommendations { get; }
+
+    public PlacementsResource Placements { get; }
 }

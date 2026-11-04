@@ -54,6 +54,24 @@ foreach (var item in recs.Items)
 }
 // endregion
 
+
+
+// region:placements
+// The recommended way: a placement ("pdp-related"...) is configured once in LIKYLY - strategy,
+// fallback, filters - and your page only says where it is and what it knows.
+var related = await likyly.Placements.RecommendAsync(new PlacementRecommendRequest
+{
+    Placement = "pdp-related",
+    Context = new PlacementContext { ItemId = "SKU-123", SessionId = "sess_abc" },
+    Limit = 4,
+});
+Console.WriteLine($"strategy used: {related.StrategyUsed}");
+
+// When an anonymous visitor signs in, attach their session's history to their account.
+var linked = await likyly.Events.IdentifyAsync(new IdentifyInput { UserId = "user_123", SessionId = "sess_abc" });
+Console.WriteLine($"linked: {linked.LinkedInteractions}");
+
+// endregion
 // region:showcase
 // Les recommandations pour votre page : tout est optionnel, envoyez ce que vous savez.
 var productRecs = await likyly.Recommendations.GetAsync(new RecommendationRequest

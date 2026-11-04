@@ -106,6 +106,16 @@ public sealed record EventResult(string Message, string? EventId, bool Duplicate
 /// <summary>Result of <c>Events.TrackManyAsync</c>. <paramref name="Duplicates"/> = events skipped because their EventId was already recorded.</summary>
 public sealed record EventBatchResult(int Received, int Accepted, int Duplicates);
 
+/// <summary>For <c>Events.IdentifyAsync</c>: the user who just signed in, and the anonymous session they browsed under.</summary>
+public sealed record IdentifyInput
+{
+    public required string UserId { get; init; }
+    public required string SessionId { get; init; }
+}
+
+/// <summary>Result of <c>Events.IdentifyAsync</c>. <paramref name="LinkedInteractions"/> = how many of the session's past interactions now belong to the user.</summary>
+public sealed record IdentifyResult(int LinkedInteractions);
+
 // ---- Recommendations -------------------------------------------------------------------------
 
 /// <summary>Send whatever you know: LIKYLY chooses the best strategy. Every field is optional.</summary>
@@ -197,3 +207,54 @@ public sealed record SessionOptions : AdvancedOptions
     public IReadOnlyList<string>? ViewedItemIds { get; init; }
     public string? UserId { get; init; }
 }
+
+// ---- Placements ------------------------------------------------------------------------------
+
+/// <summary>
+/// What you know about the visitor and the page, for <c>Placements.RecommendAsync</c>. Every field is optional: send what you
+/// have - the placement's configuration decides which signals it uses.
+/// </summary>
+public sealed record PlacementContext
+{
+    /// <summary>The product / article / listing currently being viewed.</summary>
+    public string? ItemId { get; init; }
+
+    public string? CategoryId { get; init; }
+
+    public string? CollectionId { get; init; }
+
+    /// <summary>Identified visitor.</summary>
+    public string? UserId { get; init; }
+
+    /// <summary>Stable anonymous visitor id - used like <see cref="SessionId"/> when <see cref="SessionId"/> is omitted.</summary>
+    public string? AnonymousId { get; init; }
+
+    /// <summary>Anonymous browsing session.</summary>
+    public string? SessionId { get; init; }
+
+    public IReadOnlyList<string>? CartItemIds { get; init; }
+
+    public string? Locale { get; init; }
+
+    /// <summary>Anything else your placement filters on - keys are yours, never renamed.</summary>
+    public IReadOnlyDictionary<string, object?>? CustomContext { get; init; }
+}
+
+/// <summary>A call to one placement, by its slug. Only <see cref="Placement"/> is required.</summary>
+public sealed record PlacementRecommendRequest
+{
+    /// <summary>The placement's slug, e.g. <c>pdp-related</c>.</summary>
+    public required string Placement { get; init; }
+
+    public PlacementContext? Context { get; init; }
+
+    /// <summary>Overrides the placement's own configured limit for this call.</summary>
+    public int? Limit { get; init; }
+}
+
+/// <summary>
+/// What <c>Placements.RecommendAsync</c> returns. Send <see cref="RecommendationId"/> back on the impression / click /
+/// add_to_cart / purchase events for these items. <see cref="StrategyUsed"/> is what the placement actually used:
+/// <c>hybrid</c>, <c>content</c>, <c>collaborative</c>, <c>session</c> or <c>popular</c>.
+/// </summary>
+public sealed record PlacementRecommendResponse(string RecommendationId, string Placement, string StrategyUsed, IReadOnlyList<RecommendedItem> Items);

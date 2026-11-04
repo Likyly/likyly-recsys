@@ -64,7 +64,11 @@ class ValidationTest < Minitest::Test
       "session with nothing" => -> { c.recommendations.session },
       "session with both" => -> { c.recommendations.session(viewed_item_ids: ["a"], user_id: "u") },
       "session with an empty list" => -> { c.recommendations.session(viewed_item_ids: []) },
-      "session id with a comma" => -> { c.recommendations.session(viewed_item_ids: ["a,b"]) }
+      "session id with a comma" => -> { c.recommendations.session(viewed_item_ids: ["a,b"]) },
+      "placement without a slug" => -> { c.placements.recommend(placement: "") },
+      "placement with a zero limit" => -> { c.placements.recommend(placement: "p", limit: 0) },
+      "unknown placement context field" => -> { c.placements.recommend(placement: "p", context: { itemId: "a" }) },
+      "identify without a session" => -> { c.events.identify(user_id: "u", session_id: nil) }
     }.each do |name, action|
       assert_raises(Likyly::ValidationError, name, &action)
     end
@@ -120,6 +124,21 @@ class ValidationTest < Minitest::Test
     h = harness([{ body: REC }])
     h.client.recommendations.get
     assert_equal({}, h.calls[0].json)
+  end
+
+  def test_placement_context_is_mapped_and_custom_context_keys_are_never_renamed
+    h = harness([{ body: { "recommendation_id" => "rec_1", "placement" => "cart", "strategy_used" => "popular", "items" => [] } }])
+    result = h.client.placements.recommend(
+      placement: "cart",
+      context: { item_id: "i", category_id: "c", cart_item_ids: %w[a b], locale: "fr-FR", session_id: nil,
+                 custom_context: { "pageType" => "cart" } }
+    )
+    assert_equal(
+      { "context" => { "current_item_id" => "i", "category_id" => "c", "cart_item_ids" => %w[a b], "locale" => "fr-FR",
+                       "custom_context" => { "pageType" => "cart" } } },
+      h.calls[0].json
+    )
+    assert_equal "popular", result.strategy_used
   end
 end
 

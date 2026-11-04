@@ -8,10 +8,11 @@ from ._http import AsyncHttpClient, HttpClient, HttpConfig
 from ._version import DEFAULT_BASE_URL, USER_AGENT
 from .aresources import Events as AsyncEvents
 from .aresources import Items as AsyncItems
+from .aresources import Placements as AsyncPlacements
 from .aresources import Recommendations as AsyncRecommendations
 from .aresources import Users as AsyncUsers
 from .errors import ValidationError
-from .resources import Events, Items, Recommendations, Users
+from .resources import Events, Items, Placements, Recommendations, Users
 
 
 def _config(
@@ -30,12 +31,13 @@ def _config(
 
 
 class Likyly:
-    """The LIKYLY client. Four things to know::
+    """The LIKYLY client. Five things to know::
 
         likyly.items            your catalog
         likyly.users            your users (optional)
         likyly.events           what visitors do
-        likyly.recommendations  what to show them
+        likyly.placements       what to show them (recommended - a named, persistent config)
+        likyly.recommendations  what to show them (advanced, per-call)
 
     Two API keys: the **secret** key (backend only: items, users, everything) and the **public** key
     (recommendations and event tracking only). Never put the secret key in code that ships to a browser.
@@ -63,6 +65,7 @@ class Likyly:
         self.users = Users(http)
         self.events = Events(http)
         self.recommendations = Recommendations(http)
+        self.placements = Placements(http)
 
     def close(self) -> None:
         if self._owns_client:
@@ -92,6 +95,7 @@ class AsyncLikyly:
         self.users = AsyncUsers(http)
         self.events = AsyncEvents(http)
         self.recommendations = AsyncRecommendations(http)
+        self.placements = AsyncPlacements(http)
 
     async def aclose(self) -> None:
         if self._owns_client:

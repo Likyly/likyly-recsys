@@ -22,7 +22,7 @@
     },
     "scripts": {
         "test": "phpunit",
-        "lint": "phpcs --standard=PSR12 src tests",
+        "lint": "phpcs",
         "analyse": "phpstan analyse -c phpstan.neon"
     },
     "config": { "sort-packages": true }

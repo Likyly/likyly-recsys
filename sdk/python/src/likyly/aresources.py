@@ -11,8 +11,10 @@ from .models import (
     BatchResult,
     EventBatchResult,
     EventResult,
+    IdentifyResult,
     Item,
     ItemList,
+    PlacementRecommendation,
     Properties,
     RecommendationResponse,
     User,
@@ -111,6 +113,11 @@ class Events:
         """Up to 1000 events. Each dict has ``type`` plus the fields of :meth:`track`."""
         return await self._http.send(_ops.events_track_many(events), options)
 
+    async def identify(self, *, user_id: str, session_id: str, options: Optional[RequestOptions] = None) -> IdentifyResult:
+        """The visitor of ``session_id`` just signed in as ``user_id``: their anonymous history now counts for them.
+        Call it right after login; ``linked_interactions`` says how many past events were attached."""
+        return await self._http.send(_ops.events_identify(user_id, session_id), options)
+
     async def impression(self, **event: Any) -> EventResult:
         """The item was shown to the visitor (send the ``recommendation_id`` it came with)."""
         return await self.track("impression", **event)
@@ -174,3 +181,22 @@ class Recommendations:
         """Recency-weighted recommendations from what was viewed: pass ``viewed_item_ids`` (oldest first) **or**
         ``user_id`` (LIKYLY's own history of that user's views) - exactly one."""
         return await self._http.send(_ops.recommendations_session(viewed_item_ids, user_id, limit, placement, session_id), options)
+
+
+class Placements:
+    """The recommended way to show recommendations: a *placement* (``pdp-related``, ``home-for-you``...) is configured
+    once in LIKYLY - strategy, fallback, filters - and called by its slug from your code.
+    Works with the **public** key."""
+
+    def __init__(self, http: AsyncHttpClient) -> None:
+        self._http = http
+
+    async def recommend(
+        self, placement: str, *, context: Optional[Mapping[str, Any]] = None, limit: Optional[int] = None,
+        options: Optional[RequestOptions] = None,
+    ) -> PlacementRecommendation:
+        """Recommendations for one placement. ``context`` is what you know about the moment: ``item_id`` (the item
+        being viewed), ``user_id``, ``session_id``, ``anonymous_id``, ``category_id``, ``collection_id``,
+        ``cart_item_ids``, ``locale``, ``custom_context`` - the placement decides what it uses. Send
+        ``recommendation_id`` back on the events that follow."""
+        return await self._http.send(_ops.placements_recommend(placement, context, limit), options)

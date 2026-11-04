@@ -24,9 +24,16 @@ internal static class Wire
             ? users.Select(u => new SimilarUser(Json.Str(u, "user_id")!, Json.Strings(u, "shared_item_ids") ?? [])).ToList()
             : null);
 
-    public static RecommendationResponse Recommendation(JsonNode? n) => new(
-        Json.Str(n, "recommendation_id")!, Json.Str(n, "strategy")!, Json.Str(n, "placement"),
+    public static IdentifyResult Identify(JsonNode? n) => new(Json.Int(n, "linked_interactions")!.Value);
+
+    private static List<RecommendedItem> RecommendedItems(JsonNode? n) =>
         (n?["items"] as JsonArray ?? []).Select(i => new RecommendedItem(
             Json.Str(i, "item_id")!, Json.Dbl(i, "score"), Json.Str(i, "title"), Json.Str(i, "description"), Json.Properties(i?["properties"]),
-            i?["explanation"] is JsonObject ex ? Explanation(ex) : null)).ToList());
+            i?["explanation"] is JsonObject ex ? Explanation(ex) : null)).ToList();
+
+    public static RecommendationResponse Recommendation(JsonNode? n) => new(
+        Json.Str(n, "recommendation_id")!, Json.Str(n, "strategy")!, Json.Str(n, "placement"), RecommendedItems(n));
+
+    public static PlacementRecommendResponse PlacementRecommendation(JsonNode? n) => new(
+        Json.Str(n, "recommendation_id")!, Json.Str(n, "placement")!, Json.Str(n, "strategy_used")!, RecommendedItems(n));
 }

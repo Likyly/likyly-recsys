@@ -58,6 +58,19 @@ foreach ($recs->items as $item) {
 }
 // endregion
 
+
+
+// region:placements
+// The recommended way: a placement ("pdp-related"...) is configured once in LIKYLY - strategy,
+// fallback, filters - and your page only says where it is and what it knows.
+$related = $likyly->placements()->recommend('pdp-related', context: ['itemId' => 'SKU-123', 'sessionId' => 'sess_abc'], limit: 4);
+echo "strategy used: {$related->strategyUsed}\n";
+
+// When an anonymous visitor signs in, attach their session's history to their account.
+$linked = $likyly->events()->identify(userId: 'user_123', sessionId: 'sess_abc');
+echo "linked: {$linked->linkedInteractions}\n";
+
+// endregion
 // region:showcase
 // Les recommandations pour votre page : tout est optionnel, envoyez ce que vous savez.
 $productRecs = $likyly->recommendations()->get(

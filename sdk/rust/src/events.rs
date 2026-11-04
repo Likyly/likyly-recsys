@@ -3,7 +3,7 @@ use serde_json::{json, Map, Value};
 use crate::encoding::{encode, require_event_type, require_id};
 use crate::error::Error;
 use crate::http::{Call, Core};
-use crate::types::{EventBatchResult, EventInput, EventResult, TypedEvent};
+use crate::types::{EventBatchResult, EventInput, EventResult, IdentifyInput, IdentifyResult, TypedEvent};
 
 /// `client.events()` - what your visitors do. Works with the **public** key from a browser, or the secret key
 /// from your backend. [`track`](Events::track) is the one mechanism; [`view`](Events::view),
@@ -82,6 +82,23 @@ impl<'a> Events<'a> {
     /// the purchase twice.
     pub async fn purchase(&self, event: EventInput) -> Result<EventResult, Error> {
         self.track("purchase", event).await
+    }
+
+    /// Call right after login or signup, once you know `user_id`, for the `session_id` the visitor was anonymous
+    /// under: every past interaction of that session not already attributed to a user is reassigned to `user_id`,
+    /// so it counts as that user's history from then on. Safe to call more than once (and retried automatically).
+    pub async fn identify(&self, input: IdentifyInput) -> Result<IdentifyResult, Error> {
+        let user_id = require_id(&input.user_id, "user_id")?;
+        let session_id = require_id(&input.session_id, "session_id")?;
+        // Only ever reassigns not-yet-attributed rows: replaying it is harmless.
+        let call = Call {
+            method: "POST",
+            path: "/events/identify".into(),
+            query: vec![],
+            body: Some(json!({ "user_id": user_id, "session_id": session_id })),
+            idempotent: true,
+        };
+        self.core.request(call).await?.json()
     }
 }
 

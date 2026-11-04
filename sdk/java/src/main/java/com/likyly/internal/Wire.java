@@ -6,7 +6,9 @@ import com.likyly.model.BatchResult;
 import com.likyly.model.EventBatchResult;
 import com.likyly.model.EventResult;
 import com.likyly.model.Explanation;
+import com.likyly.model.IdentifyResult;
 import com.likyly.model.Item;
+import com.likyly.model.PlacementRecommendResponse;
 import com.likyly.model.RecommendationResponse;
 import com.likyly.model.RecommendedItem;
 import com.likyly.model.SimilarUser;
@@ -81,6 +83,10 @@ public final class Wire {
         return new EventBatchResult(n.get("received").asInt(), n.get("accepted").asInt(), n.get("duplicates").asInt());
     }
 
+    public static IdentifyResult identify(JsonNode n) {
+        return new IdentifyResult(n.get("linked_interactions").asInt());
+    }
+
     private static Explanation explanation(JsonNode n) {
         List<SimilarUser> similar = null;
         JsonNode su = n.get("similar_users");
@@ -95,13 +101,21 @@ public final class Wire {
             integer(n, "interaction_count"), str(n, "interaction_label"), dbl(n, "collaborative_score"), strings(n, "source_item_ids"), similar);
     }
 
-    public static RecommendationResponse recommendation(JsonNode n) {
+    private static List<RecommendedItem> recommendedItems(JsonNode n) {
         List<RecommendedItem> items = new ArrayList<>();
         for (JsonNode i : n.get("items")) {
             JsonNode ex = i.get("explanation");
             items.add(new RecommendedItem(str(i, "item_id"), dbl(i, "score"), str(i, "title"), str(i, "description"), props(i),
                 ex == null || ex.isNull() ? null : explanation(ex)));
         }
-        return new RecommendationResponse(str(n, "recommendation_id"), str(n, "strategy"), str(n, "placement"), items);
+        return items;
+    }
+
+    public static RecommendationResponse recommendation(JsonNode n) {
+        return new RecommendationResponse(str(n, "recommendation_id"), str(n, "strategy"), str(n, "placement"), recommendedItems(n));
+    }
+
+    public static PlacementRecommendResponse placementRecommendation(JsonNode n) {
+        return new PlacementRecommendResponse(str(n, "recommendation_id"), str(n, "placement"), str(n, "strategy_used"), recommendedItems(n));
     }
 }

@@ -70,6 +70,35 @@ public class BehaviorTests
     }
 
     [Fact]
+    public async Task APlacementContextMapsEveryFieldAndKeepsCustomContextKeys()
+    {
+        var (client, handler, _) = Harness.Make(2, new Step(Body: """{"recommendation_id":"rec_1","placement":"cart","strategy_used":"session","items":[]}"""));
+        await Assert.ThrowsAsync<ValidationException>(() => client.Placements.RecommendAsync(new PlacementRecommendRequest { Placement = " " }));
+        await client.Placements.RecommendAsync(new PlacementRecommendRequest
+        {
+            Placement = "cart",
+            Context = new PlacementContext
+            {
+                CategoryId = "c", CollectionId = "col", AnonymousId = "anon", CartItemIds = ["a", "b"], Locale = "fr-FR",
+                CustomContext = new Dictionary<string, object?> { ["pageType"] = "cart" },
+            },
+        });
+        var context = Assert.Single(handler.Calls).Body is { } body ? JsonNode.Parse(body)!["context"]! : null;
+        Assert.True(JsonNode.DeepEquals(
+            JsonNode.Parse("""{"category_id":"c","collection_id":"col","anonymous_id":"anon","cart_item_ids":["a","b"],"locale":"fr-FR","custom_context":{"pageType":"cart"}}"""),
+            context));
+    }
+
+    [Fact]
+    public async Task IdentifyNeedsAUserAndASession()
+    {
+        var (client, handler, _) = Harness.Make(2, new Step(Body: """{"linked_interactions":0}"""));
+        await Assert.ThrowsAsync<ValidationException>(() => client.Events.IdentifyAsync(new IdentifyInput { UserId = "u", SessionId = "" }));
+        await Assert.ThrowsAsync<ValidationException>(() => client.Events.IdentifyAsync(new IdentifyInput { UserId = " ", SessionId = "s" }));
+        Assert.Empty(handler.Calls);
+    }
+
+    [Fact]
     public async Task BatchesMustNotBeEmpty()
     {
         var (client, _, _) = Harness.Make(2, new Step(Body: Evt));

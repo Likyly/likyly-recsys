@@ -12,7 +12,7 @@ catalog (items)  →  events  →  recommendations  →  impression → click �
 pip install likyly
 ```
 
-Python 3.9 or later. Depends on `httpx`. Fully typed (`py.typed`). Sync (`Likyly`) and asyncio (`AsyncLikyly`) clients with the same methods.
+Python 3.10 or later. Depends on `httpx`. Fully typed (`py.typed`). Sync (`Likyly`) and asyncio (`AsyncLikyly`) clients with the same methods.
 
 ## Quick start
 
@@ -78,6 +78,21 @@ for item in recs.items:
 ```
 
 You never choose an algorithm: LIKYLY picks the best strategy for what it knows about the visitor and tells you which one it used (`strategy`: `hybrid`, `content`, `collaborative`, `session` or `popular`). With no user, no session and no item you still get a useful answer: what is popular.
+
+### Placements: the recommended way
+
+```python
+# The recommended way: a placement ("pdp-related"...) is configured once in LIKYLY - strategy,
+# fallback, filters - and your page only says where it is and what it knows.
+related = likyly.placements.recommend("pdp-related", context={"item_id": "SKU-123", "session_id": "sess_abc"}, limit=4)
+print(f"strategy used: {related.strategy_used}")
+
+# When an anonymous visitor signs in, attach their session's history to their account.
+linked = likyly.events.identify(user_id="user_123", session_id="sess_abc")
+print(f"linked: {linked.linked_interactions}")
+```
+
+A placement (`pdp-related`, `home-for-you`, `cart-cross-sell`...) is configured once in LIKYLY, by your coding assistant through the MCP server or in the console: strategy, fallback, filters, how many items. Your code only names it and passes what it knows (`itemId`, `userId`, `sessionId`, ...); change the configuration later without redeploying. `identify` attaches an anonymous visitor's history to their account the moment they sign in, so their recommendations stay personal.
 
 ### Close the loop
 
@@ -238,6 +253,8 @@ Every method takes a keyword-only `options=RequestOptions(timeout=2.0, max_retri
 | `likyly.events.add_to_cart` | The visitor added the item to their cart | P |
 | `likyly.events.remove_from_cart` | The visitor removed the item from their cart | P |
 | `likyly.events.purchase` | The visitor bought the item (set an event id) | P |
+| `likyly.events.identify` | An anonymous visitor signed in: attach their session's history to their user id | P |
+| `likyly.placements.recommend` | Recommendations for a named placement configured in LIKYLY (the recommended way) | P |
 | `likyly.recommendations.get` | Recommendations with the automatic strategy: user, session, item or viewed items | P |
 | `likyly.recommendations.popular` | Advanced: the most popular items | P |
 | `likyly.recommendations.similar` | Advanced: items similar to one item | P |

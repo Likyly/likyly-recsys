@@ -31,6 +31,18 @@ fn snake_keys(v: &Value) -> Value {
     }
 }
 
+/// Args whose option object nests another option object (`context`): that one's top-level keys become snake_case
+/// too - still never the keys inside it (`custom_context` is the developer's).
+fn snake_nested(args: &[Value], key: &str) -> Vec<Value> {
+    let mut args = args.to_vec();
+    if let Some(Value::Object(m)) = args.get_mut(0) {
+        if let Some(v) = m.get_mut(key) {
+            *v = snake_keys(v);
+        }
+    }
+    args
+}
+
 fn arg<T: DeserializeOwned + Default>(args: &[Value], i: usize) -> T {
     args.get(i).map_or_else(T::default, |v| serde_json::from_value(v.clone()).unwrap_or_else(|e| panic!("arg {i}: {e}")))
 }
@@ -66,6 +78,8 @@ async fn invoke(c: &Likyly, resource: &str, method: &str, raw_args: &[Value]) ->
         ("events", "addToCart") => ser(c.events().add_to_cart(arg(a, 0)).await),
         ("events", "removeFromCart") => ser(c.events().remove_from_cart(arg(a, 0)).await),
         ("events", "purchase") => ser(c.events().purchase(arg(a, 0)).await),
+        ("events", "identify") => ser(c.events().identify(arg(a, 0)).await),
+        ("placements", "recommend") => ser(c.placements().recommend(arg(&snake_nested(a, "context"), 0)).await),
         ("recommendations", "get") => ser(c.recommendations().get(arg(a, 0)).await),
         ("recommendations", "popular") => ser(c.recommendations().popular(arg(a, 0)).await),
         ("recommendations", "similar") => ser(c.recommendations().similar(arg(a, 0)).await),

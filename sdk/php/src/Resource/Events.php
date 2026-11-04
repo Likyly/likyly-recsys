@@ -9,6 +9,7 @@ use Likyly\Http\HttpClient;
 use Likyly\Internal\Support;
 use Likyly\Model\EventBatchResult;
 use Likyly\Model\EventResult;
+use Likyly\Model\IdentifyResult;
 
 /**
  * `$likyly->events()` - what your visitors do. Works with the **public** key from a browser-facing
@@ -49,6 +50,20 @@ final class Events
         $r = $this->http->request('POST', '/events/' . Support::encodeSegment(self::type($type)), body: $body, idempotent: $eventId !== null, options: $options);
 
         return EventResult::fromWire($r->data);
+    }
+
+    /**
+     * The visitor of `$sessionId` just signed in as `$userId`: their anonymous history now counts for them.
+     * Call it right after login; `linkedInteractions` says how many past events were attached.
+     *
+     * @param array{timeout?: float, maxRetries?: int} $options
+     */
+    public function identify(string $userId, string $sessionId, array $options = []): IdentifyResult
+    {
+        $body = ['user_id' => Support::requireId($userId, 'userId'), 'session_id' => Support::requireId($sessionId, 'sessionId')];
+        $r = $this->http->request('POST', '/events/identify', body: $body, options: $options);
+
+        return IdentifyResult::fromWire($r->data);
     }
 
     /**

@@ -9,6 +9,8 @@ import com.likyly.internal.Wire;
 import com.likyly.model.EventBatchResult;
 import com.likyly.model.EventInput;
 import com.likyly.model.EventResult;
+import com.likyly.model.IdentifyInput;
+import com.likyly.model.IdentifyResult;
 import com.likyly.model.TypedEventInput;
 import java.util.List;
 import java.util.Map;
@@ -84,6 +86,19 @@ public final class EventsResource {
     /** Set {@code eventId} (e.g. {@code purchase_<orderId>_<itemId>}) so a retry can never count the purchase twice. */
     public EventResult purchase(EventInput event) {
         return track("purchase", event);
+    }
+
+    /**
+     * Call right after login/signup, once you know {@code userId}, for the {@code sessionId} the visitor was anonymous
+     * under: every past interaction of that session not already attributed to a user is reassigned to {@code userId},
+     * so it counts as that user's history from then on. Safe to call more than once.
+     */
+    public IdentifyResult identify(IdentifyInput input) {
+        ObjectNode body = Support.object();
+        body.put("user_id", Support.requireId(input.userId(), "userId"));
+        body.put("session_id", Support.requireId(input.sessionId(), "sessionId"));
+        // only ever reassigns not-yet-attributed interactions - replaying is harmless
+        return Wire.identify(http.request("POST", "/events/identify", Map.of(), body, true).data());
     }
 
     private static String type(String type) {

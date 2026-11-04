@@ -5,6 +5,7 @@ use crate::error::Error;
 use crate::events::Events;
 use crate::http::{default_random, default_sleeper, Core, Random, ReqwestTransport, Sleeper, Transport};
 use crate::items::Items;
+use crate::placements::Placements;
 use crate::recommendations::Recommendations;
 use crate::users::Users;
 
@@ -23,12 +24,13 @@ pub struct RequestOptions {
     pub max_retries: Option<u32>,
 }
 
-/// The LIKYLY client. Four things to know:
+/// The LIKYLY client. Five things to know:
 ///
 /// * [`items()`](Likyly::items) - your catalog
 /// * [`users()`](Likyly::users) - your users (optional)
 /// * [`events()`](Likyly::events) - what visitors do
-/// * [`recommendations()`](Likyly::recommendations) - what to show them
+/// * [`placements()`](Likyly::placements) - what to show them, configured once per spot on your site
+/// * [`recommendations()`](Likyly::recommendations) - what to show them, chosen per call
 ///
 /// Cloning is cheap and shares the connection pool: create one client and reuse it.
 #[derive(Clone)]
@@ -64,7 +66,13 @@ impl Likyly {
         Events::new(&self.core)
     }
 
-    /// What to show them.
+    /// What to show them, where: recommendations for a placement configured once (strategy, fallback, filters)
+    /// and called by its slug. The recommended way to ask for recommendations.
+    pub fn placements(&self) -> Placements<'_> {
+        Placements::new(&self.core)
+    }
+
+    /// What to show them, with no stored configuration: send the signals per call.
     pub fn recommendations(&self) -> Recommendations<'_> {
         Recommendations::new(&self.core)
     }

@@ -181,7 +181,7 @@
       "package": "likyly",
       "registry": "PyPI",
       "install": "pip install likyly",
-      "requires": "Python 3.9 or later. Depends on `httpx`. Fully typed (`py.typed`). Sync (`Likyly`) and asyncio (`AsyncLikyly`) clients with the same methods.",
+      "requires": "Python 3.10 or later. Depends on `httpx`. Fully typed (`py.typed`). Sync (`Likyly`) and asyncio (`AsyncLikyly`) clients with the same methods.",
       "case": "snake",
       "specialNames": {
         "items.import": "import_",
@@ -245,7 +245,7 @@
       "context": "",
       "installFence": "sh",
       "fr": {
-        "requires": "Python 3.9 ou plus récent. Dépend de `httpx`. Entièrement typé (`py.typed`). Clients synchrone (`Likyly`) et asyncio (`AsyncLikyly`) avec les mêmes méthodes.",
+        "requires": "Python 3.10 ou plus récent. Dépend de `httpx`. Entièrement typé (`py.typed`). Clients synchrone (`Likyly`) et asyncio (`AsyncLikyly`) avec les mêmes méthodes.",
         "perCall": "Chaque méthode accepte `options=RequestOptions(timeout=2.0, max_retries=0)` (argument nommé).",
         "notes": [
           "Code async : `async with AsyncLikyly(api_key=...) as likyly:` puis `await likyly.recommendations.get(...)`. Utilisez `with Likyly(...) as likyly:` (ou `close()`) pour libérer le pool de connexions.",

@@ -52,13 +52,13 @@ function clean(lines, fence) {
 function snippetsOf(sdk) {
   const file = join(sdkRoot, sdk.dir, sdk.example);
   const r = regions(readFileSync(file, "utf8"));
-  for (const need of ["imports", "initialize", "catalog", "track", "recommend", "attribution", "showcase", "browser", "custom", "advanced", "errors", "config"]) {
+  for (const need of ["imports", "initialize", "catalog", "track", "recommend", "placements", "attribution", "showcase", "browser", "custom", "advanced", "errors", "config"]) {
     if (!r[need]) throw new Error(`${sdk.id}: region "${need}" missing in ${sdk.dir}/${sdk.example}`);
   }
   const get = (n) => clean(r[n], sdk.fence);
   const init = [sdk.initPrelude?.trimEnd(), get("imports"), get("initialize")].filter(Boolean).join("\n\n");
   return {
-    init, initialize: get("initialize"), catalog: get("catalog"), track: get("track"), recommend: get("recommend"), attribution: get("attribution"), showcase: get("showcase"),
+    init, initialize: get("initialize"), catalog: get("catalog"), track: get("track"), recommend: get("recommend"), placements: get("placements"), attribution: get("attribution"), showcase: get("showcase"),
     browser: get("browser"), custom: get("custom"), advanced: get("advanced"), errors: get("errors"), config: get("config"),
   };
 }
@@ -86,6 +86,8 @@ const OPS = [
   ["events", "addToCart", "The visitor added the item to their cart", "P"],
   ["events", "removeFromCart", "The visitor removed the item from their cart", "P"],
   ["events", "purchase", "The visitor bought the item (set an event id)", "P"],
+  ["events", "identify", "An anonymous visitor signed in: attach their session's history to their user id", "P"],
+  ["placements", "recommend", "Recommendations for a named placement configured in LIKYLY (the recommended way)", "P"],
   ["recommendations", "get", "Recommendations with the automatic strategy: user, session, item or viewed items", "P"],
   ["recommendations", "popular", "Advanced: the most popular items", "P"],
   ["recommendations", "similar", "Advanced: items similar to one item", "P"],

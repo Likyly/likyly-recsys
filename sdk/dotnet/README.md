@@ -81,6 +81,26 @@ foreach (var item in recs.Items)
 
 You never choose an algorithm: LIKYLY picks the best strategy for what it knows about the visitor and tells you which one it used (`strategy`: `hybrid`, `content`, `collaborative`, `session` or `popular`). With no user, no session and no item you still get a useful answer: what is popular.
 
+### Placements: the recommended way
+
+```csharp
+// The recommended way: a placement ("pdp-related"...) is configured once in LIKYLY - strategy,
+// fallback, filters - and your page only says where it is and what it knows.
+var related = await likyly.Placements.RecommendAsync(new PlacementRecommendRequest
+{
+    Placement = "pdp-related",
+    Context = new PlacementContext { ItemId = "SKU-123", SessionId = "sess_abc" },
+    Limit = 4,
+});
+Console.WriteLine($"strategy used: {related.StrategyUsed}");
+
+// When an anonymous visitor signs in, attach their session's history to their account.
+var linked = await likyly.Events.IdentifyAsync(new IdentifyInput { UserId = "user_123", SessionId = "sess_abc" });
+Console.WriteLine($"linked: {linked.LinkedInteractions}");
+```
+
+A placement (`pdp-related`, `home-for-you`, `cart-cross-sell`...) is configured once in LIKYLY, by your coding assistant through the MCP server or in the console: strategy, fallback, filters, how many items. Your code only names it and passes what it knows (`itemId`, `userId`, `sessionId`, ...); change the configuration later without redeploying. `identify` attaches an anonymous visitor's history to their account the moment they sign in, so their recommendations stay personal.
+
 ### Close the loop
 
 ```csharp
@@ -250,6 +270,8 @@ Pass a `CancellationToken` as the last argument; the client's `Timeout` applies 
 | `likyly.Events.AddToCartAsync` | The visitor added the item to their cart | P |
 | `likyly.Events.RemoveFromCartAsync` | The visitor removed the item from their cart | P |
 | `likyly.Events.PurchaseAsync` | The visitor bought the item (set an event id) | P |
+| `likyly.Events.IdentifyAsync` | An anonymous visitor signed in: attach their session's history to their user id | P |
+| `likyly.Placements.RecommendAsync` | Recommendations for a named placement configured in LIKYLY (the recommended way) | P |
 | `likyly.Recommendations.GetAsync` | Recommendations with the automatic strategy: user, session, item or viewed items | P |
 | `likyly.Recommendations.PopularAsync` | Advanced: the most popular items | P |
 | `likyly.Recommendations.SimilarAsync` | Advanced: items similar to one item | P |

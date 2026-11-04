@@ -7,7 +7,12 @@ import com.likyly.error.NotFoundException;
 import com.likyly.error.RateLimitException;
 import com.likyly.model.EventInput;
 import com.likyly.model.HybridOptions;
+import com.likyly.model.IdentifyInput;
+import com.likyly.model.IdentifyResult;
 import com.likyly.model.ItemImport;
+import com.likyly.model.PlacementContext;
+import com.likyly.model.PlacementRecommendOptions;
+import com.likyly.model.PlacementRecommendResponse;
 import com.likyly.model.RecommendationRequest;
 import com.likyly.model.RecommendationResponse;
 import com.likyly.model.SessionOptions;
@@ -64,6 +69,23 @@ public class Quickstart {
         recs.items().forEach(item -> System.out.println(item.itemId() + " " + item.title()));
         // endregion
 
+
+
+        // region:placements
+        // The recommended way: a placement ("pdp-related"...) is configured once in LIKYLY - strategy,
+        // fallback, filters - and your page only says where it is and what it knows.
+        PlacementRecommendResponse related = likyly.placements().recommend(PlacementRecommendOptions.builder()
+            .placement("pdp-related")
+            .context(PlacementContext.builder().itemId("SKU-123").sessionId("sess_abc").build())
+            .limit(4)
+            .build());
+        System.out.println("strategy used: " + related.strategyUsed());
+
+        // When an anonymous visitor signs in, attach their session's history to their account.
+        IdentifyResult linked = likyly.events().identify(IdentifyInput.builder().userId("user_123").sessionId("sess_abc").build());
+        System.out.println("linked: " + linked.linkedInteractions());
+
+        // endregion
         // region:showcase
         // Les recommandations pour votre page : tout est optionnel, envoyez ce que vous savez.
         RecommendationResponse productRecs = likyly.recommendations().get(RecommendationRequest.builder()

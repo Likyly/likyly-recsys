@@ -52,6 +52,19 @@ puts "strategy: #{recs.strategy}"
 recs.items.each { |item| puts "#{item.item_id} #{item.title}" }
 # endregion
 
+
+
+# region:placements
+# The recommended way: a placement ("pdp-related"...) is configured once in LIKYLY - strategy,
+# fallback, filters - and your page only says where it is and what it knows.
+related = likyly.placements.recommend(placement: "pdp-related", context: { item_id: "SKU-123", session_id: "sess_abc" }, limit: 4)
+puts "strategy used: #{related.strategy_used}"
+
+# When an anonymous visitor signs in, attach their session's history to their account.
+linked = likyly.events.identify(user_id: "user_123", session_id: "sess_abc")
+puts "linked: #{linked.linked_interactions}"
+
+# endregion
 # region:showcase
 # Les recommandations pour votre page : tout est optionnel, envoyez ce que vous savez.
 product_recs = likyly.recommendations.get(

@@ -6,8 +6,8 @@
 use std::time::Duration;
 
 use likyly::{
-    Error, EventInput, HybridOptions, ItemImport, Likyly, Properties, RecommendationRequest, SessionOptions, SimilarOptions, TypedEvent,
-    UserInput,
+    Error, EventInput, HybridOptions, IdentifyInput, ItemImport, Likyly, PlacementContext, PlacementRecommendOptions, Properties,
+    RecommendationRequest, SessionOptions, SimilarOptions, TypedEvent, UserInput,
 };
 use serde_json::json;
 // endregion
@@ -81,6 +81,24 @@ async fn main() -> Result<(), Error> {
     }
     // endregion
 
+    // region:placements
+    // The recommended way: a placement ("pdp-related"...) is configured once in LIKYLY - strategy,
+    // fallback, filters - and your page only says where it is and what it knows.
+    let related = likyly
+        .placements()
+        .recommend(PlacementRecommendOptions {
+            placement: "pdp-related".into(),
+            context: Some(PlacementContext { item_id: Some("SKU-123".into()), session_id: Some("sess_abc".into()), ..Default::default() }),
+            limit: Some(4),
+        })
+        .await?;
+    println!("strategy used: {}", related.strategy_used);
+
+    // When an anonymous visitor signs in, attach their session's history to their account.
+    let linked = likyly.events().identify(IdentifyInput::new("user_123", "sess_abc")).await?;
+    println!("linked: {}", linked.linked_interactions);
+
+    // endregion
     // region:showcase
     // Les recommandations pour votre page : tout est optionnel, envoyez ce que vous savez.
     let product_recs = likyly

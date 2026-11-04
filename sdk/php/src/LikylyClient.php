@@ -10,6 +10,7 @@ use Likyly\Exception\ValidationException;
 use Likyly\Http\HttpClient;
 use Likyly\Resource\Events;
 use Likyly\Resource\Items;
+use Likyly\Resource\Placements;
 use Likyly\Resource\Recommendations;
 use Likyly\Resource\Users;
 
@@ -30,6 +31,7 @@ final class LikylyClient
     private readonly Users $users;
     private readonly Events $events;
     private readonly Recommendations $recommendations;
+    private readonly Placements $placements;
 
     /**
      * @param string|null $baseUrl defaults to https://api.likyly.com
@@ -70,6 +72,7 @@ final class LikylyClient
         $this->users = new Users($http);
         $this->events = new Events($http);
         $this->recommendations = new Recommendations($http);
+        $this->placements = new Placements($http);
     }
 
     public function items(): Items
@@ -90,5 +93,11 @@ final class LikylyClient
     public function recommendations(): Recommendations
     {
         return $this->recommendations;
+    }
+
+    /** What to show them, the recommended way: a named placement configured in LIKYLY. */
+    public function placements(): Placements
+    {
+        return $this->placements;
     }
 }

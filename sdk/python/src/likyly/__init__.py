@@ -19,8 +19,10 @@ from .models import (
     EventBatchResult,
     EventResult,
     Explanation,
+    IdentifyResult,
     Item,
     ItemList,
+    PlacementRecommendation,
     Properties,
     RecommendationResponse,
     RecommendedItem,
@@ -35,4 +37,5 @@ __all__ = [
     "ValidationError", "NetworkError", "RequestTimeoutError",
     "Item", "ItemList", "User", "UserList", "BatchResult", "BatchError", "EventResult", "EventBatchResult",
     "RecommendationResponse", "RecommendedItem", "Explanation", "SimilarUser", "Properties",
+    "PlacementRecommendation", "IdentifyResult",
 ]

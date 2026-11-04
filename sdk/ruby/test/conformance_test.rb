@@ -13,13 +13,17 @@ class ConformanceTest < Minitest::Test
   def self.snake(name) = name.gsub(/([A-Z])/) { "_#{Regexp.last_match(1).downcase}" }
 
   # Scenario args are camelCase JSON. Only the *top-level* keys of option hashes (and of list entries) become
-  # snake_case keywords - never anything inside +properties+, whose keys belong to the developer.
+  # snake_case keywords - never anything inside +properties+, whose keys belong to the developer. The one nested
+  # hash whose keys are the SDK's own is a placement's +context+ (+customContext+'s content stays untouched).
   def self.convert_args(args)
     positional = []
     keywords = {}
     args.each do |arg|
       case arg
-      when Hash then keywords.merge!(snake_keys(arg))
+      when Hash
+        options = snake_keys(arg)
+        options[:context] = snake_keys(options[:context]) if options[:context].is_a?(Hash)
+        keywords.merge!(options)
       when Array then positional << arg.map { |e| e.is_a?(Hash) ? snake_keys(e) : e }
       else positional << arg
       end

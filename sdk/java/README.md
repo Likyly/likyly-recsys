@@ -32,7 +32,12 @@ import com.likyly.error.NotFoundException;
 import com.likyly.error.RateLimitException;
 import com.likyly.model.EventInput;
 import com.likyly.model.HybridOptions;
+import com.likyly.model.IdentifyInput;
+import com.likyly.model.IdentifyResult;
 import com.likyly.model.ItemImport;
+import com.likyly.model.PlacementContext;
+import com.likyly.model.PlacementRecommendOptions;
+import com.likyly.model.PlacementRecommendResponse;
 import com.likyly.model.RecommendationRequest;
 import com.likyly.model.RecommendationResponse;
 import com.likyly.model.SessionOptions;
@@ -92,6 +97,25 @@ recs.items().forEach(item -> System.out.println(item.itemId() + " " + item.title
 ```
 
 You never choose an algorithm: LIKYLY picks the best strategy for what it knows about the visitor and tells you which one it used (`strategy`: `hybrid`, `content`, `collaborative`, `session` or `popular`). With no user, no session and no item you still get a useful answer: what is popular.
+
+### Placements: the recommended way
+
+```java
+// The recommended way: a placement ("pdp-related"...) is configured once in LIKYLY - strategy,
+// fallback, filters - and your page only says where it is and what it knows.
+PlacementRecommendResponse related = likyly.placements().recommend(PlacementRecommendOptions.builder()
+    .placement("pdp-related")
+    .context(PlacementContext.builder().itemId("SKU-123").sessionId("sess_abc").build())
+    .limit(4)
+    .build());
+System.out.println("strategy used: " + related.strategyUsed());
+
+// When an anonymous visitor signs in, attach their session's history to their account.
+IdentifyResult linked = likyly.events().identify(IdentifyInput.builder().userId("user_123").sessionId("sess_abc").build());
+System.out.println("linked: " + linked.linkedInteractions());
+```
+
+A placement (`pdp-related`, `home-for-you`, `cart-cross-sell`...) is configured once in LIKYLY, by your coding assistant through the MCP server or in the console: strategy, fallback, filters, how many items. Your code only names it and passes what it knows (`itemId`, `userId`, `sessionId`, ...); change the configuration later without redeploying. `identify` attaches an anonymous visitor's history to their account the moment they sign in, so their recommendations stay personal.
 
 ### Close the loop
 
@@ -259,6 +283,8 @@ Configure timeout and retries on the client; build a second client for a differe
 | `likyly.events().addToCart` | The visitor added the item to their cart | P |
 | `likyly.events().removeFromCart` | The visitor removed the item from their cart | P |
 | `likyly.events().purchase` | The visitor bought the item (set an event id) | P |
+| `likyly.events().identify` | An anonymous visitor signed in: attach their session's history to their user id | P |
+| `likyly.placements().recommend` | Recommendations for a named placement configured in LIKYLY (the recommended way) | P |
 | `likyly.recommendations().get` | Recommendations with the automatic strategy: user, session, item or viewed items | P |
 | `likyly.recommendations().popular` | Advanced: the most popular items | P |
 | `likyly.recommendations().similar` | Advanced: items similar to one item | P |

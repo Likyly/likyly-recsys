@@ -81,6 +81,21 @@ foreach ($recs->items as $item) {
 
 You never choose an algorithm: LIKYLY picks the best strategy for what it knows about the visitor and tells you which one it used (`strategy`: `hybrid`, `content`, `collaborative`, `session` or `popular`). With no user, no session and no item you still get a useful answer: what is popular.
 
+### Placements: the recommended way
+
+```php
+// The recommended way: a placement ("pdp-related"...) is configured once in LIKYLY - strategy,
+// fallback, filters - and your page only says where it is and what it knows.
+$related = $likyly->placements()->recommend('pdp-related', context: ['itemId' => 'SKU-123', 'sessionId' => 'sess_abc'], limit: 4);
+echo "strategy used: {$related->strategyUsed}\n";
+
+// When an anonymous visitor signs in, attach their session's history to their account.
+$linked = $likyly->events()->identify(userId: 'user_123', sessionId: 'sess_abc');
+echo "linked: {$linked->linkedInteractions}\n";
+```
+
+A placement (`pdp-related`, `home-for-you`, `cart-cross-sell`...) is configured once in LIKYLY, by your coding assistant through the MCP server or in the console: strategy, fallback, filters, how many items. Your code only names it and passes what it knows (`itemId`, `userId`, `sessionId`, ...); change the configuration later without redeploying. `identify` attaches an anonymous visitor's history to their account the moment they sign in, so their recommendations stay personal.
+
 ### Close the loop
 
 ```php
@@ -241,6 +256,8 @@ Every method takes a last `array $options = []` argument: `['timeout' => 2.0, 'm
 | `$likyly->events()->addToCart` | The visitor added the item to their cart | P |
 | `$likyly->events()->removeFromCart` | The visitor removed the item from their cart | P |
 | `$likyly->events()->purchase` | The visitor bought the item (set an event id) | P |
+| `$likyly->events()->identify` | An anonymous visitor signed in: attach their session's history to their user id | P |
+| `$likyly->placements()->recommend` | Recommendations for a named placement configured in LIKYLY (the recommended way) | P |
 | `$likyly->recommendations()->get` | Recommendations with the automatic strategy: user, session, item or viewed items | P |
 | `$likyly->recommendations()->popular` | Advanced: the most popular items | P |
 | `$likyly->recommendations()->similar` | Advanced: items similar to one item | P |

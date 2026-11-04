@@ -80,6 +80,20 @@ module Likyly
     # count the purchase twice.
     def purchase(**event) = track("purchase", **event)
 
+    # Call right after login or signup, once you know +user_id+, with the +session_id+ the visitor was anonymous
+    # under: every past interaction of that session not yet attributed to a user is reassigned to +user_id+, so it
+    # counts as that user's history from then on. Safe to call more than once.
+    #
+    # @param user_id [String]
+    # @param session_id [String]
+    # @return [IdentifyResult]
+    def identify(user_id:, session_id:, timeout: nil, max_retries: nil)
+      body = { "user_id" => Support.require_id(user_id, "user_id"), "session_id" => Support.require_id(session_id, "session_id") }
+      # Only ever reassigns not-yet-attributed interactions: replaying it is harmless, so it is retried.
+      r = @http.request("POST", "/events/identify", body: body, idempotent: true, timeout: timeout, max_retries: max_retries).json
+      IdentifyResult.new(linked_interactions: r["linked_interactions"])
+    end
+
     BODY_KEYS = %i[item_id user_id session_id recommendation_id placement quantity occurred_at properties event_id].freeze
     private_constant :BODY_KEYS
 

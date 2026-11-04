@@ -17,8 +17,10 @@ from .models import (
     EventBatchResult,
     EventResult,
     Explanation,
+    IdentifyResult,
     Item,
     ItemList,
+    PlacementRecommendation,
     RecommendationResponse,
     RecommendedItem,
     SimilarUser,
@@ -246,6 +248,11 @@ def events_track_many(events: List[Mapping[str, Any]]) -> "Spec[EventBatchResult
     )
 
 
+def events_identify(user_id: str, session_id: str) -> "Spec[IdentifyResult]":
+    body = {"user_id": require_id(user_id, "user_id"), "session_id": require_id(session_id, "session_id")}
+    return Spec("POST", "/events/identify", lambda r: IdentifyResult(int(r.data["linked_interactions"])), body=body)
+
+
 # ---- recommendations ----------------------------------------------------------------------------
 
 def _explanation(w: Optional[Dict[str, Any]]) -> Optional[Explanation]:
@@ -323,3 +330,53 @@ def recommendations_session(
     if any("," in i for i in ids):
         raise ValidationError('an item id containing "," cannot be sent in this endpoint\'s comma-separated list - use recommendations.get()')
     return _advanced("/getRec/session", placement, session_id, viewed_item_ids=",".join(ids), count=_limit(limit))
+
+
+# ---- placements ---------------------------------------------------------------------------------
+
+# Context keys, as Python names (snake_case) or as the API/other SDKs spell them (camelCase).
+_CONTEXT_KEYS = {
+    "item_id": "current_item_id", "itemId": "current_item_id", "current_item_id": "current_item_id",
+    "category_id": "category_id", "categoryId": "category_id",
+    "collection_id": "collection_id", "collectionId": "collection_id",
+    "user_id": "user_id", "userId": "user_id",
+    "anonymous_id": "anonymous_id", "anonymousId": "anonymous_id",
+    "session_id": "session_id", "sessionId": "session_id",
+    "cart_item_ids": "cart_item_ids", "cartItemIds": "cart_item_ids",
+    "locale": "locale",
+    "custom_context": "custom_context", "customContext": "custom_context",
+}
+
+
+def _placement_context(context: Optional[Mapping[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not context:
+        return None
+    out: Dict[str, Any] = {}
+    for key, value in context.items():
+        wire = _CONTEXT_KEYS.get(key)
+        if wire is None:
+            raise ValidationError(f"unknown placement context key: {key!r}")
+        if value is not None:
+            out[wire] = value
+    return out or None
+
+
+def _placement_recommendation(r: Response) -> PlacementRecommendation:
+    d = r.data
+    return PlacementRecommendation(
+        recommendation_id=d["recommendation_id"], placement=d["placement"], strategy_used=d["strategy_used"],
+        items=[
+            RecommendedItem(
+                item_id=i["item_id"], score=i.get("score"), title=i.get("title"), description=i.get("description"),
+                properties=i.get("properties") or {}, explanation=_explanation(i.get("explanation")),
+            )
+            for i in d["items"]
+        ],
+    )
+
+
+def placements_recommend(placement: str, context: Optional[Mapping[str, Any]], limit: Optional[int]) -> "Spec[PlacementRecommendation]":
+    body = _compact({"context": _placement_context(context), "limit": limit})
+    # A read in effect, but each call mints a fresh recommendation_id server-side - repeating it on
+    # retry is what you want for a dropped connection, not a duplicate write.
+    return Spec("POST", f"/placements/{encode_segment(require_id(placement, 'placement'))}/recommend", _placement_recommendation, body=body)

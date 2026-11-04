@@ -103,6 +103,31 @@ for _, item := range recs.Items {
 
 You never choose an algorithm: LIKYLY picks the best strategy for what it knows about the visitor and tells you which one it used (`strategy`: `hybrid`, `content`, `collaborative`, `session` or `popular`). With no user, no session and no item you still get a useful answer: what is popular.
 
+### Placements: the recommended way
+
+```go
+// The recommended way: a placement ("pdp-related"...) is configured once in LIKYLY - strategy,
+// fallback, filters - and your page only says where it is and what it knows.
+related, err := client.Placements.Recommend(ctx, likyly.PlacementRequest{
+	Placement: "pdp-related",
+	Context:   &likyly.PlacementContext{ItemID: "SKU-123", SessionID: "sess_abc"},
+	Limit:     4,
+})
+if err != nil {
+	log.Fatal(err)
+}
+fmt.Println("strategy used:", related.StrategyUsed)
+
+// When an anonymous visitor signs in, attach their session's history to their account.
+linked, err := client.Events.Identify(ctx, likyly.IdentifyInput{UserID: "user_123", SessionID: "sess_abc"})
+if err != nil {
+	log.Fatal(err)
+}
+fmt.Println("linked:", linked.LinkedInteractions)
+```
+
+A placement (`pdp-related`, `home-for-you`, `cart-cross-sell`...) is configured once in LIKYLY, by your coding assistant through the MCP server or in the console: strategy, fallback, filters, how many items. Your code only names it and passes what it knows (`itemId`, `userId`, `sessionId`, ...); change the configuration later without redeploying. `identify` attaches an anonymous visitor's history to their account the moment they sign in, so their recommendations stay personal.
+
 ### Close the loop
 
 ```go
@@ -296,6 +321,8 @@ Cancel or set a deadline through the `context.Context`. Per-call options go last
 | `client.Events.AddToCart` | The visitor added the item to their cart | P |
 | `client.Events.RemoveFromCart` | The visitor removed the item from their cart | P |
 | `client.Events.Purchase` | The visitor bought the item (set an event id) | P |
+| `client.Events.Identify` | An anonymous visitor signed in: attach their session's history to their user id | P |
+| `client.Placements.Recommend` | Recommendations for a named placement configured in LIKYLY (the recommended way) | P |
 | `client.Recommendations.Get` | Recommendations with the automatic strategy: user, session, item or viewed items | P |
 | `client.Recommendations.Popular` | Advanced: the most popular items | P |
 | `client.Recommendations.Similar` | Advanced: items similar to one item | P |

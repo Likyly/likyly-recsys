@@ -55,7 +55,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults: { run: { working-directory: sdk/python } }
     strategy:
-      matrix: { python: ["3.9", "3.13"] }
+      matrix: { python: ["3.10", "3.13"] }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

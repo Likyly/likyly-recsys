@@ -7,7 +7,7 @@ name = "likyly"
 dynamic = ["version"]
 description = "Official LIKYLY SDK for Python: items, users, events and recommendations."
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = { text = "MIT" }
 keywords = ["recommendations", "recommender", "personalization", "likyly"]
 classifiers = [
@@ -32,7 +32,7 @@ testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 120
-target-version = "py39"
+target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "B", "I"]

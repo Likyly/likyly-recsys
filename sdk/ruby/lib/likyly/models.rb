@@ -51,6 +51,14 @@ module Likyly
   # collaborative, session or popular.
   RecommendationResponse = Struct.new(:recommendation_id, :strategy, :placement, :items, keyword_init: true)
 
+  # What placements.recommend returns. Send +recommendation_id+ back on the events that follow, like any
+  # recommendation. +strategy_used+ is what the placement actually used: hybrid, content, collaborative, session
+  # or popular.
+  PlacementRecommendation = Struct.new(:recommendation_id, :placement, :strategy_used, :items, keyword_init: true)
+
+  # Answer to events.identify: how many past interactions of the session are now attributed to the user.
+  IdentifyResult = Struct.new(:linked_interactions, keyword_init: true)
+
   # @api private
   module Wire
     module_function
@@ -78,14 +86,23 @@ module Likyly
       )
     end
 
+    def recommended_item(i)
+      RecommendedItem.new(
+        item_id: i["item_id"], score: i["score"], title: i["title"], description: i["description"],
+        properties: i["properties"] || {}, explanation: i["explanation"] ? explanation(i["explanation"]) : nil
+      )
+    end
+
     def recommendation(w)
-      items = w["items"].map do |i|
-        RecommendedItem.new(
-          item_id: i["item_id"], score: i["score"], title: i["title"], description: i["description"],
-          properties: i["properties"] || {}, explanation: i["explanation"] ? explanation(i["explanation"]) : nil
-        )
-      end
+      items = w["items"].map { |i| recommended_item(i) }
       RecommendationResponse.new(recommendation_id: w["recommendation_id"], strategy: w["strategy"], placement: w["placement"], items: items)
+    end
+
+    def placement_recommendation(w)
+      PlacementRecommendation.new(
+        recommendation_id: w["recommendation_id"], placement: w["placement"], strategy_used: w["strategy_used"],
+        items: (w["items"] || []).map { |i| recommended_item(i) }
+      )
     end
   end
 end

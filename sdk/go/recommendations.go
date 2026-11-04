@@ -51,8 +51,13 @@ func str(p *string) string {
 }
 
 func (w wireRecommendation) public() *RecommendationResponse {
-	out := &RecommendationResponse{RecommendationID: w.RecommendationID, Strategy: w.Strategy, Placement: str(w.Placement), Items: make([]RecommendedItem, 0, len(w.Items))}
-	for _, it := range w.Items {
+	return &RecommendationResponse{RecommendationID: w.RecommendationID, Strategy: w.Strategy, Placement: str(w.Placement), Items: publicItems(w.Items)}
+}
+
+// publicItems converts the wire items of any recommendation endpoint (never nil: no items is an empty slice).
+func publicItems(items []wireRecommendedItem) []RecommendedItem {
+	out := make([]RecommendedItem, 0, len(items))
+	for _, it := range items {
 		ri := RecommendedItem{ItemID: it.ItemID, Score: it.Score, Title: str(it.Title), Description: str(it.Description), Properties: it.Properties}
 		if ri.Properties == nil {
 			ri.Properties = Properties{}
@@ -68,7 +73,7 @@ func (w wireRecommendation) public() *RecommendationResponse {
 			}
 			ri.Explanation = ex
 		}
-		out.Items = append(out.Items, ri)
+		out = append(out, ri)
 	}
 	return out
 }

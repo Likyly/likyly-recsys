@@ -6,6 +6,7 @@ import com.likyly.http.Transport;
 import com.likyly.internal.HttpCore;
 import com.likyly.resources.EventsResource;
 import com.likyly.resources.ItemsResource;
+import com.likyly.resources.PlacementsResource;
 import com.likyly.resources.RecommendationsResource;
 import com.likyly.resources.UsersResource;
 import java.time.Duration;
@@ -13,13 +14,14 @@ import java.util.function.DoubleSupplier;
 import java.util.function.LongConsumer;
 
 /**
- * The LIKYLY client. Four things to know:
+ * The LIKYLY client. Five things to know:
  *
  * <pre>
  * likyly.items()            your catalog
  * likyly.users()            your users (optional)
  * likyly.events()           what visitors do
- * likyly.recommendations()  what to show them
+ * likyly.placements()       what to show them, where - configured once, called by slug
+ * likyly.recommendations()  what to show them, one call at a time
  * </pre>
  *
  * <p>Two API keys: the <b>secret</b> key (backend only: items, users, everything) and the <b>public</b> key
@@ -35,6 +37,7 @@ public final class Likyly {
     private final UsersResource users;
     private final EventsResource events;
     private final RecommendationsResource recommendations;
+    private final PlacementsResource placements;
 
     private Likyly(Builder b) {
         if (b.apiKey == null || b.apiKey.isBlank()) {
@@ -60,6 +63,7 @@ public final class Likyly {
         this.users = new UsersResource(http);
         this.events = new EventsResource(http);
         this.recommendations = new RecommendationsResource(http);
+        this.placements = new PlacementsResource(http);
     }
 
     public static Builder builder() {
@@ -80,6 +84,10 @@ public final class Likyly {
 
     public RecommendationsResource recommendations() {
         return recommendations;
+    }
+
+    public PlacementsResource placements() {
+        return placements;
     }
 
     /** Client configuration. Only {@link #apiKey} is required. */

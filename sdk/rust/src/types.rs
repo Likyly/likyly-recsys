@@ -203,6 +203,26 @@ pub struct EventBatchResult {
     pub duplicates: u32,
 }
 
+/// For `events().identify`: the user who just logged in or signed up, and the anonymous session they browsed under.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct IdentifyInput {
+    pub user_id: String,
+    pub session_id: String,
+}
+
+impl IdentifyInput {
+    pub fn new(user_id: impl Into<String>, session_id: impl Into<String>) -> Self {
+        Self { user_id: user_id.into(), session_id: session_id.into() }
+    }
+}
+
+/// The answer to `events().identify`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct IdentifyResult {
+    /// How many of this session's past interactions now belong to `user_id`.
+    pub linked_interactions: u64,
+}
+
 // ---- Recommendations -----------------------------------------------------------------------------
 
 /// Send whatever you know: LIKYLY chooses the best strategy. Every field is optional.
@@ -357,4 +377,66 @@ pub struct SessionOptions {
     pub session_id: Option<String>,
     #[serde(default)]
     pub limit: Option<u32>,
+}
+
+// ---- Placements ----------------------------------------------------------------------------------
+
+/// What you know about the visitor and the page. Every field is optional: send what you have, the placement's
+/// configuration decides what to do with it.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct PlacementContext {
+    /// The product / article / listing currently being viewed.
+    #[serde(default)]
+    pub item_id: Option<String>,
+    #[serde(default)]
+    pub category_id: Option<String>,
+    #[serde(default)]
+    pub collection_id: Option<String>,
+    /// Identified visitor.
+    #[serde(default)]
+    pub user_id: Option<String>,
+    /// Stable anonymous visitor id - used like `session_id` when `session_id` is omitted.
+    #[serde(default)]
+    pub anonymous_id: Option<String>,
+    /// Anonymous browsing session.
+    #[serde(default)]
+    pub session_id: Option<String>,
+    #[serde(default)]
+    pub cart_item_ids: Option<Vec<String>>,
+    /// e.g. `"fr-FR"`.
+    #[serde(default)]
+    pub locale: Option<String>,
+    /// Anything else your placement's rules use. Keys are sent exactly as given.
+    #[serde(default)]
+    pub custom_context: Option<Properties>,
+}
+
+/// For `placements().recommend`. Only `placement` is required.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct PlacementRecommendOptions {
+    /// The placement's slug, e.g. `"pdp-related"`.
+    pub placement: String,
+    #[serde(default)]
+    pub context: Option<PlacementContext>,
+    /// Overrides the placement's own configured limit for this call.
+    #[serde(default)]
+    pub limit: Option<u32>,
+}
+
+impl PlacementRecommendOptions {
+    /// A call to `placement` with no context and the placement's own limit.
+    pub fn new(placement: impl Into<String>) -> Self {
+        Self { placement: placement.into(), ..Default::default() }
+    }
+}
+
+/// What `placements().recommend` returns.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PlacementRecommendResponse {
+    /// Send it back on the impression / click / add_to_cart / purchase events for these items.
+    pub recommendation_id: String,
+    pub placement: String,
+    /// What the placement actually used: `hybrid`, `content`, `collaborative`, `session` or `popular`.
+    pub strategy_used: String,
+    pub items: Vec<RecommendedItem>,
 }

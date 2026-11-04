@@ -6,8 +6,11 @@
 //	// Track what a visitor does
 //	_, err = client.Events.View(ctx, likyly.EventInput{UserID: "user_123", ItemID: "SKU-456"})
 //
-//	// Ask what to show them
-//	recs, err := client.Recommendations.Get(ctx, likyly.RecommendationRequest{UserID: "user_123", Placement: "homepage", Limit: 8})
+//	// Ask what to show them, for a placement configured once in LIKYLY
+//	recs, err := client.Placements.Recommend(ctx, likyly.PlacementRequest{
+//		Placement: "pdp-related",
+//		Context:   &likyly.PlacementContext{ItemID: "SKU-456", UserID: "user_123"},
+//	})
 //
 // There are two kinds of API key. The secret key is for your backend only (items, users, everything). The
 // public key is safe to expose in a web page but can only ask for recommendations and record events.
@@ -21,18 +24,20 @@ import (
 	"time"
 )
 
-// Client is the LIKYLY client. Four things to know:
+// Client is the LIKYLY client. Five things to know:
 //
 //	client.Items            your catalog
 //	client.Users            your users (optional)
 //	client.Events           what visitors do
-//	client.Recommendations  what to show them
+//	client.Placements       what to show them, where (recommended)
+//	client.Recommendations  what to show them, strategy by strategy (advanced)
 //
 // A Client is safe for concurrent use.
 type Client struct {
 	Items           *ItemsService
 	Users           *UsersService
 	Events          *EventsService
+	Placements      *PlacementsService
 	Recommendations *RecommendationsService
 }
 
@@ -107,6 +112,7 @@ func New(apiKey string, opts ...Option) (*Client, error) {
 		Items:           &ItemsService{c},
 		Users:           &UsersService{c},
 		Events:          &EventsService{c},
+		Placements:      &PlacementsService{c},
 		Recommendations: &RecommendationsService{c},
 	}, nil
 }

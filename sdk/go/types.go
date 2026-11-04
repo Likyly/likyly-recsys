@@ -139,6 +139,58 @@ type EventBatchResult struct {
 	Duplicates int `json:"duplicates"`
 }
 
+// IdentifyInput ties an anonymous session to the user who just signed in. Both fields are required.
+type IdentifyInput struct {
+	UserID    string `json:"userId"`
+	SessionID string `json:"sessionId"`
+}
+
+// IdentifyResult is the answer to Events.Identify.
+type IdentifyResult struct {
+	// LinkedInteractions is how many of the session's past interactions now belong to UserID.
+	LinkedInteractions int `json:"linkedInteractions"`
+}
+
+// ---- Placements ----------------------------------------------------------------------------------
+
+// PlacementContext is what you know about the visitor and the page. Every field is optional: send what you
+// have, the placement's configuration decides what to do with it.
+type PlacementContext struct {
+	// ItemID is the product / article / listing currently being viewed.
+	ItemID       string `json:"itemId,omitempty"`
+	CategoryID   string `json:"categoryId,omitempty"`
+	CollectionID string `json:"collectionId,omitempty"`
+	// UserID is the identified visitor.
+	UserID string `json:"userId,omitempty"`
+	// AnonymousID is a stable anonymous visitor id, used like SessionID when SessionID is empty.
+	AnonymousID string `json:"anonymousId,omitempty"`
+	// SessionID is the anonymous browsing session.
+	SessionID   string   `json:"sessionId,omitempty"`
+	CartItemIDs []string `json:"cartItemIds,omitempty"`
+	Locale      string   `json:"locale,omitempty"`
+	// CustomContext is passed through untouched - its keys are yours.
+	CustomContext map[string]any `json:"customContext,omitempty"`
+}
+
+// PlacementRequest asks one placement for recommendations. Only Placement is required.
+type PlacementRequest struct {
+	// Placement is the placement's slug, e.g. "pdp-related".
+	Placement string            `json:"placement"`
+	Context   *PlacementContext `json:"context,omitempty"`
+	// Limit overrides the placement's own configured limit for this call (0 = the placement's).
+	Limit int `json:"limit,omitempty"`
+}
+
+// PlacementResponse is what Placements.Recommend returns.
+type PlacementResponse struct {
+	// RecommendationID: send it back on the impression / click / add_to_cart / purchase events for these items.
+	RecommendationID string `json:"recommendationId"`
+	Placement        string `json:"placement"`
+	// StrategyUsed is what the placement actually used: hybrid, content, collaborative, session or popular.
+	StrategyUsed string            `json:"strategyUsed"`
+	Items        []RecommendedItem `json:"items"`
+}
+
 // ---- Recommendations -----------------------------------------------------------------------------
 
 // RecommendationRequest: send whatever you know and LIKYLY chooses the best strategy. Every field is optional.

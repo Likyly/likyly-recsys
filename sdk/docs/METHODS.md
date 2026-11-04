@@ -26,6 +26,8 @@ Names follow each language's conventions; `import` is a reserved word in Python 
 | events.addToCart | `addToCart` | `addToCart` | `add_to_cart` | `addToCart` | `AddToCartAsync` | `AddToCart` | `add_to_cart` | `add_to_cart` | P |
 | events.removeFromCart | `removeFromCart` | `removeFromCart` | `remove_from_cart` | `removeFromCart` | `RemoveFromCartAsync` | `RemoveFromCart` | `remove_from_cart` | `remove_from_cart` | P |
 | events.purchase | `purchase` | `purchase` | `purchase` | `purchase` | `PurchaseAsync` | `Purchase` | `purchase` | `purchase` | P |
+| events.identify | `identify` | `identify` | `identify` | `identify` | `IdentifyAsync` | `Identify` | `identify` | `identify` | P |
+| placements.recommend | `recommend` | `recommend` | `recommend` | `recommend` | `RecommendAsync` | `Recommend` | `recommend` | `recommend` | P |
 | recommendations.get | `get` | `get` | `get` | `get` | `GetAsync` | `Get` | `get` | `get` | P |
 | recommendations.popular | `popular` | `popular` | `popular` | `popular` | `PopularAsync` | `Popular` | `popular` | `popular` | P |
 | recommendations.similar | `similar` | `similar` | `similar` | `similar` | `SimilarAsync` | `Similar` | `similar` | `similar` | P |

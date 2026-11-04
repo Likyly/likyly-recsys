@@ -65,6 +65,23 @@ public sealed partial class EventsResource
     /// <summary>Set <c>EventId</c> (e.g. <c>purchase_{orderId}_{itemId}</c>) so a retry can never count the purchase twice.</summary>
     public Task<EventResult> PurchaseAsync(EventInput evt, CancellationToken ct = default) => TrackAsync("purchase", evt, ct);
 
+    /// <summary>
+    /// Call right after login or signup, once you know <c>UserId</c>, for the <c>SessionId</c> the visitor browsed under
+    /// anonymously: every past interaction of that session not already attributed to a user is reassigned to <c>UserId</c>, so
+    /// it counts as that user's history from then on. Safe to call more than once.
+    /// </summary>
+    public async Task<IdentifyResult> IdentifyAsync(IdentifyInput input, CancellationToken ct = default)
+    {
+        var body = new JsonObject
+        {
+            ["user_id"] = Support.RequireId(input?.UserId, "userId"),
+            ["session_id"] = Support.RequireId(input!.SessionId, "sessionId"),
+        };
+
+        // Only ever reassigns not-yet-attributed interactions: replaying it is harmless.
+        return Wire.Identify((await _http.RequestAsync(HttpMethod.Post, "/events/identify", null, body, true, ct).ConfigureAwait(false)).Data);
+    }
+
     private static string CheckType(string? type) =>
         type is not null && TypePattern().IsMatch(type)
             ? type

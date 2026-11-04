@@ -47,6 +47,23 @@ console.log(`strategy: ${recs.strategy}`);
 for (const item of recs.items) console.log(item.itemId, item.title);
 // endregion
 
+
+
+// region:placements
+// The recommended way: a placement ("pdp-related"...) is configured once in LIKYLY - strategy,
+// fallback, filters - and your page only says where it is and what it knows.
+const related = await likyly.placements.recommend({
+  placement: "pdp-related",
+  context: { itemId: "SKU-123", sessionId: "sess_abc" },
+  limit: 4,
+});
+console.log(`strategy used: ${related.strategyUsed}`);
+
+// When an anonymous visitor signs in, attach their session's history to their account.
+const { linkedInteractions } = await likyly.events.identify({ userId: "user_123", sessionId: "sess_abc" });
+console.log(`linked: ${linkedInteractions}`);
+
+// endregion
 // region:showcase
 // Les recommandations pour votre page : tout est optionnel, envoyez ce que vous savez.
 const productRecs = await likyly.recommendations.get({

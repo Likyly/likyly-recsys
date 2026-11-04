@@ -110,3 +110,20 @@ class RecommendationResponse:
     strategy: str
     items: List[RecommendedItem]
     placement: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class IdentifyResult:
+    #: How many of the anonymous session's past interactions were attached to the user.
+    linked_interactions: int
+
+
+@dataclass(frozen=True)
+class PlacementRecommendation:
+    """What a placement returned: the items, the strategy LIKYLY ran, and the id to attribute events with."""
+    #: Send it back on the impression / click / add_to_cart / purchase events for these items.
+    recommendation_id: str
+    placement: str
+    #: What LIKYLY used after any fallback, e.g. ``hybrid``, ``content``, ``popular``.
+    strategy_used: str
+    items: List["RecommendedItem"]

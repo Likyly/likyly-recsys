@@ -88,6 +88,27 @@ func main() {
 	}
 	// endregion
 
+	// region:placements
+	// The recommended way: a placement ("pdp-related"...) is configured once in LIKYLY - strategy,
+	// fallback, filters - and your page only says where it is and what it knows.
+	related, err := client.Placements.Recommend(ctx, likyly.PlacementRequest{
+		Placement: "pdp-related",
+		Context:   &likyly.PlacementContext{ItemID: "SKU-123", SessionID: "sess_abc"},
+		Limit:     4,
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println("strategy used:", related.StrategyUsed)
+
+	// When an anonymous visitor signs in, attach their session's history to their account.
+	linked, err := client.Events.Identify(ctx, likyly.IdentifyInput{UserID: "user_123", SessionID: "sess_abc"})
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println("linked:", linked.LinkedInteractions)
+
+	// endregion
 	// region:showcase
 	// Les recommandations pour votre page : tout est optionnel, envoyez ce que vous savez.
 	productRecs, err := client.Recommendations.Get(ctx, likyly.RecommendationRequest{

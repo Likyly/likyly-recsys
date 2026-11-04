@@ -78,6 +78,31 @@ func (s *EventsService) TrackMany(ctx context.Context, events []TypedEvent, opts
 	return &out, nil
 }
 
+// Identify ties an anonymous session to the user who just signed in (or signed up): the session's past
+// interactions now count for UserID. Call it once at login; calling it again is harmless, so it is retried.
+func (s *EventsService) Identify(ctx context.Context, in IdentifyInput, opts ...CallOption) (*IdentifyResult, error) {
+	userID, err := requireID(in.UserID, "UserID")
+	if err != nil {
+		return nil, err
+	}
+	sessionID, err := requireID(in.SessionID, "SessionID")
+	if err != nil {
+		return nil, err
+	}
+	// Only ever reassigns not-yet-attributed rows: replaying it is harmless.
+	resp, err := s.c.request(ctx, call{method: "POST", path: "/events/identify", body: map[string]any{"user_id": userID, "session_id": sessionID}, idempotent: true, opts: opts})
+	if err != nil {
+		return nil, err
+	}
+	var w struct {
+		LinkedInteractions int `json:"linked_interactions"`
+	}
+	if err := resp.decode(&w); err != nil {
+		return nil, err
+	}
+	return &IdentifyResult{LinkedInteractions: w.LinkedInteractions}, nil
+}
+
 // Impression: the item was shown to the visitor (send the RecommendationID it came with).
 func (s *EventsService) Impression(ctx context.Context, e EventInput, opts ...CallOption) (*EventResult, error) {
 	return s.Track(ctx, "impression", e, opts...)

@@ -1,16 +1,17 @@
 # frozen_string_literal: true
 
 module Likyly
-  # The LIKYLY client. Four things to know:
+  # The LIKYLY client. Five things to know:
   #
   #   client.items            your catalog
   #   client.users            your users (optional)
   #   client.events           what visitors do
-  #   client.recommendations  what to show them
+  #   client.placements       what to show them, where (the recommended way)
+  #   client.recommendations  what to show them, one call or one strategy at a time
   #
   # A client holds no connection state: it is safe to share between threads.
   class Client
-    attr_reader :items, :users, :events, :recommendations
+    attr_reader :items, :users, :events, :recommendations, :placements
 
     # @param api_key [String] Two kinds: the **secret** key (backend only: items, users, everything) and the
     #   **public** key (safe in a web page: recommendations and event tracking only). Never put the secret key
@@ -41,6 +42,7 @@ module Likyly
       @users = Users.new(http)
       @events = Events.new(http)
       @recommendations = Recommendations.new(http)
+      @placements = Placements.new(http)
     end
   end
 end
