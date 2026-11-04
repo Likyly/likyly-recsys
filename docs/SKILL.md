@@ -18,7 +18,7 @@ the developer's last message): never say both "not connected" and "connected". T
 exactly this, nothing more:
 
 ```
-**LIKYLY · ❌ Not connected** - Claude Code can't reach the LIKYLY MCP server.
+**✕ LIKYLY · Not connected** - Claude Code can't reach the LIKYLY MCP server.
 
 **Your account**
 - Account: <email>
@@ -177,8 +177,15 @@ commit only the files you changed (not their pending work), push the branch and 
 
 ## Phase 4: Verify
 
-1. `validate_integration` for the placement you just wired up.
-2. Report its checklist plainly (✓/⚠/✗ per check) - don't paraphrase it into "looks good."
+1. **Check the code you wrote**, with the project's own tools - never install new ones. Look at
+   `package.json` scripts (or the stack's equivalents: `composer`, `pyproject`, `Makefile`...) and
+   run, in this order, those that exist: types (`tsc --noEmit` or a `typecheck` script), lint
+   (`lint` script), tests (`test` script), build (`build` script). Fix every failure your changes
+   caused, then run the check again. A failure in a file you did not touch was already there:
+   leave it, and say so in the report. No test suite in the project: say so - don't add one
+   unless the developer asks.
+2. `validate_integration` for the placement you just wired up. Report every check in the
+   **Integration** table of the final report, with its count - don't paraphrase it into "looks good."
 3. For anything not `ok`: `get_recent_integration_events` if you need to see the actual rows
    behind a count, then fix the real cause (a missing call, a wrong `data_product_type`, a
    context key never sent) and validate again. A freshly-added event may need one real
@@ -197,33 +204,53 @@ copy per tab: open the page in a new tab to see the fresh recommendations. Never
 
 End every LIKYLY task - finished or stopped - with this report and nothing after it: a table
 the developer reads in five seconds, links to check for themselves, and the single next
-action. Write it in the developer's language. **20 lines at most** outside the table. No
+action. Write it in the developer's language. **20 lines at most** outside the tables. No
 narration of what you did, no tool names, no scopes, no explanations of how LIKYLY works,
 no list of optional clean-ups.
 
 ```
-**LIKYLY · <✅ Live | ⚠️ Not showing yet | ❌ Blocked>** - <reason in a few words, only if not ✅>
+**◆ LIKYLY · Live** - <one line: what now works, e.g. "recommendations on the shoe product pages">
 
 | | | |
 |---|---|---|
-| ✅ | Catalog | <catalog> · <N> products |
-| ✅ | Recommendations | "<placement title>" · <route> · <N> items |
-| ✅ | Tracking | <events, e.g. views, add to cart> |
-| ❌ | Display | <the one thing blocking, ≤ 8 words> |
+| ◆ | Catalog | <catalog> · <N> products in LIKYLY |
+| ◆ | Recommendations | "<placement title>" · `<route>` · <N> items |
+| ◆ | Tracking | <events, e.g. views, clicks, add to bag> |
 
-**Review** (nothing committed · branch `<branch>`)
+**Code checks** · on the files I changed
+| | Check | Result |
+|---|---|---|
+| ◆ | Types · `<command>` | no error |
+| ◆ | Lint · `<command>` | no error |
+| ◇ | Tests | no test suite in this project |
+| ◆ | Build · `<command>` | passes |
+
+**Integration** · what LIKYLY received from your site, last 24 h
+| | Check | Seen |
+|---|---|---|
+| ◆ | Recommendations requested | <N> |
+| ◆ | Current product sent | <N> |
+| ◆ | Visitor session sent | <N> |
+| ◆ | Shown (impressions) | <N> |
+| ◆ | Clicked | <N> |
+| ◆ | Product views | <N> |
+| ◆ | Add to cart | <N> |
+| ◇ | Purchases | 0 · <why, e.g. no checkout on this site> |
+
+**Review** · nothing committed · branch `<branch>`
 - <N> files: `<path>` (new), `<path>` (modified), ...
 - VS Code: Source Control (Ctrl/Cmd+Shift+G) shows each change side by side · or `git diff`
 - Keep it: ask me to commit and open a pull request · Drop it: `git switch <base> && git branch -D likyly/setup`
 
-**Check**
+**Check it yourself**
 - Your page: <exact local URL>
-- In LIKYLY: <console>/account/recommendations (status of each placement)
 - Your catalog: <console>/account/catalogues/<catalog>/parcourir
+- Your recommendations: <console>/account/recommendations
 
 **Your account**
 - Account: <email>
 - Workspace: <name>
+- Console: <console>
 
 **Commands**
 | Command | What it does |
@@ -235,11 +262,23 @@ no list of optional clean-ups.
 **Next:** <one action, in one short sentence>
 ```
 
-- One row per area, ✅ ⚠️ ❌ only, the detail column under ten words. Add a row only for
-  something that matters to the result (a missing purchase event when the shop has no
-  checkout is not a row: leave it out).
-- ✅ Live only when `validate_integration` shows recommendations requested and returned with
-  no ✗. A server error from LIKYLY (5xx) is ❌ Display.
+- **Marks** - LIKYLY's own, the same as the wizard's, never emoji: `◆` done · `◇` not yet or not
+  needed (say why in the detail) · `✕` blocked or failing. The title uses the same mark:
+  `◆ LIKYLY · Live`, `◇ LIKYLY · Not showing yet`, `✕ LIKYLY · Blocked` (then the reason in a few
+  words instead of what works).
+- **Summary table**: one row per area, the detail under ten words. Add a row only for something
+  that matters to the result.
+- **Catalog**: the product count comes from LIKYLY (the MCP tools), never from the site's own
+  files - it is what the developer will find in the console. If the two differ, say so in the
+  detail ("20 on the site, 18 in LIKYLY").
+- **Code checks**: one row per check you ran, with the exact command; `◇` with the reason for a
+  check the project does not have; `✕` with the first error when one still fails. A failure that
+  was already there before your changes: `◇` "fails already, not in my files". Never `◆` a check
+  you did not run.
+- **Integration**: every check `validate_integration` returned, in plain words, with its count.
+  `◇` for an event the site cannot send (a purchase without a checkout), with why.
+- `◆ Live` only when the code checks have no `✕` and `validate_integration` shows recommendations
+  requested and returned. A server error from LIKYLY (5xx) is `✕ Blocked`.
 - **Next** says what the developer does, in plain words, never an id or a code. For a LIKYLY
   server error: "Nothing to change in your code: LIKYLY's API fails on this placement. Reload the
   page once it is fixed, then ask me to check again." Give the request id only if the developer
@@ -247,11 +286,11 @@ no list of optional clean-ups.
 - **Review**: list every file you created or changed (from `git status --short`, minus what was
   already modified before you started), new ones marked "new". Leave out the "Drop it" hint when
   you worked on the developer's own branch. Not a git repository: list the files and skip the rest.
-- **Your account**: read the account and workspace from the comment lines of
-  `.likyly/credentials.env` (`# Account:`, `# Workspace:`); leave a line out if it is not there.
-  `<console>` is its `# Console:` line (e.g. `http://localhost:6001` when testing against a local
-  LIKYLY - the catalog only exists there), `https://www.likyly.com` when there is none.
-  The developer signs in to likyly.com with this account to see the catalog.
+- **Your account**: read the account, workspace and console from the comment lines of
+  `.likyly/credentials.env` (`# Account:`, `# Workspace:`, `# Console:`); leave a line out if it is
+  not there. `<console>` is the `# Console:` value (e.g. `http://localhost:6001` when testing
+  against a local LIKYLY - the catalog only exists there), `https://www.likyly.com` when there is
+  none. The developer signs in to that console with this account to see the catalog.
 - **Commands**: one row per command that exists in the project (`.claude/commands/likyly-*.md`),
   each with what it does in plain words. Outside Claude Code, use the terminal forms instead:
   `npx @likyly/wizard cache clear [placement]` and `npx @likyly/wizard uninstall`.
