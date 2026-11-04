@@ -7,9 +7,34 @@ description: Connect a catalog to LIKYLY, configure a recommendation placement, 
 
 LIKYLY has no chat of its own - **you are the interface**. Everything below is done through
 the LIKYLY MCP server's tools, which make real, live changes to the developer's LIKYLY
-account (they are not documentation lookups). If the MCP server isn't connected yet, tell the
-developer to add it (see `sdk/mcp/README.md` in the LIKYLY repo, or ask them for their MCP
-config) and stop - don't guess at endpoints or hand-write HTTP calls instead.
+account (they are not documentation lookups). If the LIKYLY tools aren't available, answer
+with the "Not connected" message below and stop - don't guess at endpoints or hand-write HTTP
+calls instead.
+
+### Not connected
+
+Check first that the `likyly` tools really are missing right now (they may have connected since
+the developer's last message): never say both "not connected" and "connected". Then answer with
+exactly this, nothing more:
+
+```
+**LIKYLY · ❌ Not connected** - Claude Code can't reach the LIKYLY MCP server.
+
+**Your account**
+- Account: <email>
+- Workspace: <name>
+
+**What to do**
+1. Type `/mcp`, choose `likyly`, then **Reconnect**.
+2. When it shows ✔ connected, send your request again.
+```
+
+- Account and workspace come from the comment lines of `.likyly/credentials.env`; leave the
+  block out if the file is missing - then step 1 is "Run `npx @likyly/wizard mcp add` in a
+  terminal, then restart Claude Code in this folder".
+- Don't diagnose: the server reads its key from `.likyly/credentials.env` by itself, so never ask
+  to export or `source` anything. If Reconnect fails, the developer pastes the error shown by
+  `/mcp` and only then you explain.
 
 ## Critical rules
 
@@ -189,12 +214,17 @@ no list of optional clean-ups.
 - In LIKYLY: https://www.likyly.com/account/recommendations (status of each placement)
 - Your catalog: https://www.likyly.com/account/catalogues/<catalog>/parcourir
 
-**Your setup**
-- Account: <email> · workspace <name> - sign in to likyly.com with it to see this catalog
-- Cache: LIKYLY keeps an anonymous visitor's answer 1 h per product, the browser 1 h per tab; both refresh on their own when the catalog or the placement changes
-- Commands: `/likyly-clear-cache [placement]` · `/likyly-uninstall` · in a terminal: `npx @likyly/wizard cache clear` · `npx @likyly/wizard uninstall`
+**Your account**
+- Account: <email>
+- Workspace: <name>
 
-**Next:** <one action, who does it (you / LIKYLY)>
+**Commands**
+| Command | What it does |
+|---|---|
+| `/likyly-clear-cache [placement]` | Shows fresh recommendations right away (otherwise they refresh within the hour) |
+| `/likyly-uninstall` | Removes LIKYLY from this project, after showing what it will remove |
+
+**Next:** <one action, in one short sentence>
 ```
 
 - One row per area, ✅ ⚠️ ❌ only, the detail column under ten words. Add a row only for
@@ -209,12 +239,14 @@ no list of optional clean-ups.
 - **Review**: list every file you created or changed (from `git status --short`, minus what was
   already modified before you started), new ones marked "new". Leave out the "Drop it" hint when
   you worked on the developer's own branch. Not a git repository: list the files and skip the rest.
-- **Your setup**: read the account and workspace from the comment lines of
-  `.likyly/credentials.env` (`# Account:`, `# Workspace:`); leave the line out if they are not
-  there. List only the commands that exist in the project (`.claude/commands/likyly-*.md`); the
-  two terminal commands always exist.
-- **Next** is the single most useful action. If you made a mistake along the way (a file
-  changed by accident), it goes there instead, in one line.
+- **Your account**: read the account and workspace from the comment lines of
+  `.likyly/credentials.env` (`# Account:`, `# Workspace:`); leave a line out if it is not there.
+  The developer signs in to likyly.com with this account to see the catalog.
+- **Commands**: one row per command that exists in the project (`.claude/commands/likyly-*.md`),
+  each with what it does in plain words. Outside Claude Code, use the terminal forms instead:
+  `npx @likyly/wizard cache clear [placement]` and `npx @likyly/wizard uninstall`.
+- **Next** is the single most useful action, in one sentence, with no explanation of causes. If
+  you made a mistake along the way (a file changed by accident), it goes there instead.
 - The developer can ask for details: then, and only then, explain.
 
 ## Example: one prompt, the whole thing

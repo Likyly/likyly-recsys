@@ -316,3 +316,21 @@ test("review: only what changed after the snapshot is listed, on the likyly/setu
   assert.deepEqual(git.ignored(dir, [".env.local"]), [".env.local"]);
   assert.equal(readFileSync(join(dir, "app/page.tsx"), "utf8"), "a\nmine\n", "pending work untouched");
 });
+
+test("mcp: LIKYLY_API_URL and LIKYLY_MCP_SERVER give a local server config", async () => {
+  const { serverEntry } = await import("../src/mcp.mjs");
+  process.env.LIKYLY_API_URL = "http://127.0.0.1:6061/";
+  process.env.LIKYLY_MCP_SERVER = "/abs/sdk/mcp/dist/index.js";
+  try {
+    const e = serverEntry("claude-code");
+    assert.equal(e.command, "node");
+    assert.deepEqual(e.args, ["/abs/sdk/mcp/dist/index.js"]);
+    assert.equal(e.env.LIKYLY_BASE_URL, "http://127.0.0.1:6061");
+  } finally {
+    delete process.env.LIKYLY_API_URL;
+    delete process.env.LIKYLY_MCP_SERVER;
+  }
+  const prod = serverEntry("claude-code");
+  assert.equal(prod.command, "npx");
+  assert.equal(prod.env.LIKYLY_BASE_URL, "https://api.likyly.com");
+});

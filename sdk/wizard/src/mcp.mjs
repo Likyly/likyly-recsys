@@ -10,6 +10,19 @@ export const HOSTED_MCP_URL = "https://mcp.likyly.com/mcp";
 export const KEY_ENV = "LIKYLY_DEVELOPER_KEY";
 const STDIO = { command: "npx", args: ["-y", "-p", MCP_PACKAGE, "likyly-mcp-server"] };
 
+/**
+ * Testing against a local LIKYLY: LIKYLY_API_URL (also used by the verify step) becomes the
+ * server's LIKYLY_BASE_URL, and LIKYLY_MCP_SERVER (a path to a built dist/index.js) replaces
+ * the npm package. Unset, the config points at production through npx.
+ */
+function stdioCommand() {
+  const local = process.env.LIKYLY_MCP_SERVER?.trim();
+  return local ? { command: "node", args: [local] } : { ...STDIO, args: [...STDIO.args] };
+}
+function apiBaseUrl() {
+  return (process.env.LIKYLY_API_URL?.trim() || "https://api.likyly.com").replace(/\/+$/, "");
+}
+
 export const CREDENTIALS_FILE = ".likyly/credentials.env";
 
 /**
@@ -29,11 +42,11 @@ export function serverEntry(editor, { hosted = false } = {}) {
     const entry = { url: HOSTED_MCP_URL, headers: { Authorization: `Bearer ${ref}` } };
     return editor === "cursor" ? entry : { type: "http", ...entry };
   }
-  const env = { LIKYLY_API_KEY: ref, LIKYLY_BASE_URL: "https://api.likyly.com" };
+  const env = { LIKYLY_API_KEY: ref, LIKYLY_BASE_URL: apiBaseUrl() };
   // Claude Code starts the server in the project folder, where the relative default resolves;
   // Cursor and VS Code get the absolute path through their ${workspaceFolder} variable.
   if (editor !== "claude-code") env.LIKYLY_ENV_FILE = `\${workspaceFolder}/${CREDENTIALS_FILE}`;
-  const entry = { ...STDIO, args: [...STDIO.args], env };
+  const entry = { ...stdioCommand(), env };
   return editor === "vscode" ? { type: "stdio", ...entry } : entry;
 }
 
