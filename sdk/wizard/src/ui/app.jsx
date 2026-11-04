@@ -224,7 +224,11 @@ function App({ opts: initialOpts, result }) {
   const [compat] = useState(() => checkCompat(opts.dir, project));
   // Git: where the developer was, and what was already modified, so the end of the run can show
   // exactly what LIKYLY changed (and work on its own branch if they want).
-  const [repo] = useState(() => (git.isRepo(opts.dir) ? { branch: git.currentBranch(opts.dir), before: git.snapshot(opts.dir) } : null));
+  const [repo] = useState(() =>
+    git.isRepo(opts.dir)
+      ? { branch: git.currentBranch(opts.dir), name: git.repoName(opts.dir), branchExists: git.branchExists(opts.dir), before: git.snapshot(opts.dir) }
+      : null,
+  );
   const workBranch = useRef(repo?.branch ?? null);
   const [log, setLog] = useState([]);
   const keys = useRef({ publicKey: opts.publicKey || null, devKey: null });
@@ -300,23 +304,40 @@ function App({ opts: initialOpts, result }) {
   }
 
   const detected = detectEditors(opts.dir);
+  // In a git repository, offer a branch of its own so the developer can review before merging.
+  const offerBranch = Boolean(repo && !opts.dryRun && repo.branch !== git.BRANCH);
+  const current = repo?.branch ?? "the current branch";
   const body = {
     plan: () => (
       <>
         <PlanCard project={project} rows={describePlan(opts, project)} compat={compat} />
         <Box height={1} />
+        {offerBranch ? (
+          <Box flexDirection="column" marginBottom={1}>
+            <Text>
+              Where should LIKYLY make its changes? <Text color={C.muted}>(it never commits)</Text>
+            </Text>
+            <Text color={C.muted}>
+              Your project {repo.name ? <Text bold>{repo.name}</Text> : "here"} is a git repository, on branch <Text bold>{current}</Text>.
+            </Text>
+          </Box>
+        ) : null}
         <Select
           items={[
-            ...(repo && !opts.dryRun && repo.branch !== git.BRANCH
+            ...(offerBranch
               ? [
-                  { label: `Set it up on a new branch ${git.BRANCH}`, value: "branch", hint: `from ${repo.branch ?? "here"} · review before you merge` },
-                  { label: `Set it up on ${repo.branch ?? "the current branch"}`, value: "go" },
+                  {
+                    label: repo.branchExists ? `On the branch ${git.BRANCH} (recommended)` : `On a new branch ${git.BRANCH} (recommended)`,
+                    value: "branch",
+                    hint: repo.branchExists ? `already there; ${current} stays as is` : `from ${current}, which stays as is`,
+                  },
+                  { label: `Directly on ${current}`, value: "go", hint: "the branch you are on" },
                 ]
               : [{ label: "Set it up", value: "go", hint: opts.dryRun ? "(dry run)" : undefined }]),
             ...(installMode(opts, project) === "run"
-              ? [{ label: repo && !opts.dryRun && repo.branch !== git.BRANCH ? "Same as the first, but skip the package install" : "Set it up, but skip the package install", value: "noinstall" }]
+              ? [{ label: offerBranch ? "Same as the first, but skip the package install" : "Set it up, but skip the package install", value: "noinstall" }]
               : []),
-            { label: "Cancel", value: "cancel" },
+            { label: "Cancel", value: "cancel", hint: "change nothing" },
           ]}
           onSubmit={(v) => {
             if (v === "cancel") {
@@ -326,12 +347,16 @@ function App({ opts: initialOpts, result }) {
             }
             if (v === "noinstall") opts.install = false;
             const results = [];
-            const onBranch = v === "branch" || (v === "noinstall" && repo && !opts.dryRun && repo.branch !== git.BRANCH);
+            const onBranch = v === "branch" || (v === "noinstall" && offerBranch);
             if (onBranch) {
               const made = git.createBranch(opts.dir);
               if (made.ok) {
                 workBranch.current = git.BRANCH;
-                results.push({ level: "ok", text: `${made.existed ? "Back on" : "On a new"} branch ${git.BRANCH}`, hint: `(from ${repo.branch ?? "HEAD"}; your pending changes came along, untouched)` });
+                results.push({
+                  level: "ok",
+                  text: `${made.existed ? "Back on the branch" : "On a new branch"} ${git.BRANCH}${repo.name ? ` in ${repo.name}` : ""}`,
+                  hint: made.existed ? "(your pending changes came along, untouched)" : `(created from ${repo.branch ?? "HEAD"}; your pending changes came along, untouched)`,
+                });
               } else results.push({ level: "warn", text: `Could not create ${git.BRANCH}: staying on ${repo.branch}` });
             }
             finish("plan", results, v === "noinstall" ? "approved, no package install" : `approved${workBranch.current ? ` · branch ${workBranch.current}` : ""}`, "done");

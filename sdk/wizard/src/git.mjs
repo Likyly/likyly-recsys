@@ -22,6 +22,17 @@ export function currentBranch(dir) {
   return git(dir, ["branch", "--show-current"])?.trim() || null;
 }
 
+/** The repository's folder name (e.g. "my-shop"), to say which repository the branch goes in. */
+export function repoName(dir) {
+  const top = git(dir, ["rev-parse", "--show-toplevel"])?.trim();
+  return top ? top.split(/[\\/]/).pop() : null;
+}
+
+/** Whether the setup branch already exists (the wizard ran here before). */
+export function branchExists(dir) {
+  return git(dir, ["rev-parse", "--verify", "--quiet", `refs/heads/${BRANCH}`]) !== null;
+}
+
 /** `{ path: "M" | "A" | "D" | "?" }` for every changed or untracked (not ignored) file. */
 export function changedFiles(dir) {
   const out = git(dir, ["status", "--porcelain", "--untracked-files=all"]);
