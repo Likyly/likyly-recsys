@@ -43,6 +43,46 @@ export function createLikylyAdminTools(server: McpServer, client: LikylyClient):
   );
 
   server.tool(
+    "update_data_source",
+    "Change an existing data source instead of creating another one (the Free plan allows a single source): its name, `config` (merged shallowly: send only the keys that change, e.g. a new base_url), `credentials` (fully replaced) or `product_type`. Use it when a source points at an old URL or catalog. Run test_data_source afterwards.",
+    {
+      data_source_id: dataSourceId,
+      name: z.string().min(1).max(200).optional(),
+      product_type: z.string().min(1).max(64).regex(/^[a-zA-Z0-9_-]+$/).optional(),
+      config: z.record(z.unknown()).optional(),
+      credentials: z.record(z.unknown()).optional(),
+      sync_mode: z.enum(["full", "incremental"]).optional(),
+    },
+    async ({ data_source_id, ...input }) => textResult(await client.updateDataSource(data_source_id, input)),
+  );
+
+  server.tool(
+    "delete_data_source",
+    "Delete a data source's configuration and sync history - catalog items it already wrote stay in place. Frees the slot on plans limited to one source. Irreversible: confirm with the developer first, and prefer update_data_source when the source only needs a new URL or catalog.",
+    { data_source_id: dataSourceId },
+    async ({ data_source_id }) => textResult(await client.deleteDataSource(data_source_id)),
+  );
+
+  server.tool(
+    "push_items",
+    "Send catalog items to a push-mode source (type 'webhook'), up to 1000 per call. This is the way to load a catalog LIKYLY cannot fetch - a site on localhost, behind a VPN, or data only in the codebase: read the products from the project (API route, JSON, database seed), map them to item objects, push them. `push_secret` comes from create_data_source's response (shown once) or rotate_push_secret. `deleted_ids` removes items.",
+    {
+      data_source_id: dataSourceId,
+      push_secret: z.string().min(1),
+      items: z.array(z.record(z.unknown())).max(1000),
+      deleted_ids: z.array(z.string()).max(1000).optional(),
+    },
+    async ({ data_source_id, push_secret, items, deleted_ids }) => textResult(await client.pushItems(data_source_id, push_secret, items, deleted_ids)),
+  );
+
+  server.tool(
+    "rotate_push_secret",
+    "Issue a new push secret for a push-mode source (the old one stops working) - use it when the secret from create_data_source was lost, then call push_items with the new one.",
+    { data_source_id: dataSourceId },
+    async ({ data_source_id }) => textResult(await client.rotatePushSecret(data_source_id)),
+  );
+
+  server.tool(
     "test_data_source",
     "Step 3: validates that this source's credentials/config actually reach it - never writes any catalog data. Always returns ok:true/false with a message (never throws for a bad connection), so you can report exactly why a connection failed.",
     { data_source_id: dataSourceId },

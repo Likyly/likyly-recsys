@@ -10,12 +10,18 @@ export const HOSTED_MCP_URL = "https://mcp.likyly.com/mcp";
 export const KEY_ENV = "LIKYLY_DEVELOPER_KEY";
 const STDIO = { command: "npx", args: ["-y", "-p", MCP_PACKAGE, "likyly-mcp-server"] };
 
-/** The `likyly` server entry for one editor, local (stdio via npx) or hosted (HTTP). */
+export const CREDENTIALS_FILE = ".likyly/credentials.env";
+
+/**
+ * The `likyly` server entry for one editor, local (stdio via npx) or hosted (HTTP). The key is
+ * never in the file: the server reads LIKYLY_DEVELOPER_KEY from the environment when it is
+ * exported, otherwise from the gitignored credentials file the wizard writes.
+ */
 export function serverEntry(editor, { hosted = false } = {}) {
   const ref = {
-    "claude-code": `\${${KEY_ENV}}`,
+    "claude-code": `\${${KEY_ENV}:-}`,
     cursor: `\${env:${KEY_ENV}}`,
-    vscode: "${input:likyly-developer-key}",
+    vscode: `\${env:${KEY_ENV}}`,
   }[editor];
   if (!ref) throw new Error(`unknown editor: ${editor}`);
 
@@ -23,16 +29,16 @@ export function serverEntry(editor, { hosted = false } = {}) {
     const entry = { url: HOSTED_MCP_URL, headers: { Authorization: `Bearer ${ref}` } };
     return editor === "cursor" ? entry : { type: "http", ...entry };
   }
-  const entry = { ...STDIO, args: [...STDIO.args], env: { LIKYLY_API_KEY: ref, LIKYLY_BASE_URL: "https://api.likyly.com" } };
+  const env = { LIKYLY_API_KEY: ref, LIKYLY_BASE_URL: "https://api.likyly.com" };
+  // Claude Code starts the server in the project folder, where the relative default resolves;
+  // Cursor and VS Code get the absolute path through their ${workspaceFolder} variable.
+  if (editor !== "claude-code") env.LIKYLY_ENV_FILE = `\${workspaceFolder}/${CREDENTIALS_FILE}`;
+  const entry = { ...STDIO, args: [...STDIO.args], env };
   return editor === "vscode" ? { type: "stdio", ...entry } : entry;
 }
 
-const VSCODE_INPUT = {
-  type: "promptString",
-  id: "likyly-developer-key",
-  description: "Clé développeur LIKYLY (www.likyly.com/account/keys)",
-  password: true,
-};
+// Earlier wizard versions asked VS Code to prompt for the key; that input is removed on update.
+const LEGACY_VSCODE_INPUT = "likyly-developer-key";
 
 /**
  * Merge the `likyly` server into an existing config object (other servers untouched).
@@ -44,9 +50,9 @@ export function mergeConfig(editor, existing, opts) {
   config[key] = config[key] && typeof config[key] === "object" ? config[key] : {};
   const replaced = Boolean(config[key].likyly);
   config[key].likyly = serverEntry(editor, opts);
-  if (editor === "vscode") {
-    const inputs = Array.isArray(config.inputs) ? config.inputs.filter((i) => i?.id !== VSCODE_INPUT.id) : [];
-    config.inputs = [...inputs, VSCODE_INPUT];
+  if (editor === "vscode" && Array.isArray(config.inputs)) {
+    config.inputs = config.inputs.filter((i) => i?.id !== LEGACY_VSCODE_INPUT);
+    if (!config.inputs.length) delete config.inputs;
   }
   return { config, replaced };
 }
@@ -65,7 +71,7 @@ export function writeMcpConfig(dir, editor, { hosted = false, dryRun = false } =
     try {
       existing = raw.trim() ? JSON.parse(raw) : null;
     } catch {
-      throw new Error(`${path} n'est pas du JSON valide (commentaires ?) : ajoutez le serveur à la main`);
+      throw new Error(`${path} is not valid JSON (comments?): add the likyly server by hand`);
     }
   }
   const { config, replaced } = mergeConfig(editor, existing, { hosted });

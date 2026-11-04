@@ -1,5 +1,0 @@
-outs:
-- md5: ef5f9f13121fa57e8e363418437f49b2
-  size: 28858
-  hash: md5
-  path: shoes_users_rating_model.pth

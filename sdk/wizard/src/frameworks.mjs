@@ -106,7 +106,7 @@ const JS_RULES = [
   { id: "react", label: "React", match: (d) => d.react, react: true, envFile: ".env", envVar: "LIKYLY_KEY", starter: () => null },
   {
     id: "node",
-    label: "Node.js (serveur)",
+    label: "Node.js (server)",
     match: (d) => d.express || d.fastify || d.koa || d.hono || d["@nestjs/core"],
     envFile: ".env",
     envVar: "LIKYLY_KEY",
@@ -208,7 +208,7 @@ function detectOthers(dir) {
   }
   if (has(dir, "pom.xml", "build.gradle", "build.gradle.kts")) {
     // Editing a pom.xml/Gradle build safely is not a one-liner: print the coordinates.
-    return { id: "java", label: "Java", language: "java", sdkDocs: "java", packages: ["com.likyly:likyly-sdk"], install: { cmd: ["# ajoutez la dépendance", "com.likyly:likyly-sdk"], run: false }, envFile: null, envVar: null, starter: null };
+    return { id: "java", label: "Java", language: "java", sdkDocs: "java", packages: ["com.likyly:likyly-sdk"], install: { cmd: ["# add the dependency", "com.likyly:likyly-sdk"], run: false }, envFile: null, envVar: null, starter: null };
   }
   return null;
 }

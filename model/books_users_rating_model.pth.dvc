@@ -1,5 +1,0 @@
-outs:
-- md5: bb3f1a68085b902a0bcb0910fde5e7d5
-  size: 28922
-  hash: md5
-  path: books_users_rating_model.pth

@@ -1,7 +1,2 @@
-/users_rating_model.pth
-/movies_users_rating_model.pth
-/books_users_rating_model.pth
-/shoes_users_rating_model.pth
-/books_users_rating_metrics.json
-/movies_users_rating_metrics.json
-/shoes_users_rating_metrics.json
+/client_*/*.npz
+*_users_rating_metrics.json

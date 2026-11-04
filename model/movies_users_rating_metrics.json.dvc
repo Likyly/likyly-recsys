@@ -1,5 +1,0 @@
-outs:
-- md5: 38b7283c9b3834d0b376991fe29c8ac2
-  size: 590
-  hash: md5
-  path: movies_users_rating_metrics.json

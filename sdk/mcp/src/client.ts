@@ -108,6 +108,26 @@ export class LikylyClient {
     return this.request("GET", `/data-sources/${dataSourceId}`);
   }
 
+  async updateDataSource(dataSourceId: number, input: Record<string, unknown>) {
+    return this.request("PATCH", `/data-sources/${dataSourceId}`, { body: input });
+  }
+
+  async deleteDataSource(dataSourceId: number) {
+    return this.request("DELETE", `/data-sources/${dataSourceId}`);
+  }
+
+  /** Push-mode sources (webhook, woocommerce): authenticated by the source's push secret. */
+  async pushItems(dataSourceId: number, pushSecret: string, items: Record<string, unknown>[], deletedIds: string[] = []) {
+    return this.request("POST", `/data-sources/${dataSourceId}/push`, {
+      body: { items, deleted_ids: deletedIds },
+      headers: { "X-Push-Secret": pushSecret },
+    });
+  }
+
+  async rotatePushSecret(dataSourceId: number) {
+    return this.request("POST", `/data-sources/${dataSourceId}/push-secret/rotate`);
+  }
+
   async testDataSource(dataSourceId: number) {
     return this.request("POST", `/data-sources/${dataSourceId}/test`);
   }
@@ -210,7 +230,7 @@ export class LikylyClient {
     });
   }
 
-  private async request(method: string, path: string, opts: { query?: Query; body?: unknown } = {}) {
+  private async request(method: string, path: string, opts: { query?: Query; body?: unknown; headers?: Record<string, string> } = {}) {
     const url = new URL(this.baseUrl + path);
     if (opts.query) {
       for (const [key, value] of Object.entries(opts.query)) {
@@ -218,7 +238,7 @@ export class LikylyClient {
       }
     }
 
-    const headers: Record<string, string> = { "X-API-Key": this.apiKey };
+    const headers: Record<string, string> = { "X-API-Key": this.apiKey, ...opts.headers };
     if (opts.body !== undefined) headers["Content-Type"] = "application/json";
 
     const response = await fetch(url.toString(), {

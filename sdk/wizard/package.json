@@ -1,6 +1,6 @@
 {
   "name": "@likyly/wizard",
-  "version": "0.1.0",
+  "version": "0.4.3",
   "description": "Install LIKYLY in one command: detects your framework, installs the SDK, writes your public key and connects your AI coding assistant (Claude Code, Cursor, VS Code) to the LIKYLY MCP server.",
   "type": "module",
   "bin": {
@@ -9,15 +9,24 @@
   },
   "files": [
     "bin",
-    "src",
+    "dist",
     "skill"
   ],
   "scripts": {
+    "build": "node build.mjs",
+    "pretest": "npm run build",
     "test": "node --test test/*.test.mjs",
-    "prepack": "mkdir -p skill && cp ../../docs/SKILL.md skill/SKILL.md"
+    "prepack": "npm run build && mkdir -p skill && cp ../../docs/SKILL.md skill/SKILL.md"
   },
   "engines": {
-    "node": ">=18.17"
+    "node": ">=22"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "devDependencies": {
+    "esbuild": "^0.28.2",
+    "ink": "^8.0.0",
+    "ink-spinner": "^5.0.0",
+    "ink-text-input": "^6.0.0",
+    "react": "^19.3.1"
+  }
 }

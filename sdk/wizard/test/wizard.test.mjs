@@ -9,6 +9,7 @@ import { detectProject, detectEditors } from "../src/frameworks.mjs";
 import { mergeConfig, writeMcpConfig } from "../src/mcp.mjs";
 import { isServerOnlyKey, writeEnv, writeStarter } from "../src/setup.mjs";
 import { parseArgs } from "../src/cli.mjs";
+import { describePlan, installMode } from "../src/actions.mjs";
 
 const BIN = fileURLToPath(new URL("../bin/likyly-wizard.mjs", import.meta.url));
 
@@ -69,12 +70,14 @@ test("MCP config keeps other servers and never contains a literal key", () => {
   const { config, replaced } = mergeConfig("claude-code", existing, {});
   assert.equal(replaced, false);
   assert.deepEqual(config.mcpServers.other, { command: "x" });
-  assert.equal(config.mcpServers.likyly.env.LIKYLY_API_KEY, "${LIKYLY_DEVELOPER_KEY}");
-  assert.equal(mergeConfig("cursor", null, {}).config.mcpServers.likyly.env.LIKYLY_API_KEY, "${env:LIKYLY_DEVELOPER_KEY}");
+  assert.equal(config.mcpServers.likyly.env.LIKYLY_API_KEY, "${LIKYLY_DEVELOPER_KEY:-}");
+  const cursor = mergeConfig("cursor", null, {}).config.mcpServers.likyly.env;
+  assert.equal(cursor.LIKYLY_API_KEY, "${env:LIKYLY_DEVELOPER_KEY}");
+  assert.equal(cursor.LIKYLY_ENV_FILE, "${workspaceFolder}/.likyly/credentials.env");
 
-  const vs = mergeConfig("vscode", { inputs: [{ id: "keep" }] }, {}).config;
+  const vs = mergeConfig("vscode", { inputs: [{ id: "keep" }, { id: "likyly-developer-key" }] }, {}).config;
   assert.equal(vs.servers.likyly.type, "stdio");
-  assert.deepEqual(vs.inputs.map((i) => i.id), ["keep", "likyly-developer-key"]);
+  assert.deepEqual(vs.inputs.map((i) => i.id), ["keep"], "the old key prompt is dropped");
 
   const hosted = mergeConfig("claude-code", null, { hosted: true }).config.mcpServers.likyly;
   assert.equal(hosted.type, "http");
@@ -83,7 +86,7 @@ test("MCP config keeps other servers and never contains a literal key", () => {
 
 test("writeMcpConfig refuses to clobber an unparseable file", () => {
   const dir = project({ ".mcp.json": "{ // comment\n}" });
-  assert.throws(() => writeMcpConfig(dir, "claude-code"), /JSON valide/);
+  assert.throws(() => writeMcpConfig(dir, "claude-code"), /not valid JSON/);
 });
 
 test("server-only keys are recognised", () => {
@@ -95,10 +98,13 @@ test("server-only keys are recognised", () => {
 test("env and starter writes are additive", () => {
   const dir = project({ ".env.local": "OTHER=1" });
   assert.equal(writeEnv(dir, ".env.local", "NEXT_PUBLIC_LIKYLY_KEY", "pk_1").status, "added");
-  assert.equal(writeEnv(dir, ".env.local", "NEXT_PUBLIC_LIKYLY_KEY", "pk_2").status, "exists");
+  assert.equal(writeEnv(dir, ".env.local", "NEXT_PUBLIC_LIKYLY_KEY", "pk_1").status, "same");
+  const upd = writeEnv(dir, ".env.local", "NEXT_PUBLIC_LIKYLY_KEY", "pk_2");
+  assert.deepEqual([upd.status, upd.previous], ["updated", "pk_1"], "a regenerated key replaces the dead one");
   const env = readFileSync(join(dir, ".env.local"), "utf8");
   assert.match(env, /^OTHER=1\n/);
-  assert.match(env, /NEXT_PUBLIC_LIKYLY_KEY=pk_1\n$/);
+  assert.match(env, /NEXT_PUBLIC_LIKYLY_KEY=pk_2\n$/);
+  assert.equal(env.match(/NEXT_PUBLIC_LIKYLY_KEY/g).length, 1);
 
   const starter = { path: "src/likyly.ts", template: "vanilla", envExpr: "import.meta.env.VITE_LIKYLY_KEY" };
   assert.equal(writeStarter(dir, starter).status, "created");
@@ -109,9 +115,9 @@ test("env and starter writes are additive", () => {
 test("argument parsing", () => {
   assert.equal(parseArgs(["mcp", "add"]).command, "mcp");
   assert.deepEqual(parseArgs(["--editor", "cursor,vscode"]).editors, ["cursor", "vscode"]);
-  assert.throws(() => parseArgs(["--editor", "emacs"]), /éditeur inconnu/);
-  assert.throws(() => parseArgs(["--nope"]), /option inconnue/);
-  assert.throws(() => parseArgs(["--public-key", " sk_live_x"]), /clé secrète/);
+  assert.throws(() => parseArgs(["--editor", "emacs"]), /unknown editor/);
+  assert.throws(() => parseArgs(["--nope"]), /unknown option/);
+  assert.throws(() => parseArgs(["--public-key", " sk_live_x"]), /secret or developer key/);
   assert.equal(parseArgs(["--public-key", "pk_live_x"]).publicKey, "pk_live_x");
 });
 
@@ -123,7 +129,7 @@ test("end to end: --dry-run writes nothing", () => {
   const dir = project({ ...pkg({ next: "16", react: "19" }), "app/": "" });
   const res = runCli(["--yes", "--dry-run", "--public-key", "pk_test", "--dir", dir], dir);
   assert.equal(res.status, 0, res.stderr);
-  assert.match(res.stdout, /Next\.js détecté/);
+  assert.match(res.stdout, /✓ Next\.js/);
   assert.equal(existsSync(join(dir, ".env.local")), false);
   assert.equal(existsSync(join(dir, ".mcp.json")), false);
 });
@@ -143,7 +149,7 @@ test("end to end: a secret key is refused before anything is written", () => {
     const dir = project({ ...pkg({ react: "19", vite: "6" }) });
     const res = runCli(["--yes", "--no-install", "--public-key", key, "--dir", dir], dir);
     assert.equal(res.status, 2, "exits with an error so CI notices it");
-    assert.match(res.stderr, /clé secrète ou développeur/);
+    assert.match(res.stderr, /secret or developer key/);
     assert.equal(existsSync(join(dir, ".env.local")), false);
     assert.equal(existsSync(join(dir, ".mcp.json")), false, "no step runs");
     assert.equal(existsSync(join(dir, "src/likyly.ts")), false, "no step runs");
@@ -156,4 +162,58 @@ test("end to end: mcp add for Claude Code installs the skill", () => {
   assert.equal(res.status, 0, res.stderr);
   assert.ok(existsSync(join(dir, ".mcp.json")));
   assert.match(readFileSync(join(dir, ".claude/skills/likyly/SKILL.md"), "utf8"), /name: likyly/);
+});
+
+test("the plan lists what will be run, written and connected", () => {
+  const dir = project({ ...pkg({ next: "16", react: "19" }), "app/": "" });
+  const p = detectProject(dir);
+  const opts = { dir, install: false, dryRun: false };
+  assert.equal(installMode(opts, p), "manual");
+  const rows = describePlan(opts, p);
+  assert.deepEqual(rows[0], ["Show", "npm install @likyly/sdk @likyly/react"]);
+  assert.deepEqual(rows[1], ["Key", "NEXT_PUBLIC_LIKYLY_KEY → .env.local"]);
+  assert.deepEqual(rows[2], ["Create", "components/likyly-provider.tsx"]);
+});
+
+test("everything the developer reads is in English", () => {
+  const dir = project({ ...pkg({ next: "16", react: "19" }), "app/": "" });
+  const res = runCli(["--yes", "--no-install", "--public-key", "pk_test", "--dir", dir], dir);
+  const written = ["components/likyly-provider.tsx", ".env.local"].map((f) => readFileSync(join(dir, f), "utf8")).join("\n");
+  for (const text of [res.stdout, written]) assert.doesNotMatch(text, /[éèàçù]|Généré|clé/);
+});
+
+test("compatibility reads installed versions first, then declared ranges", async () => {
+  const { checkCompat } = await import("../src/compat.mjs");
+  const dir = project({ ...pkg({ next: "^16.0.1", react: "^19.0.0" }), "node_modules/react/package.json": { version: "19.2.0" } });
+  const c = checkCompat(dir, detectProject(dir));
+  assert.deepEqual(c.items.slice(0, 2).map((i) => [i.label, i.version, i.ok]), [["Next.js", "16.0.1", true], ["React", "19.2.0", true]]);
+  assert.equal(c.ok, true);
+  const old = project(pkg({ next: "12.3.0", react: "17.0.2" }));
+  const o = checkCompat(old, detectProject(old));
+  assert.equal(o.ok, false);
+  assert.deepEqual(o.items.filter((i) => !i.ok).map((i) => i.label), ["Next.js", "React"]);
+});
+
+test("the developer key is stored outside git, readable by its owner only", async () => {
+  const { writeCredentials } = await import("../src/setup.mjs");
+  const { statSync } = await import("node:fs");
+  const dir = project({});
+  const { path } = writeCredentials(dir, "lk_test_123");
+  assert.match(readFileSync(path, "utf8"), /^LIKYLY_DEVELOPER_KEY=lk_test_123$/m);
+  assert.equal(readFileSync(join(dir, ".likyly/.gitignore"), "utf8").trim().split("\n").pop(), "*");
+  assert.equal(statSync(path).mode & 0o777, 0o600);
+});
+
+test("browser sign-in: state is checked, keys come back, server-only keys are refused", async () => {
+  const { startBrowserAuth } = await import("../src/auth.mjs");
+  const auth = await startBrowserAuth({ project: { label: "Next.js" }, dir: "/tmp/shop" });
+  const url = new URL(auth.url);
+  assert.equal(url.pathname, "/cli/auth");
+  assert.equal(url.searchParams.get("project"), "shop");
+  const post = (fields) => fetch(`http://127.0.0.1:${url.searchParams.get("port")}/callback`, { method: "POST", body: new URLSearchParams(fields) });
+  assert.equal((await post({ state: "nope", key: "pk_1" })).status, 400);
+  assert.equal((await post({ state: url.searchParams.get("state"), key: "sk_live_1" })).status, 400);
+  assert.equal((await post({ state: url.searchParams.get("state"), key: "pk_live_1", dev_key: "lk_dev_1", workspace: "Shop" })).status, 200);
+  assert.deepEqual(await auth.result, { key: "pk_live_1", devKey: "lk_dev_1", workspace: "Shop" });
+  auth.close();
 });
