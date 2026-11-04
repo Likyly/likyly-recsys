@@ -104,6 +104,38 @@ def _context_dict(context) -> dict[str, Any]:
     return context.model_dump(exclude_none=True, exclude_defaults=True) if context is not None else {}
 
 
+# The placement's filters (in stock, never the current item, categories...) run after the
+# strategy has ranked its candidates, so asking the engine for exactly `limit` items came back
+# short whenever one of them was filtered out. Ask for more, then top up with popular items.
+_CANDIDATE_MARGIN = 3
+
+
+def _rank_and_fill(client_id: int, placement: dict[str, Any], context_dict: dict[str, Any], limit: int, *, blend_session: bool) -> tuple[engine.PlacementResult, list[dict]]:
+    from recommender import present_records, rec_popular
+
+    product_type = placement["product_type"]
+    want = min(100, limit * _CANDIDATE_MARGIN)
+    result = engine.run_placement(placement, context_dict, want, client_id=client_id, blend_session=blend_session)
+    presented = apply_filters(
+        present_records(client_id, product_type, result.records, legacy=False, include_similar_users=False),
+        placement=placement, context=context_dict,
+    )[:limit]
+
+    if len(presented) < limit and result.strategy_used != "popular":
+        seen = {item["item_id"] for item in presented}
+        exclude = {int(r["work_id"]) for r in result.records if r.get("work_id") is not None}
+        extra = rec_popular(client_id, product_type, want, exclude_work_ids=exclude, catalog_fallback=True)
+        extra = apply_filters(
+            present_records(client_id, product_type, extra, legacy=False, include_similar_users=False),
+            placement=placement, context=context_dict,
+        )
+        added = [item for item in extra if item["item_id"] not in seen][: limit - len(presented)]
+        if added:
+            presented += added
+            result.warnings.append(f"'{result.strategy_used}' had {limit - len(added)} item(s) after filters - topped up with {len(added)} popular item(s)")
+    return result, presented
+
+
 def preview_placement(client_id: int, slug: str, context, limit: Optional[int]) -> dict[str, Any]:
     placement = _require(client_id, slug)
     context_dict = _context_dict(context)
@@ -119,14 +151,10 @@ def preview_placement(client_id: int, slug: str, context, limit: Optional[int]) 
 
     effective_limit = limit or placement["limit"]
     # Same answer as a real call: the Pro session mix included.
-    result = engine.run_placement(
-        placement, context_dict, effective_limit, client_id=client_id,
+    result, presented = _rank_and_fill(
+        client_id, placement, context_dict, effective_limit,
         blend_session=db.get_client_plan(client_id) in SESSION_BLEND_PLANS,
     )
-
-    from recommender import present_records
-    presented = present_records(client_id, placement["product_type"], result.records, legacy=False, include_similar_users=False)
-    presented = apply_filters(presented, placement=placement, context=context_dict)[:effective_limit]
 
     return {
         "strategy_used": result.strategy_used, "items": presented,
@@ -165,11 +193,7 @@ def run_recommend(client_id: int, slug: str, context, limit: Optional[int]) -> t
             result, presented = cached
             return placement, result, [dict(item) for item in presented], context_dict, "HIT"
 
-    result = engine.run_placement(placement, context_dict, effective_limit, client_id=client_id, blend_session=blend_session)
-
-    from recommender import present_records
-    presented = present_records(client_id, placement["product_type"], result.records, legacy=False, include_similar_users=False)
-    presented = apply_filters(presented, placement=placement, context=context_dict)[:effective_limit]
+    result, presented = _rank_and_fill(client_id, placement, context_dict, effective_limit, blend_session=blend_session)
     if cache_key is not None and result.strategy_used in rec_cache.CACHEABLE_STRATEGIES:
         rec_cache.put(cache_key, (result, [dict(item) for item in presented]))
     return placement, result, presented, context_dict, ("MISS" if cacheable else "BYPASS")

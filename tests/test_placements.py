@@ -224,6 +224,27 @@ def test_in_stock_only_filter(http, seeded):
     assert any(shoe[0] not in {"SKU-NIKE-001", "SKU-ADIDAS-007"} for shoe in SHOES if shoe[0] in ids)
 
 
+def test_filters_never_leave_the_placement_short(http, seeded):
+    """The current product's closest neighbours are out of stock: the placement still shows
+    `limit` items - more candidates are ranked, then popular ones top it up."""
+    for item_id, title, description, category in SHOES:
+        stock = 0 if item_id in {"SKU-ADIDAS-007", "SKU-ASICS-003", "SKU-SALOMON-010"} else 5
+        http.put(f"/items/{item_id}", params=Q, headers=seeded.secret, json={
+            "title": title, "description": description, "properties": {"category": category, "stock": stock},
+        })
+    create_pdp_placement(http, seeded, slug="pdp-stock", strategy="content", limit=4, filters={"in_stock_only": True})
+
+    for route in ("recommend", "preview"):
+        headers = seeded.public if route == "recommend" else seeded.secret
+        response = http.post(f"/placements/pdp-stock/{route}", headers=headers, json={"context": {"current_item_id": "SKU-NIKE-001", "session_id": "s-1"}})
+        assert response.status_code == 200, response.text
+        ids = [i["item_id"] for i in response.json()["items"]]
+        # 8 items - the current one - 3 out of stock = exactly 4 left, all of them shown.
+        assert len(ids) == 4, (route, ids)
+        assert len(set(ids)) == 4
+        assert not {"SKU-NIKE-001", "SKU-ADIDAS-007", "SKU-ASICS-003", "SKU-SALOMON-010"} & set(ids)
+
+
 def test_category_filter(http, seeded):
     create_pdp_placement(
         http, seeded, slug="boots-only", strategy="popular", limit=8,

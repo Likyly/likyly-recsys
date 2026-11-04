@@ -171,7 +171,7 @@ export function runAsync(dir, cmd, onLine = () => {}) {
  * owner only. The folder ignores itself (`.likyly/.gitignore` = `*`), so the key can never be
  * committed, whatever the project's own .gitignore says.
  */
-export function writeCredentials(dir, developerKey, { dryRun = false, account = null, workspace = null } = {}) {
+export function writeCredentials(dir, developerKey, { dryRun = false, account = null, workspace = null, console: consoleUrl = null } = {}) {
   const folder = join(dir, ".likyly");
   const path = join(folder, "credentials.env");
   if (!dryRun) {
@@ -179,7 +179,8 @@ export function writeCredentials(dir, developerKey, { dryRun = false, account = 
     writeFileSync(join(folder, ".gitignore"), "# Written by @likyly/wizard: nothing in this folder is ever committed.\n*\n");
     // Which LIKYLY account and workspace the keys belong to: what the console must be signed in
     // with to show this project's catalog (read by the assistant's final report).
-    const origin = [account && `# Account: ${account}`, workspace && `# Workspace: ${workspace}`].filter(Boolean).join("\n");
+    // Console: the LIKYLY site holding this workspace (a local one when testing), for the links.
+    const origin = [account && `# Account: ${account}`, workspace && `# Workspace: ${workspace}`, consoleUrl && `# Console: ${consoleUrl}`].filter(Boolean).join("\n");
     writeFileSync(path, `# LIKYLY developer key for the MCP server (never commit it)\n${origin ? `${origin}\n` : ""}LIKYLY_DEVELOPER_KEY=${developerKey}\n`, { mode: 0o600 });
   }
   return { path };

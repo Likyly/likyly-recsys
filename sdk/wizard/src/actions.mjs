@@ -9,6 +9,7 @@ import { checkCompat, describeCompat } from "./compat.mjs";
 import { checkKey, installedPackages } from "./verify.mjs";
 import { existsSync } from "node:fs";
 import { DOCS_URL, WP_PLUGIN_URL } from "./constants.mjs";
+import { APP_URL } from "./auth.mjs";
 
 const ok = (text, hint) => ({ level: "ok", text, hint });
 const warn = (text, hint) => ({ level: "warn", text, hint });
@@ -107,7 +108,7 @@ export function describePlan(opts, project) {
 /** Store the developer key where the MCP server finds it, outside git. */
 export function applyDeveloperKey(opts, devKey, origin = {}) {
   if (!devKey) return [];
-  const { path } = writeCredentials(opts.dir, devKey, { dryRun: opts.dryRun, ...origin });
+  const { path } = writeCredentials(opts.dir, devKey, { dryRun: opts.dryRun, ...origin, console: APP_URL });
   return [ok(`Developer key → ${relative(opts.dir, path)}`, "(never committed)")];
 }
 

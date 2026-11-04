@@ -218,8 +218,8 @@ no list of optional clean-ups.
 
 **Check**
 - Your page: <exact local URL>
-- In LIKYLY: https://www.likyly.com/account/recommendations (status of each placement)
-- Your catalog: https://www.likyly.com/account/catalogues/<catalog>/parcourir
+- In LIKYLY: <console>/account/recommendations (status of each placement)
+- Your catalog: <console>/account/catalogues/<catalog>/parcourir
 
 **Your account**
 - Account: <email>
@@ -249,6 +249,8 @@ no list of optional clean-ups.
   you worked on the developer's own branch. Not a git repository: list the files and skip the rest.
 - **Your account**: read the account and workspace from the comment lines of
   `.likyly/credentials.env` (`# Account:`, `# Workspace:`); leave a line out if it is not there.
+  `<console>` is its `# Console:` line (e.g. `http://localhost:6001` when testing against a local
+  LIKYLY - the catalog only exists there), `https://www.likyly.com` when there is none.
   The developer signs in to likyly.com with this account to see the catalog.
 - **Commands**: one row per command that exists in the project (`.claude/commands/likyly-*.md`),
   each with what it does in plain words. Outside Claude Code, use the terminal forms instead:
