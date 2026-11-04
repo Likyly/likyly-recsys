@@ -104,6 +104,8 @@ POST   /placements/{slug}/deactivate     enabled=false (reversible)
 DELETE /placements/{slug}                permanent
 GET    /placements/{slug}/requirements   static: signals, strategy, fallback, context_type
 POST   /placements/{slug}/preview        run against a sample context, never writes/attributes
+POST   /placements/{slug}/cache/purge    empty this placement's anonymous cache (see "Caching")
+POST   /placements/cache/purge           same, every placement
 ```
 
 Runtime (public key or secret key - same safety as `POST /getRec`):
@@ -118,6 +120,40 @@ POST   /placements/{slug}/recommend
 follow, through the exact same mechanism `POST /getRec` uses (`track_event` needs no changes).
 A disabled or unknown placement is a 404, indistinguishable from "never existed," including
 across tenants.
+
+### Caching
+
+A site calls `/recommend` on every page view, so LIKYLY does not recompute what it already
+knows (`application/api/rec_cache.py`):
+
+- **Server side.** For a visitor with no `user_id`, the answer for one product depends only on
+  the catalog and the placement: it is kept for an hour per (placement, product, limit, other
+  context) and shared by every anonymous visitor. The `X-Likyly-Cache` response header says
+  `HIT`, `MISS` or `BYPASS` (signed-in visitor, or a Pro session mix: see below). Each call still
+  gets its own `recommendation_id`, so attribution is unchanged.
+- **It empties itself** when the catalog changes (every item write - API, import, sync, push -
+  goes through `ingestion.py`) or the placement is edited or deleted.
+- **By hand**: `npx @likyly/wizard cache clear [placement]` in a terminal (the project's developer
+  key, scriptable in CI or a deploy hook), `/likyly-clear-cache [placement]` in Claude Code, the
+  console's "Vider le cache" button (`POST /clients/me/placements/{slug}/cache/purge`), the MCP
+  tool `purge_recommendation_cache`, or the API: `POST /placements/{slug}/cache/purge` (or
+  `/placements/cache/purge`).
+- **Client side.** The JS SDK keeps an answer an hour per visitor (`sessionStorage` in a
+  browser) and, after a network error, a timeout, a 429 or a 5xx, stops calling for 30 seconds
+  so the page shows its fallback at once (`PausedError`). Option `cache` on the client
+  (`{ ttlSeconds, pauseSeconds, storage }` or `false`); `likyly.clearRecommendationCache()`.
+
+The server cache is in process memory: right for the single API process the Dockerfile runs;
+several workers or replicas would need a shared store (Redis).
+
+### Pro: anonymous recommendations that follow the visit
+
+On the Pro and Unlimited plans, `strategy: "auto"` with a `current_item_id`, no `user_id` and a
+session that already viewed other products returns `strategy_used: "content_session"`: the
+current product's closest items interleaved with the session's (recency-weighted), content
+first, never the current item nor what the visitor already saw
+(`recommender.blend_content_session`). With no session history it is plain `content`. Free
+workspaces always get `content` for anonymous product pages, and share the cache above.
 
 ## Client-side integration
 

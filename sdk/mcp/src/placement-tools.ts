@@ -83,6 +83,13 @@ export function createLikylyPlacementTools(server: McpServer, client: LikylyClie
   );
 
   server.tool(
+    "purge_recommendation_cache",
+    "Empty the cache of anonymous recommendations: one placement's (`slug`) or every placement's (no slug). LIKYLY keeps an anonymous visitor's answer for a product for an hour and empties it on its own when the catalog or the placement changes - call this only when something changed that LIKYLY cannot see (stock managed outside LIKYLY, new product pages deployed) or when the developer asks to see fresh results now.",
+    { slug: slug.optional() },
+    async ({ slug }) => textResult(await client.purgeRecommendationCache(slug)),
+  );
+
+  server.tool(
     "update_placement",
     "Partial update of an existing placement - only the fields given are changed. Sending `signals`/`filters`/`business_rules` at all replaces that whole sub-object (not a deep merge). Use this to disable/re-enable too (`enabled: true|false`) - or delete_or_disable_placement's default mode, which is the same thing plus a clearer name for it.",
     {

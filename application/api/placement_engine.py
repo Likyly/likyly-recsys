@@ -114,7 +114,7 @@ def missing_required_signals(placement: dict[str, Any], context: dict[str, Any])
     return [key for key in required if not context.get(key)]
 
 
-def run_placement(placement: dict[str, Any], context: dict[str, Any], count: int, *, client_id: int) -> PlacementResult:
+def run_placement(placement: dict[str, Any], context: dict[str, Any], count: int, *, client_id: int, blend_session: bool = False) -> PlacementResult:
     """Assumes missing_required_signals(placement, context) is already empty - callers
     (placement_service.py) validate before running, so this never has to decide what "missing
     a required signal" means at execution time."""
@@ -122,9 +122,10 @@ def run_placement(placement: dict[str, Any], context: dict[str, Any], count: int
     strategy = placement["strategy"]
 
     if strategy == "auto":
+        # blend_session (Pro): see recommender.blend_content_session.
         result = rec.recommend_auto(
             client_id, product_type, user_id=context.get("user_id"), session_id=_effective_session_id(context),
-            item_id=context.get("current_item_id"), viewed_item_ids=[], count=count,
+            item_id=context.get("current_item_id"), viewed_item_ids=[], count=count, blend_session=blend_session,
         )
         return PlacementResult(result.strategy, result.records, result.attempted)
 

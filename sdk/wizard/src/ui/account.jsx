@@ -29,7 +29,7 @@ function WaitForBrowser({ project, dir, onKey, onPaste, onSkip }) {
         h.result.then((r) => {
           if (!live) return;
           h.close();
-          if (r.key) onKey(r.key, { workspace: r.workspace, devKey: r.devKey });
+          if (r.key) onKey(r.key, { workspace: r.workspace, devKey: r.devKey, account: r.account });
           else if (r.manual) onPaste(r.devKey);
           else setError("No answer from the browser after 15 minutes.");
         });

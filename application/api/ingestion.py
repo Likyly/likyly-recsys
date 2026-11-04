@@ -28,6 +28,7 @@ from db import (  # noqa: E402
     upsert_product_profile, upsert_user, update_product_embedding, fetch_item_properties,
 )
 from ids import numeric_alias  # noqa: E402
+import rec_cache  # noqa: E402
 from schemas import Event, ItemUpsert, UserUpsert  # noqa: E402
 
 
@@ -131,6 +132,7 @@ def upsert_item(client_id: int, product_type: str, item_id: str, payload: ItemUp
         description=payload.description, client_id=client_id, properties=properties, **columns,
     )
     _store_embedding(client_id, product_type, internal, payload.title, payload.description, columns["genre_1"])
+    rec_cache.bump_catalog(client_id, product_type)
     return created
 
 
@@ -200,6 +202,8 @@ def upsert_items_batch(client_id: int, product_type: str, entries: list) -> Batc
                 update_product_embedding(client_id, product_type, internal, vector)
         except Exception as error:
             print(f"Embedding computation skipped (non-fatal): {error}")
+    if succeeded:
+        rec_cache.bump_catalog(client_id, product_type)
     return BatchOutcome(len(entries), succeeded, errors)
 
 
@@ -213,6 +217,8 @@ def delete_items(client_id: int, product_type: str, item_ids: list[str]) -> list
         internal = mapping.get(item_id)
         if internal is None or not delete_product_profile(product_type=product_type, work_id=internal, client_id=client_id):
             missing.append(item_id)
+    if len(missing) < len(item_ids):
+        rec_cache.bump_catalog(client_id, product_type)
     return missing
 
 

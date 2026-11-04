@@ -15,6 +15,7 @@ Three layers, kept apart so each is testable on its own:
 import json
 import math
 import os
+from itertools import zip_longest
 import sys
 from dataclasses import dataclass, field
 from typing import Optional
@@ -371,6 +372,7 @@ COLLABORATIVE = "collaborative"
 SESSION = "session"                  # from the viewed_item_ids the caller sent
 SESSION_HISTORY = "session_history"  # from views LIKYLY persisted for this user / session
 POPULAR = "popular"
+CONTENT_SESSION = "content_session"  # Pro: the current item's neighbours mixed with the session's
 
 
 def public_strategy_name(step: str) -> str:
@@ -421,7 +423,7 @@ class RecommendationResult:
 
 def recommend_auto(
     client_id: int, product_type: str, *, user_id: Optional[str], session_id: Optional[str],
-    item_id: Optional[str], viewed_item_ids: list[str], count: int,
+    item_id: Optional[str], viewed_item_ids: list[str], count: int, blend_session: bool = False,
 ) -> RecommendationResult:
     """Resolve the caller's ids (read-only: nothing is created for an id we've never seen),
     plan, then run the plan. An id LIKYLY doesn't know (an item not in the catalog, a user
@@ -455,6 +457,13 @@ def recommend_auto(
 
     exclude = set(viewed) | ({anchor} if anchor is not None else set())
     attempted: list[str] = []
+    # Pro: an anonymous visitor on a product page who already browsed this session gets the
+    # current product's neighbours mixed with what their session points to (see blend_content_session).
+    if blend_session and internal_user is None and anchor is not None and [h for h in history if h != anchor]:
+        attempted.append(CONTENT_SESSION)
+        records = blend_content_session(client_id, product_type, anchor, history, count)
+        if records:
+            return RecommendationResult(CONTENT_SESSION, records, attempted)
     for step in plan:
         attempted.append(step)
         records = _run_step(
@@ -464,6 +473,25 @@ def recommend_auto(
         if records:
             return RecommendationResult(public_strategy_name(step), records, attempted)
     return RecommendationResult(POPULAR, [], attempted)
+
+
+def blend_content_session(client_id: int, product_type: str, anchor: int, history: list[int], count: int) -> list[dict]:
+    """Interleave the current item's closest products with the session's (recency-weighted)
+    ones - content first, so the page stays about the product shown - without duplicates and
+    never the current item. Falls back to whichever side has items when the other runs out."""
+    content = rec_content(client_id, product_type, anchor, count * 2)
+    session = rec_session(client_id, product_type, [h for h in history if h != anchor], count * 2)
+    merged: list[dict] = []
+    seen = {anchor}
+    for pair in zip_longest(content, session):
+        for record in pair:
+            if record is None or record["work_id"] in seen:
+                continue
+            seen.add(record["work_id"])
+            merged.append(record)
+            if len(merged) == count:
+                return merged
+    return merged
 
 
 def _run_step(step, client_id, product_type, count, *, user, anchor, viewed, history, exclude) -> list[dict]:

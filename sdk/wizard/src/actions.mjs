@@ -4,7 +4,7 @@
 import { relative } from "node:path";
 import { EDITORS } from "./frameworks.mjs";
 import { configPath, writeMcpConfig } from "./mcp.mjs";
-import { commandExists, runAsync, writeCredentials, writeEnv, writeSkill, writeStarter } from "./setup.mjs";
+import { commandExists, runAsync, writeClaudeCommands, writeCredentials, writeEnv, writeSkill, writeStarter } from "./setup.mjs";
 import { checkCompat, describeCompat } from "./compat.mjs";
 import { checkKey, installedPackages } from "./verify.mjs";
 import { existsSync } from "node:fs";
@@ -85,6 +85,8 @@ export function connectEditors(opts, editors) {
   if (editors.includes("claude-code")) {
     const skill = writeSkill(opts.dir, { dryRun: opts.dryRun });
     if (skill) results.push(ok(`LIKYLY skill → ${relative(opts.dir, skill.path)}`));
+    const command = writeClaudeCommands(opts.dir, { dryRun: opts.dryRun });
+    results.push(ok(`Claude Code commands ${command.names.join(", ")} → ${relative(opts.dir, command.path)}`));
   }
   return results;
 }
@@ -103,9 +105,9 @@ export function describePlan(opts, project) {
 }
 
 /** Store the developer key where the MCP server finds it, outside git. */
-export function applyDeveloperKey(opts, devKey) {
+export function applyDeveloperKey(opts, devKey, origin = {}) {
   if (!devKey) return [];
-  const { path } = writeCredentials(opts.dir, devKey, { dryRun: opts.dryRun });
+  const { path } = writeCredentials(opts.dir, devKey, { dryRun: opts.dryRun, ...origin });
   return [ok(`Developer key → ${relative(opts.dir, path)}`, "(never committed)")];
 }
 

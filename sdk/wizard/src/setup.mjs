@@ -82,6 +82,11 @@ export const likyly = new Likyly({ apiKey: ${expr} });
 `,
 };
 
+/** What the wizard writes as the starter file (also used to tell, at uninstall, if it was edited). */
+export function starterContent(starter) {
+  return TEMPLATES[starter.template](starter.envExpr);
+}
+
 /** Write the framework's starter file, unless a file already exists at that path. */
 export function writeStarter(dir, starter, { dryRun = false } = {}) {
   if (!starter) return null;
@@ -166,13 +171,52 @@ export function runAsync(dir, cmd, onLine = () => {}) {
  * owner only. The folder ignores itself (`.likyly/.gitignore` = `*`), so the key can never be
  * committed, whatever the project's own .gitignore says.
  */
-export function writeCredentials(dir, developerKey, { dryRun = false } = {}) {
+export function writeCredentials(dir, developerKey, { dryRun = false, account = null, workspace = null } = {}) {
   const folder = join(dir, ".likyly");
   const path = join(folder, "credentials.env");
   if (!dryRun) {
     mkdirSync(folder, { recursive: true });
     writeFileSync(join(folder, ".gitignore"), "# Written by @likyly/wizard: nothing in this folder is ever committed.\n*\n");
-    writeFileSync(path, `# LIKYLY developer key for the MCP server (never commit it)\nLIKYLY_DEVELOPER_KEY=${developerKey}\n`, { mode: 0o600 });
+    // Which LIKYLY account and workspace the keys belong to: what the console must be signed in
+    // with to show this project's catalog (read by the assistant's final report).
+    const origin = [account && `# Account: ${account}`, workspace && `# Workspace: ${workspace}`].filter(Boolean).join("\n");
+    writeFileSync(path, `# LIKYLY developer key for the MCP server (never commit it)\n${origin ? `${origin}\n` : ""}LIKYLY_DEVELOPER_KEY=${developerKey}\n`, { mode: 0o600 });
   }
   return { path };
+}
+
+// Claude Code slash command: the exact `cache clear` CLI, run by Claude Code itself (the `!`
+// line executes before the model sees the prompt), so the result is the API's, not a guess.
+const CLEAR_CACHE_COMMAND = `---
+description: Empty LIKYLY's recommendation cache (one placement, or all of them)
+argument-hint: [placement-slug]
+allowed-tools: Bash(npx -y @likyly/wizard cache clear:*)
+---
+!\`npx -y @likyly/wizard cache clear $ARGUMENTS\`
+
+Repeat the result above to the developer as is, in one or two lines. Do nothing else.
+`;
+
+// Uninstall removes files: the plan is shown, and only a confirmation from the developer lets
+// Claude Code run it for real.
+const UNINSTALL_COMMAND = `---
+description: Remove LIKYLY from this project (shows the plan, asks before removing)
+allowed-tools: Bash(npx -y @likyly/wizard uninstall:*)
+---
+!\`npx -y @likyly/wizard uninstall --dry-run\`
+
+Show the developer the plan above as is, then ask whether to proceed. Only if they confirm, run
+\`npx -y @likyly/wizard uninstall --yes\` and show its result. If the plan lists files where the
+code still uses LIKYLY, offer to remove that code and restore what those pages showed before.
+`;
+
+/** Install /likyly-clear-cache and /likyly-uninstall for Claude Code (`.claude/commands/`). */
+export function writeClaudeCommands(dir, { dryRun = false } = {}) {
+  const folder = join(dir, ".claude", "commands");
+  const files = { "likyly-clear-cache.md": CLEAR_CACHE_COMMAND, "likyly-uninstall.md": UNINSTALL_COMMAND };
+  if (!dryRun) {
+    mkdirSync(folder, { recursive: true });
+    for (const [name, content] of Object.entries(files)) writeFileSync(join(folder, name), content);
+  }
+  return { path: folder, names: Object.keys(files).map((f) => `/${f.replace(/\.md$/, "")}`) };
 }

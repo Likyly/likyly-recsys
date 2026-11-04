@@ -63,12 +63,18 @@
           "Custom HTTP",
           "`fetch`",
           "global `fetch`"
+        ],
+        [
+          "Recommendation cache",
+          "`cache`: `{ ttlSeconds, pauseSeconds, storage }` or `false`",
+          "1 hour; 30 s pause after a failure"
         ]
       ],
       "perCall": "Every method takes a last `options` argument: `{ signal, timeout, maxRetries }` (an `AbortSignal` cancels the call).",
       "notes": [
         "Identifiers are plain strings and are never coerced: `itemId: 42` is a type error, and a JavaScript caller passing a number gets a `ValidationError`.",
-        "Request and response fields are `camelCase` (`itemId`, `recommendationId`); the keys inside `properties` are yours and are never renamed."
+        "Request and response fields are `camelCase` (`itemId`, `recommendationId`); the keys inside `properties` are yours and are never renamed.",
+        "Placement recommendations are cached (one hour, per visitor in a browser, `sessionStorage`) and, after a network error, a timeout, a 429 or a 5xx, calls pause for 30 seconds and throw `PausedError` at once, so your page shows its fallback instead of waiting. `likyly.clearRecommendationCache()` forgets the cached answers; the LIKYLY console's \"Vider le cache\" empties the server side."
       ],
       "context": "",
       "installFence": "sh",
@@ -77,7 +83,8 @@
         "perCall": "Chaque méthode accepte un dernier argument `options` : `{ signal, timeout, maxRetries }` (un `AbortSignal` annule l'appel).",
         "notes": [
           "Les identifiants sont de simples chaînes, jamais converties : `itemId: 42` est une erreur de type, et un appelant JavaScript qui passe un nombre reçoit une `ValidationError`.",
-          "Les champs des requêtes et des réponses sont en `camelCase` (`itemId`, `recommendationId`) ; les clés à l'intérieur de `properties` vous appartiennent et ne sont jamais renommées."
+          "Les champs des requêtes et des réponses sont en `camelCase` (`itemId`, `recommendationId`) ; les clés à l'intérieur de `properties` vous appartiennent et ne sont jamais renommées.",
+          "Les recommandations d'emplacement sont mises en cache (une heure, par visiteur dans un navigateur, `sessionStorage`) et, après une erreur réseau, un délai dépassé, un 429 ou un 5xx, les appels font une pause de 30 secondes et lèvent aussitôt `PausedError` : votre page affiche son contenu de repli au lieu d'attendre. `likyly.clearRecommendationCache()` oublie les réponses en cache ; le bouton « Vider le cache » de la console vide le cache côté LIKYLY."
         ]
       }
     },

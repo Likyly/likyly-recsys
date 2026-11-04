@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { detectProject, detectEditors } from "../src/frameworks.mjs";
 import { mergeConfig, writeMcpConfig } from "../src/mcp.mjs";
@@ -162,6 +162,7 @@ test("end to end: mcp add for Claude Code installs the skill", () => {
   assert.equal(res.status, 0, res.stderr);
   assert.ok(existsSync(join(dir, ".mcp.json")));
   assert.match(readFileSync(join(dir, ".claude/skills/likyly/SKILL.md"), "utf8"), /name: likyly/);
+  assert.match(readFileSync(join(dir, ".claude/commands/likyly-clear-cache.md"), "utf8"), /npx -y @likyly\/wizard cache clear \$ARGUMENTS/);
 });
 
 test("the plan lists what will be run, written and connected", () => {
@@ -213,7 +214,84 @@ test("browser sign-in: state is checked, keys come back, server-only keys are re
   const post = (fields) => fetch(`http://127.0.0.1:${url.searchParams.get("port")}/callback`, { method: "POST", body: new URLSearchParams(fields) });
   assert.equal((await post({ state: "nope", key: "pk_1" })).status, 400);
   assert.equal((await post({ state: url.searchParams.get("state"), key: "sk_live_1" })).status, 400);
-  assert.equal((await post({ state: url.searchParams.get("state"), key: "pk_live_1", dev_key: "lk_dev_1", workspace: "Shop" })).status, 200);
-  assert.deepEqual(await auth.result, { key: "pk_live_1", devKey: "lk_dev_1", workspace: "Shop" });
-  auth.close();
+  try {
+    assert.equal((await post({ state: url.searchParams.get("state"), key: "pk_live_1", dev_key: "lk_dev_1", workspace: "Shop", account: "dev@shop.test" })).status, 200);
+    assert.deepEqual(await auth.result, { key: "pk_live_1", devKey: "lk_dev_1", workspace: "Shop", account: "dev@shop.test" });
+  } finally {
+    auth.close();
+  }
+});
+
+test("cache clear: parsing, and a clear message without a developer key", async () => {
+  assert.deepEqual([parseArgs(["cache", "clear"]).command, parseArgs(["cache", "clear"]).placement], ["cache-clear", null]);
+  assert.equal(parseArgs(["cache", "purge", "pdp-related"]).placement, "pdp-related");
+  assert.equal(parseArgs(["cache", "clear", "--placement", "home"]).placement, "home");
+  assert.throws(() => parseArgs(["cache", "flush"]), /cache clear/);
+  const dir = project({});
+  const res = spawnSync(process.execPath, [BIN, "cache", "clear", "--dir", dir], { encoding: "utf8", env: { ...process.env, NO_COLOR: "1", LIKYLY_DEVELOPER_KEY: "" } });
+  assert.equal(res.status, 1);
+  assert.match(res.stdout, /No developer key/);
+});
+
+test("cache clear reads the key from the credentials file and calls the API", async () => {
+  const { createServer } = await import("node:http");
+  const seen = [];
+  const server = createServer((req, res) => {
+    seen.push([req.method, req.url, req.headers["x-api-key"]]);
+    res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ message: "ok", purged: 3 }));
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const dir = project({ ".likyly/credentials.env": "LIKYLY_DEVELOPER_KEY=lk_test_9\n" });
+  const res = await new Promise((resolve) => {
+    const child = spawn(process.execPath, [BIN, "cache", "clear", "pdp-related", "--dir", dir], {
+      env: { ...process.env, NO_COLOR: "1", LIKYLY_DEVELOPER_KEY: "", LIKYLY_API_URL: `http://127.0.0.1:${server.address().port}` },
+    });
+    let out = "";
+    child.stdout.on("data", (d) => (out += d));
+    child.on("close", (code) => resolve({ code, out }));
+  });
+  server.close();
+  assert.equal(res.code, 0, res.out);
+  assert.deepEqual(seen, [["POST", "/placements/pdp-related/cache/purge", "lk_test_9"]]);
+  assert.match(res.out, /3 cached answers dropped/);
+});
+
+test("uninstall removes only what the wizard added, after a dry run that removes nothing", () => {
+  const dir = project({
+    ...pkg({ next: "16", react: "19" }),
+    "app/": "",
+    ".env.local": "OTHER=1\n",
+    ".cursor/mcp.json": { mcpServers: { other: { command: "x" } } },
+    "CLAUDE.md": "",
+    "src/page.tsx": 'import { LikylyRecommendations } from "@likyly/react";\n',
+  });
+  assert.equal(runCli(["--yes", "--no-install", "--public-key", "pk_test", "--editor", "claude-code,cursor", "--dir", dir], dir).status, 0);
+  mkdirSync(join(dir, ".likyly"), { recursive: true });
+  writeFileSync(join(dir, ".likyly/credentials.env"), "LIKYLY_DEVELOPER_KEY=lk_x\n");
+
+  const dry = runCli(["uninstall", "--dry-run", "--dir", dir], dir);
+  assert.equal(dry.status, 0, dry.stderr);
+  assert.match(dry.stdout, /Remove the LIKYLY key from \.env\.local/);
+  assert.match(dry.stdout, /src\/page\.tsx/, "code that uses LIKYLY is listed");
+  assert.ok(existsSync(join(dir, ".mcp.json")), "a dry run removes nothing");
+
+  const res = runCli(["uninstall", "--yes", "--dir", dir], dir);
+  assert.equal(res.status, 0, res.stdout + res.stderr);
+  assert.equal(readFileSync(join(dir, ".env.local"), "utf8").trim(), "OTHER=1");
+  assert.equal(existsSync(join(dir, "components/likyly-provider.tsx")), false);
+  assert.equal(existsSync(join(dir, ".mcp.json")), false, "only LIKYLY was in it");
+  assert.deepEqual(JSON.parse(readFileSync(join(dir, ".cursor/mcp.json"), "utf8")), { mcpServers: { other: { command: "x" } } });
+  for (const gone of [".claude/skills/likyly", ".claude/commands/likyly-clear-cache.md", ".claude/commands/likyly-uninstall.md", ".likyly"]) {
+    assert.equal(existsSync(join(dir, gone)), false, gone);
+  }
+  assert.equal(readFileSync(join(dir, "src/page.tsx"), "utf8"), 'import { LikylyRecommendations } from "@likyly/react";\n', "code is never edited");
+});
+
+test("uninstall keeps a starter file the developer edited", () => {
+  const dir = project({ ...pkg({ next: "16", react: "19" }), "app/": "" });
+  runCli(["--yes", "--no-install", "--public-key", "pk_test", "--editor", "claude-code", "--dir", dir], dir);
+  writeFileSync(join(dir, "components/likyly-provider.tsx"), "// mine now\n");
+  const res = runCli(["uninstall", "--yes", "--dir", dir], dir);
+  assert.match(res.stdout, /edited since the wizard wrote it/);
+  assert.ok(existsSync(join(dir, "components/likyly-provider.tsx")));
 });

@@ -295,6 +295,25 @@
         "title": "Body_upload_data_source_file",
         "type": "object"
       },
+      "CachePurged": {
+        "properties": {
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "purged": {
+            "description": "How many cached answers were dropped (0 is fine: nothing was cached yet).",
+            "title": "Purged",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "message",
+          "purged"
+        ],
+        "title": "CachePurged",
+        "type": "object"
+      },
       "CatalogIndex": {
         "description": "One index of the workspace = one catalog namespace (product_type): its own items, its\nown trained model. Indexes have no separate lifecycle - one appears as soon as a data\nsource or an item push writes into a new product_type.",
         "properties": {
@@ -4457,7 +4476,8 @@
           "content",
           "collaborative",
           "session",
-          "popular"
+          "popular",
+          "content_session"
         ],
         "title": "RecommendationStrategy",
         "type": "string"
@@ -10255,6 +10275,102 @@
         ]
       }
     },
+    "/clients/me/placements/cache/purge": {
+      "post": {
+        "description": "The console's \"Vider le cache\" for the whole workspace - same as POST /placements/cache/purge.",
+        "operationId": "purge_my_recommendation_cache",
+        "parameters": [
+          {
+            "description": "Which of this account's workspaces this call is about. Omitted: the primary (oldest) one.",
+            "in": "header",
+            "name": "X-Workspace-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Which of this account's workspaces this call is about. Omitted: the primary (oldest) one.",
+              "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CachePurged"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing, invalid or revoked `X-API-Key`."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The referenced resource does not exist for this account."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "description": "Rate limit exceeded at the API gateway - retry shortly."
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Empty the recommendation cache (all placements)",
+        "tags": [
+          "selfServiceClient"
+        ]
+      }
+    },
     "/clients/me/placements/{slug}": {
       "patch": {
         "description": "Same partial-update semantics as PATCH /placements/{slug} (the secret/developer-key\nadmin route this mirrors): only the fields sent are changed - e.g. {\"enabled\": false} to\nturn a placement off without touching anything else, from the \"Recommandations\" page's\nown enable/disable and edit controls, no agent needed for the basics.",
@@ -10365,6 +10481,111 @@
           }
         ],
         "summary": "Update a placement",
+        "tags": [
+          "selfServiceClient"
+        ]
+      }
+    },
+    "/clients/me/placements/{slug}/cache/purge": {
+      "post": {
+        "description": "The \"Vider le cache\" button of one placement in the console.",
+        "operationId": "purge_my_placement_cache",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Which of this account's workspaces this call is about. Omitted: the primary (oldest) one.",
+            "in": "header",
+            "name": "X-Workspace-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Which of this account's workspaces this call is about. Omitted: the primary (oldest) one.",
+              "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CachePurged"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing, invalid or revoked `X-API-Key`."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The referenced resource does not exist for this account."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "description": "Rate limit exceeded at the API gateway - retry shortly."
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Empty one placement's recommendation cache",
         "tags": [
           "selfServiceClient"
         ]
@@ -15516,6 +15737,54 @@
         "x-required-key": "scope:placements:write"
       }
     },
+    "/placements/cache/purge": {
+      "post": {
+        "description": "Anonymous answers are cached for an hour and emptied automatically when the catalog or a\nplacement changes; this empties them now, e.g. after a change LIKYLY cannot see (stock\nhandled outside LIKYLY, a deploy of new product pages).",
+        "operationId": "purge_all_caches",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CachePurged"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing or invalid X-API-Key."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The key presented doesn't carry the scope this endpoint requires."
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Empty the recommendation cache (all placements)",
+        "tags": [
+          "placements"
+        ],
+        "x-required-key": "scope:placements:write"
+      }
+    },
     "/placements/{slug}": {
       "delete": {
         "description": "Permanent - prefer deactivate_placement unless the configuration itself is wrong and\nshould stop existing, not just stop serving.",
@@ -15753,6 +16022,85 @@
           }
         ],
         "summary": "Update a placement",
+        "tags": [
+          "placements"
+        ],
+        "x-required-key": "scope:placements:write"
+      }
+    },
+    "/placements/{slug}/cache/purge": {
+      "post": {
+        "description": "Same as POST /placements/cache/purge, for one placement.",
+        "operationId": "purge_placement_cache",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CachePurged"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing or invalid X-API-Key."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The key presented doesn't carry the scope this endpoint requires."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "No such placement for this account (or it is disabled, for /recommend)."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The request is malformed, or a signal the placement requires is missing."
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Empty one placement's recommendation cache",
         "tags": [
           "placements"
         ],

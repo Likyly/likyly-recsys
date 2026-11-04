@@ -1,6 +1,6 @@
 {
   "name": "@likyly/mcp-server",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "MCP (Model Context Protocol) server exposing the LIKYLY API as tools for AI coding assistants - recommendations and event tracking (restricted public key), plus admin tools to connect and sync a catalog data source - Shopify, a REST API, a CSV, a webhook, ... (secret key or a scoped developer key). Runs locally (stdio) or as a hosted HTTP service.",
   "type": "module",
   "bin": {

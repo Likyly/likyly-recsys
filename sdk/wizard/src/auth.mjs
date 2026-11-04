@@ -86,7 +86,7 @@ export async function startBrowserAuth({ project, dir }) {
       return;
     }
     html(200, "You're connected", "The wizard received your public key. You can close this tab and go back to your terminal.");
-    settle({ key, devKey, workspace: form.get("workspace") || null });
+    settle({ key, devKey, workspace: form.get("workspace") || null, account: form.get("account") || null });
   });
 
   await new Promise((resolve, reject) => {

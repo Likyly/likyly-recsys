@@ -88,6 +88,13 @@ def _no_auto_retrain(monkeypatch):
     monkeypatch.setattr(app_module, "AUTO_RETRAIN_INTERACTION_THRESHOLD", 10**9)
 
 
+@pytest.fixture(autouse=True)
+def _empty_recommendation_cache():
+    # The anonymous recommendation cache is process-wide: each test starts from an empty one.
+    import rec_cache
+    rec_cache.clear()
+
+
 @dataclass
 class Tenant:
     client_id: int

@@ -24,7 +24,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, R
 
 import placement_service as service  # noqa: E402
 from schemas import (  # noqa: E402
-    ErrorResponse, Message, Placement, PlacementCreate, PlacementHealthOut, PlacementPreviewOut,
+    CachePurged, ErrorResponse, Message, Placement, PlacementCreate, PlacementHealthOut, PlacementPreviewOut,
     PlacementPreviewRequest, PlacementRecommendRequest, PlacementRecommendResponse,
     PlacementRequirementsOut, PlacementUpdate, RecentIntegrationEventsOut, TrackingRequirementsOut,
 )
@@ -100,6 +100,23 @@ def update_placement(slug: str, payload: PlacementUpdate, client_id: int = Depen
         raise _not_found(error)
     except service.ValidationError as error:
         raise _invalid(error)
+
+
+@router.post("/cache/purge", response_model=CachePurged, summary="Empty the recommendation cache (all placements)", responses=_errors(401, 403))
+def purge_all_caches(client_id: int = Depends(require_scope("placements:write"))):
+    """Anonymous answers are cached for an hour and emptied automatically when the catalog or a
+    placement changes; this empties them now, e.g. after a change LIKYLY cannot see (stock
+    handled outside LIKYLY, a deploy of new product pages)."""
+    return service.purge_cache(client_id)
+
+
+@router.post("/{slug}/cache/purge", response_model=CachePurged, summary="Empty one placement's recommendation cache", responses=_errors(401, 403, 404, 422))
+def purge_placement_cache(slug: str, client_id: int = Depends(require_scope("placements:write"))):
+    """Same as POST /placements/cache/purge, for one placement."""
+    try:
+        return service.purge_cache(client_id, slug)
+    except service.NotFoundError as error:
+        raise _not_found(error)
 
 
 @router.post("/{slug}/deactivate", response_model=Placement, summary="Disable a placement (reversible)", responses=_errors(401, 403, 404, 422))
@@ -195,7 +212,7 @@ def recommend(slug: str, payload: PlacementRecommendRequest, background_tasks: B
     impression/click/add_to_cart/purchase events that follow, exactly like /getRec. Safe with
     the restricted public key - this is meant to be called from the site itself."""
     try:
-        placement, result, items, context_dict = service.run_recommend(client_id, slug, payload.context, payload.limit)
+        placement, result, items, context_dict, cache = service.run_recommend(client_id, slug, payload.context, payload.limit)
     except service.NotFoundError as error:
         raise _not_found(error)
     except service.ValidationError as error:
@@ -207,4 +224,6 @@ def recommend(slug: str, payload: PlacementRecommendRequest, background_tasks: B
         user_id=context_dict.get("user_id"), session_id=context_dict.get("session_id") or context_dict.get("anonymous_id"),
         item_id=context_dict.get("current_item_id"), placement=slug, attempted=result.attempted,
     )
+    # HIT: served from the anonymous cache (rec_cache.py); each call still gets its own id above.
+    response.headers["X-Likyly-Cache"] = cache
     return {"recommendation_id": recommendation_id, "placement": slug, "strategy_used": result.strategy_used, "items": items}

@@ -43,6 +43,8 @@ export class LikylyError extends Error {
 export class NetworkError extends LikylyError {}
 export class TimeoutError extends LikylyError {}
 export class ValidationError extends LikylyError {}
+/** LIKYLY failed moments ago: the SDK skips calls for a short pause (see `cache.pauseSeconds`). */
+export class PausedError extends LikylyError {}
 export class ApiError extends LikylyError {}
 export class AuthenticationError extends ApiError {}
 export class PermissionDeniedError extends ApiError {}

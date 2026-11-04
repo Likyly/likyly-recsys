@@ -3,6 +3,7 @@ import { HttpClient } from "./http.js";
 import { EventsResource } from "./resources/events.js";
 import { ItemsResource } from "./resources/items.js";
 import { PlacementsResource } from "./resources/placements.js";
+import { RecommendCache, type RecommendCacheOptions } from "./recommend-cache.js";
 import { RecommendationsResource } from "./resources/recommendations.js";
 import { UsersResource } from "./resources/users.js";
 import type { PlacementRecommendOptions, PlacementRecommendResponse, RequestOptions } from "./types.js";
@@ -33,6 +34,12 @@ export interface LikylyOptions {
   maxRetries?: number;
   /** Appended to the SDK's User-Agent, e.g. `my-shop/1.4`. */
   userAgent?: string;
+  /**
+   * Placement recommendations are cached (one hour, per visitor in a browser) and LIKYLY is not
+   * called again for 30 seconds after it fails, so pages fall back to their own content at once.
+   * Tune it (`{ ttlSeconds, pauseSeconds, storage }`) or turn it off with `false`.
+   */
+  cache?: RecommendCacheOptions | false;
   /** Custom `fetch` (proxies, tests). Defaults to the global one (Node 18+, browsers, edge runtimes). */
   fetch?: typeof fetch;
   /** @internal test hooks */
@@ -92,7 +99,7 @@ export class Likyly {
     this.users = new UsersResource(http);
     this.events = new EventsResource(http);
     this.recommendations = new RecommendationsResource(http);
-    this.placements = new PlacementsResource(http);
+    this.placements = new PlacementsResource(http, options.cache === false ? null : new RecommendCache(options.cache ?? {}));
   }
 
   /**
@@ -106,5 +113,10 @@ export class Likyly {
    */
   recommend(opts: PlacementRecommendOptions, options?: RequestOptions): Promise<PlacementRecommendResponse> {
     return this.placements.recommend(opts, options);
+  }
+
+  /** Forget the cached placement recommendations (this browser tab or process only). */
+  clearRecommendationCache(): void {
+    this.placements.cache?.clear();
   }
 }

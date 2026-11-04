@@ -2,6 +2,8 @@ import { compact, encodeSegment, requireId } from "../encoding.js";
 import type { HttpClient } from "../http.js";
 import type { PlacementContext, PlacementRecommendOptions, PlacementRecommendResponse, RequestOptions } from "../types.js";
 import { toRecommendedItem, type WireRecommendedItem } from "./recommendations.js";
+import { LikylyError, NetworkError, PausedError, RateLimitError, TimeoutError } from "../errors.js";
+import type { RecommendCache } from "../recommend-cache.js";
 
 /**
  * `likyly.placements` - the recommended way to ask for recommendations. A Placement ("what to
@@ -11,7 +13,11 @@ import { toRecommendedItem, type WireRecommendedItem } from "./recommendations.j
  * advanced, per-call use with no persistent configuration.
  */
 export class PlacementsResource {
-  constructor(private readonly http: HttpClient) {}
+  constructor(
+    private readonly http: HttpClient,
+    /** null when the client was built with `cache: false`. */
+    readonly cache: RecommendCache | null = null,
+  ) {}
 
   /**
    * Recommendations for one placement: send whatever context you have (`itemId`, `userId`,
@@ -20,16 +26,31 @@ export class PlacementsResource {
    */
   async recommend(opts: PlacementRecommendOptions, options?: RequestOptions): Promise<PlacementRecommendResponse> {
     const placement = requireId(opts.placement, "placement");
-    const res = await this.http.request<WirePlacementRecommendation>({
-      method: "POST",
-      path: `/placements/${encodeSegment(placement)}/recommend`,
-      body: compact({ context: contextBody(opts.context), limit: opts.limit }),
-      // A read in effect, but each call mints a fresh recommendationId server-side - repeating
-      // it on retry is exactly what you'd want for a dropped connection, not a duplicate write.
-      idempotent: true,
-      options,
-    });
-    return toPlacementRecommendation(res.data);
+    const body = compact({ context: contextBody(opts.context), limit: opts.limit });
+    const key = this.cache ? cacheKey(placement, body) : "";
+    const cached = this.cache?.get(key);
+    if (cached) return cached;
+    if (this.cache?.isPaused()) {
+      throw new PausedError(`LIKYLY did not answer a moment ago: calls resume in ${this.cache.pauseRemaining()}s`);
+    }
+    try {
+      const res = await this.http.request<WirePlacementRecommendation>({
+        method: "POST",
+        path: `/placements/${encodeSegment(placement)}/recommend`,
+        body,
+        // A read in effect, but each call mints a fresh recommendationId server-side - repeating
+        // it on retry is exactly what you'd want for a dropped connection, not a duplicate write.
+        idempotent: true,
+        options,
+      });
+      const result = toPlacementRecommendation(res.data);
+      this.cache?.recordSuccess();
+      this.cache?.set(key, result);
+      return result;
+    } catch (error) {
+      if (isOutage(error)) this.cache?.recordFailure();
+      throw error;
+    }
   }
 }
 
@@ -64,4 +85,19 @@ function toPlacementRecommendation(w: WirePlacementRecommendation): PlacementRec
     strategyUsed: w.strategy_used,
     items: w.items.map(toRecommendedItem),
   };
+}
+
+/** Same placement, limit and context = same answer; who the anonymous visitor is does not count. */
+function cacheKey(placement: string, body: Record<string, unknown>): string {
+  const context = { ...((body.context as Record<string, unknown> | undefined) ?? {}) };
+  delete context.session_id;
+  delete context.anonymous_id;
+  const sorted = Object.fromEntries(Object.entries(context).sort(([a], [b]) => a.localeCompare(b)));
+  return `${placement}|${body.limit ?? ""}|${JSON.stringify(sorted)}`;
+}
+
+/** LIKYLY down or overloaded, as opposed to a mistake in the call (4xx). */
+function isOutage(error: unknown): boolean {
+  if (error instanceof NetworkError || error instanceof TimeoutError || error instanceof RateLimitError) return true;
+  return error instanceof LikylyError && (error.statusCode ?? 0) >= 500;
 }

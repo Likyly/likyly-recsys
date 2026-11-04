@@ -176,6 +176,7 @@ class RecommendationStrategy(str, Enum):
     collaborative = "collaborative"
     session = "session"
     popular = "popular"
+    content_session = "content_session"
 
 
 class SimilarUserPublic(BaseModel):
@@ -297,6 +298,11 @@ class UserImportRequest(BaseModel):
 
 class Message(BaseModel):
     message: str
+
+
+class CachePurged(BaseModel):
+    message: str
+    purged: int = Field(description="How many cached answers were dropped (0 is fine: nothing was cached yet).")
 
 
 class GenerateModelJobStatus(BaseModel):

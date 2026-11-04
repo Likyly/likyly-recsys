@@ -282,14 +282,14 @@ function App({ opts: initialOpts, result }) {
         <AccountStep
           project={project}
           dir={opts.dir}
-          onDone={(key, { workspace, devKey } = {}) => {
+          onDone={(key, { workspace, devKey, account } = {}) => {
             keys.current = { publicKey: key || null, devKey: devKey || null };
-            const summary = key ? [maskKey(key), workspace].filter(Boolean).join(" · ") : "skipped";
+            const summary = key ? [maskKey(key), account ?? workspace].filter(Boolean).join(" · ") : "skipped";
             // Say plainly that the keys arrived: the browser round trip can be quick to miss.
             const received = workspace
-              ? [{ level: "ok", text: `Received from likyly.com: public key ${maskKey(key)}${devKey ? " + developer key" : ""}`, hint: `(${workspace})` }]
+              ? [{ level: "ok", text: `Received from likyly.com: public key ${maskKey(key)}${devKey ? " + developer key" : ""}`, hint: `(${[account, workspace].filter(Boolean).join(" · ")})` }]
               : [];
-            finish("key", [...received, ...applyKey(opts, project, key), ...applyStarter(opts, project), ...applyDeveloperKey(opts, devKey)], summary);
+            finish("key", [...received, ...applyKey(opts, project, key), ...applyStarter(opts, project), ...applyDeveloperKey(opts, devKey, { account, workspace })], summary);
             setPhase("mcp");
           }}
         />

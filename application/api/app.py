@@ -49,7 +49,7 @@ import uvicorn
 import pandas as pd
 
 from schemas import (
-    RecommendedProduct, VectorRecommendation, User, Message, GenerateModelJobStatus, ModelVersion, ModelStatus,
+    RecommendedProduct, VectorRecommendation, User, Message, CachePurged, GenerateModelJobStatus, ModelVersion, ModelStatus,
     ClientSelf,
     ClientAdminView, DailyUsage, ClientRename, ClientUsageSummary, WorkspaceRename, WorkspaceSummary, CatalogIndex,
     EventType, EventTypeCreate, EventTypeUpdate, ImportSummary, Item, ItemUpsert, ItemImportRequest, ItemDeleteRequest, BatchResult, ErrorResponse,
@@ -804,6 +804,21 @@ async def update_my_placement(
         raise HTTPException(status_code=404, detail=str(error))
     except placement_service.ValidationError as error:
         raise HTTPException(status_code=422, detail=str(error))
+
+@app.post("/clients/me/placements/cache/purge", tags=["selfServiceClient"], response_model=CachePurged, summary="Empty the recommendation cache (all placements)", responses=_errors(401, 404))
+async def purge_my_recommendation_cache(supabase_user_id: str = Depends(get_current_supabase_user_id), x_workspace_id: WorkspaceIdHeader = None):
+    """The console's "Vider le cache" for the whole workspace - same as POST /placements/cache/purge."""
+    client_id = await _resolve_my_client_id(supabase_user_id, x_workspace_id)
+    return placement_service.purge_cache(client_id)
+
+@app.post("/clients/me/placements/{slug}/cache/purge", tags=["selfServiceClient"], response_model=CachePurged, summary="Empty one placement's recommendation cache", responses=_errors(401, 404))
+async def purge_my_placement_cache(slug: str, supabase_user_id: str = Depends(get_current_supabase_user_id), x_workspace_id: WorkspaceIdHeader = None):
+    """The "Vider le cache" button of one placement in the console."""
+    client_id = await _resolve_my_client_id(supabase_user_id, x_workspace_id)
+    try:
+        return placement_service.purge_cache(client_id, slug)
+    except placement_service.NotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error))
 
 @app.get("/clients/me/placements/{slug}/tracking-requirements", tags=["selfServiceClient"], response_model=TrackingRequirementsOut, summary="Which events this placement needs instrumented", responses=_errors(401, 404, 422))
 async def get_my_placement_tracking_requirements(

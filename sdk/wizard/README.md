@@ -27,8 +27,27 @@ An interactive terminal UI (built with [Ink](https://github.com/vadimdemedes/ink
    The developer key is never written to these files: they reference `LIKYLY_DEVELOPER_KEY` (or VS
    Code asks for it on start).
 
-It ends on a hand-off panel with the prompt to give your assistant (`c` copies it, `k` opens your
-keys page).
+6. **Verify the installation**: SDK installed and its version, your stack supported (Next.js
+   13+, React 18–19, Node 18+, ...), public and developer keys accepted by the API, assistants
+   connected.
+
+It ends on one choice, Enter by default: **Launch Claude Code** on the integration prompt (or open
+Cursor with the prompt copied). Your assistant then connects the catalog, creates the placement,
+wires it into your pages and validates the integration - ask it in plain words ("check my LIKYLY
+integration", "empty the LIKYLY cache"), there are no commands to learn.
+
+In Claude Code the same are `/likyly-clear-cache [placement]` and `/likyly-uninstall`,
+installed with the skill: Claude Code runs the command itself and shows its result (uninstall
+shows the plan and asks before removing anything).
+
+`uninstall` removes the SDK packages, the public key line, the starter file (unless you edited
+it), the `likyly` server from each assistant's MCP config, the skill, the commands and
+`.likyly/`. It never edits your code: it lists the files that still use LIKYLY so your assistant
+can take them out. Your LIKYLY account (catalog, placements, keys) is not touched.
+
+The developer key comes back from the browser sign-in too and is stored in
+`.likyly/credentials.env` (that folder ignores itself in git, file readable by you only); the
+MCP server reads it there, so nothing needs exporting.
 
 ## Commands
 
@@ -36,6 +55,9 @@ keys page).
 npx @likyly/wizard                 # full interactive install
 npx @likyly/wizard mcp add         # only connect your AI assistant
 npx @likyly/wizard detect          # print what was detected, change nothing
+npx @likyly/wizard cache clear     # empty LIKYLY's recommendation cache, every placement
+npx @likyly/wizard cache clear pdp-related   # ... or one placement
+npx @likyly/wizard uninstall       # remove what the wizard added (shows the plan, asks first; --dry-run to only look)
 npx @likyly/wizard --yes --public-key pk_... --editor claude-code,cursor   # CI, no prompts
 npx @likyly/wizard --dry-run       # show what would happen
 npx @likyly/wizard --hosted        # hosted MCP (mcp.likyly.com) instead of npx

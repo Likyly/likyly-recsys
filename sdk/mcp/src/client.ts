@@ -189,6 +189,10 @@ export class LikylyClient {
     return this.request("DELETE", `/placements/${encodeURIComponent(slug)}`);
   }
 
+  async purgeRecommendationCache(slug?: string) {
+    return this.request("POST", slug ? `/placements/${encodeURIComponent(slug)}/cache/purge` : "/placements/cache/purge");
+  }
+
   async getPlacementRequirements(slug: string) {
     return this.request("GET", `/placements/${encodeURIComponent(slug)}/requirements`);
   }

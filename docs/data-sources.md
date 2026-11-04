@@ -171,6 +171,18 @@ Flow: `preview_data_source` (sample + `suggested_mapping`) -> `configure_field_m
 Each pushed item goes through the same field-mapping + upsert path as a pull sync; `deleted_ids`
 maps to the same `delete_items` call a full sync's tombstone diff uses.
 
+**A catalog LIKYLY cannot reach** (a site on `localhost`, behind a VPN, products that only exist
+in the codebase) uses a `webhook` source the same way, with the coding agent as the upstream
+system: it reads the products from the project and calls the MCP tool `push_items` (up to 1000
+per call). A pull type would make LIKYLY's servers call their own localhost. In production,
+switch to a pull source on the public URL, or call the push endpoint from your own code when
+products change.
+
+An outdated source (old URL, old catalog) is fixed with `PATCH /data-sources/{id}` (MCP
+`update_data_source`) rather than replaced - the Free plan allows one source.
+`DELETE /data-sources/{id}` (`delete_data_source`) removes the configuration and its sync
+history, never the items already imported.
+
 ## MCP admin tools
 
 Added to `sdk/mcp` alongside the existing recommendation/event tools (`get_recommendations`,

@@ -55,7 +55,15 @@ browser-facing use case) - a public key:
 }
 ```
 
-**Claude Code / Codex, with data-source admin tools** - first create a developer key (once,
+**The easy way: `npx @likyly/wizard`** (or `npx @likyly/wizard mcp add`). It signs you in on
+likyly.com, gets a developer key, stores it in `.likyly/credentials.env` (a folder that ignores
+itself in git, readable by you only) and writes `.mcp.json` / `.cursor/mcp.json` /
+`.vscode/mcp.json` **without any key in them**: they reference `LIKYLY_DEVELOPER_KEY`, and when
+that variable is not exported the server reads the key from the credentials file
+(`LIKYLY_ENV_FILE` to point elsewhere; by default `.likyly/credentials.env` in the folder it
+starts in).
+
+**By hand, Claude Code / Codex, with data-source admin tools** - first create a developer key (once,
 from a server-side shell - never from a browser):
 
 ```bash
@@ -116,6 +124,10 @@ architecture, source types and config shapes):
 | `get_sync_status` | `GET /data-sources/{id}/syncs` |
 | `list_data_sources` | `GET /data-sources` |
 | `get_catalog_stats` | `GET /data-sources/{id}/stats` |
+| `update_data_source` | `PATCH /data-sources/{id}` - fix an outdated source rather than create another (Free: one source) |
+| `delete_data_source` | `DELETE /data-sources/{id}` - items already imported stay |
+| `push_items` | `POST /data-sources/{id}/push` (with the source's `X-Push-Secret`) - load a catalog LIKYLY cannot reach (localhost, VPN): the agent reads the products from the project and pushes them |
+| `rotate_push_secret` | `POST /data-sources/{id}/push-secret/rotate` |
 
 Admin - placements (the recommended way to wire up recommendations - see
 [`docs/placements.md`](../../docs/placements.md)) - need the secret key or a developer key
@@ -130,6 +142,7 @@ with `placements:read`/`placements:write`:
 | `delete_or_disable_placement` | `POST /placements/{slug}/deactivate` (default) or `DELETE /placements/{slug}` |
 | `preview_placement` | `POST /placements/{slug}/preview` |
 | `get_placement_requirements` | `GET /placements/{slug}/requirements` |
+| `purge_recommendation_cache` | `POST /placements/{slug}/cache/purge`, or `POST /placements/cache/purge` for all - empties the anonymous recommendation cache (see docs/placements.md, "Caching") |
 
 Admin - integration recipe & validator (writing and verifying the client-side integration -
 see [`docs/getting-started.md`](../../docs/getting-started.md)) - same `placements:read`/

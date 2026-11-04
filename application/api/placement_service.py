@@ -14,6 +14,7 @@ if _utils_dir not in sys.path:
 import db  # noqa: E402
 
 import placement_engine as engine  # noqa: E402
+import rec_cache  # noqa: E402
 from placement_filters import apply_filters  # noqa: E402
 
 
@@ -80,6 +81,7 @@ def update_placement(client_id: int, slug: str, payload) -> dict[str, Any]:
         fields["product_type"] = _resolve_product_type(client_id, fields["product_type"])
     if not fields:
         return _require(client_id, slug)
+    rec_cache.purge(client_id, slug)
     return db.update_placement(client_id, slug, **fields)
 
 
@@ -90,6 +92,7 @@ def set_enabled(client_id: int, slug: str, enabled: bool) -> dict[str, Any]:
 
 def delete_placement(client_id: int, slug: str) -> None:
     _require(client_id, slug)
+    rec_cache.purge(client_id, slug)
     db.delete_placement(client_id, slug)
 
 
@@ -115,7 +118,11 @@ def preview_placement(client_id: int, slug: str, context, limit: Optional[int]) 
         }
 
     effective_limit = limit or placement["limit"]
-    result = engine.run_placement(placement, context_dict, effective_limit, client_id=client_id)
+    # Same answer as a real call: the Pro session mix included.
+    result = engine.run_placement(
+        placement, context_dict, effective_limit, client_id=client_id,
+        blend_session=db.get_client_plan(client_id) in SESSION_BLEND_PLANS,
+    )
 
     from recommender import present_records
     presented = present_records(client_id, placement["product_type"], result.records, legacy=False, include_similar_users=False)
@@ -128,10 +135,16 @@ def preview_placement(client_id: int, slug: str, context, limit: Optional[int]) 
     }
 
 
-def run_recommend(client_id: int, slug: str, context, limit: Optional[int]) -> tuple[dict[str, Any], engine.PlacementResult, list[dict], dict[str, Any]]:
-    """Returns (placement, engine_result, filtered_presented_items, context_dict) - the route
-    layer does the attribution/finalize step (it needs app.py's _finalize_recommendation,
-    which placement_service.py can't import without a circular dependency)."""
+# Plans whose anonymous visitors get recommendations mixing the current product with their
+# session (recommender.blend_content_session); Free gets the current product's neighbours only.
+SESSION_BLEND_PLANS = {db.PLAN_PRO, db.PLAN_UNLIMITED}
+
+
+def run_recommend(client_id: int, slug: str, context, limit: Optional[int]) -> tuple[dict[str, Any], engine.PlacementResult, list[dict], dict[str, Any], str]:
+    """Returns (placement, engine_result, filtered_presented_items, context_dict, cache) - the
+    route layer does the attribution/finalize step (it needs app.py's _finalize_recommendation,
+    which placement_service.py can't import without a circular dependency). `cache` is "HIT",
+    "MISS" or "BYPASS" (a signed-in visitor: see rec_cache.py)."""
     placement = db.get_placement(client_id, slug)
     if placement is None or not placement["enabled"]:
         raise NotFoundError(f"No placement '{slug}' for this account")
@@ -142,12 +155,24 @@ def run_recommend(client_id: int, slug: str, context, limit: Optional[int]) -> t
         raise ValidationError(f"Missing required signal(s): {', '.join(missing)}")
 
     effective_limit = limit or placement["limit"]
-    result = engine.run_placement(placement, context_dict, effective_limit, client_id=client_id)
+    # Pro feature: anonymous recommendations that follow the visitor's session.
+    blend_session = db.get_client_plan(client_id) in SESSION_BLEND_PLANS
+    cacheable = rec_cache.is_cacheable_request(context_dict, follows_session=blend_session)
+    cache_key = rec_cache.key(client_id, {**placement, "slug": slug}, context_dict, effective_limit) if cacheable else None
+    if cache_key is not None:
+        cached = rec_cache.get(cache_key)
+        if cached is not None:
+            result, presented = cached
+            return placement, result, [dict(item) for item in presented], context_dict, "HIT"
+
+    result = engine.run_placement(placement, context_dict, effective_limit, client_id=client_id, blend_session=blend_session)
 
     from recommender import present_records
     presented = present_records(client_id, placement["product_type"], result.records, legacy=False, include_similar_users=False)
     presented = apply_filters(presented, placement=placement, context=context_dict)[:effective_limit]
-    return placement, result, presented, context_dict
+    if cache_key is not None and result.strategy_used in rec_cache.CACHEABLE_STRATEGIES:
+        rec_cache.put(cache_key, (result, [dict(item) for item in presented]))
+    return placement, result, presented, context_dict, ("MISS" if cacheable else "BYPASS")
 
 
 # ---------------------------------------------------------------------------
@@ -269,3 +294,12 @@ def get_recent_events(client_id: int, slug: str, window_hours: int = 24, limit: 
     calls = db.list_recent_recommendation_calls(client_id, slug, since, limit)
     interactions = db.list_recent_interactions(client_id, ["impression", "click"], since, limit, placement=slug)
     return {"slug": slug, "window_hours": window_hours, "recommendation_calls": calls, "interactions": interactions}
+
+
+def purge_cache(client_id: int, slug: Optional[str] = None) -> dict[str, Any]:
+    """Empty the anonymous recommendation cache: one placement's (checked to exist) or all."""
+    if slug is not None:
+        _require(client_id, slug)
+    purged = rec_cache.purge(client_id, slug)
+    what = f"placement '{slug}'" if slug else "every placement"
+    return {"message": f"Recommendation cache emptied for {what}: the next calls are computed afresh.", "purged": purged}

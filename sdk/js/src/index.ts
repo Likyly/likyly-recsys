@@ -12,6 +12,8 @@ export {
   ValidationError,
   NetworkError,
   TimeoutError,
+  PausedError,
 } from "./errors.js";
+export type { RecommendCacheOptions } from "./recommend-cache.js";
 export { SDK_VERSION } from "./version.js";
 export type * from "./types.js";
