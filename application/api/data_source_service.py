@@ -306,8 +306,14 @@ def handle_push(data_source_id: int, raw_secret: str, items: list[dict[str, Any]
     if hashes:
         db.upsert_data_source_item_hashes(data_source_id, run_id, hashes)
 
-    status = "partial" if failed else "success"
+    # Nothing went through at all: a failed push, not a partial one - and not a "last success".
+    nothing_applied = failed and not upserted and not deleted_ids
+    status = "failed" if nothing_applied else "partial" if failed else "success"
     db.finish_sync_run(run_id, status, len(items), upserted, len(deleted_ids), failed, error_summary=json.dumps(errors[:20]) if errors else None)
     now = datetime.now(timezone.utc)
-    db.update_data_source(client_id, data_source_id, status="connected", last_sync_at=now, last_success_at=now, last_error=None)
+    if nothing_applied:
+        first = errors[0].get("message") or errors[0].get("error") or "every item was rejected"
+        db.update_data_source(client_id, data_source_id, status="connected", last_sync_at=now, last_error=f"Last push rejected: {first}")
+    else:
+        db.update_data_source(client_id, data_source_id, status="connected", last_sync_at=now, last_success_at=now, last_error=None)
     return {"received": len(items) + len(deleted_ids), "upserted": upserted, "deleted": len(deleted_ids), "failed": failed}

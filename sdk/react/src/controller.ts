@@ -35,6 +35,10 @@ export class RecommendationsController {
   // Bumped on every run() - a response for a superseded call (placement/context changed while
   // it was in flight) is dropped instead of clobbering a newer, already-resolved state.
   private generation = 0;
+  // What the current items answer. A different request (another product, user, placement...)
+  // must not keep showing the previous answer while it loads - that flashed the last product's
+  // recommendations on the next product page. A refetch of the same request keeps them.
+  private lastRequestKey: string | undefined;
 
   constructor(private readonly likyly: TrackableLikyly) {}
 
@@ -57,12 +61,20 @@ export class RecommendationsController {
     this.lastContext = opts.context;
     if (opts.enabled === false) {
       this.generation += 1; // invalidate any call still in flight from before enabled became false
+      this.lastRequestKey = undefined;
       this.setState(INITIAL_STATE);
       return;
     }
 
     const generation = ++this.generation;
-    this.setState({ isLoading: true, error: undefined });
+    const requestKey = JSON.stringify([opts.placement, opts.context ?? {}, opts.limit ?? null]);
+    const sameRequest = requestKey === this.lastRequestKey;
+    this.lastRequestKey = requestKey;
+    this.setState(
+      sameRequest
+        ? { isLoading: true, error: undefined }
+        : { items: [], strategyUsed: undefined, recommendationId: undefined, isLoading: true, error: undefined },
+    );
     try {
       const result = await this.likyly.recommend({ placement: opts.placement, context: opts.context, limit: opts.limit });
       if (generation !== this.generation) return; // a newer call already started - drop this result

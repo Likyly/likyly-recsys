@@ -262,6 +262,29 @@ def test_webhook_push_ingress(http, tenant):
     assert wrong_secret.status_code == 404
 
 
+def test_webhook_push_where_every_item_fails_is_a_failure(http, tenant):
+    created = http.post("/data-sources", headers=tenant.secret, json={
+        "name": "wh", "type": "webhook", "product_type": "pushcat", "config": {},
+    }).json()
+    ds_id, push_secret = created["id"], created["push_secret"]
+    http.put(f"/data-sources/{ds_id}/field-mapping", headers=tenant.secret, json={"mapping": {"external_id": "id", "title": "name"}})
+
+    # Wrong field names: no item has the mapped id/title.
+    bad = http.post(f"/data-sources/{ds_id}/push", headers={"X-Push-Secret": push_secret}, json={"items": [{"sku": "w1", "label": "x"}]})
+    assert bad.status_code == 200, bad.text
+    assert bad.json()["upserted"] == 0 and bad.json()["failed"] == 1
+    run = http.get(f"/data-sources/{ds_id}/syncs", headers=tenant.secret).json()[0]
+    assert run["status"] == "failed"
+    source = http.get(f"/data-sources/{ds_id}", headers=tenant.secret).json()
+    assert source["last_success_at"] is None
+    assert source["last_error"].startswith("Last push rejected")
+
+    good = http.post(f"/data-sources/{ds_id}/push", headers={"X-Push-Secret": push_secret}, json={"items": [{"id": "w1", "name": "ok"}]})
+    assert good.json()["upserted"] == 1
+    source = http.get(f"/data-sources/{ds_id}", headers=tenant.secret).json()
+    assert source["last_success_at"] is not None and source["last_error"] is None
+
+
 def test_sync_cooldown_blocks_immediate_retrigger(http, tenant, monkeypatch):
     # "On ne peut pas ingérer un catalogue toutes les minutes" - a re-sync of the same source
     # inside db.SYNC_COOLDOWN_SECONDS of the last one must be rejected (429), not queued.

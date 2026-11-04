@@ -29,6 +29,22 @@ function fakeLikyly(recommendImpl: (call: RecommendCall) => Promise<unknown>) {
 const RESULT = { recommendationId: "rec_1", placement: "pdp-related", strategyUsed: "content", items: [{ itemId: "SKU-1", properties: {} }] };
 
 describe("RecommendationsController", () => {
+  it("a new product never shows the previous product's items while loading; a refetch keeps them", async () => {
+    const { client } = fakeLikyly(async () => RESULT);
+    const controller = new RecommendationsController(client as never);
+    await controller.run({ placement: "pdp-related", context: { itemId: "SKU-1" } });
+    assert.equal(controller.getState().items.length, 1);
+
+    const next = controller.run({ placement: "pdp-related", context: { itemId: "SKU-2" } });
+    assert.deepEqual(controller.getState().items, [], "cleared as soon as the product changes");
+    assert.equal(controller.getState().recommendationId, undefined);
+    await next;
+
+    const again = controller.run({ placement: "pdp-related", context: { itemId: "SKU-2" } });
+    assert.equal(controller.getState().items.length, 1, "same request: kept while it refreshes");
+    await again;
+  });
+
   it("starts idle, then loading, then resolved", async () => {
     const { client } = fakeLikyly(async () => RESULT);
     const controller = new RecommendationsController(client as never);
