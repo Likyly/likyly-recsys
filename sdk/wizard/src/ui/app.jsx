@@ -26,6 +26,7 @@ import { C, Gradient, Logo, Tag } from "./theme.jsx";
 import { LiveLog, MultiSelect, Results, Select, Step } from "./widgets.jsx";
 import { AccountStep } from "./account.jsx";
 import { copyToClipboard } from "./system.mjs";
+import * as git from "../git.mjs";
 
 const INSTALL_STEPS = [
   ["detect", "Detect your project"],
@@ -114,6 +115,43 @@ function PlanCard({ project, rows, compat }) {
   );
 }
 
+/** What LIKYLY changed in the project, for a review before keeping it. Printed once. */
+function ReviewPanel({ review }) {
+  const { mine, alreadyModified, branch, notInGit } = review;
+  const shown = mine.slice(0, 12);
+  const mark = { M: ["M", C.amber], A: ["+", C.mint], D: ["-", C.coral] };
+  return (
+    <Box flexDirection="column" marginBottom={1}>
+      <Text bold>
+        Changed in your project{branch ? <Text color={C.muted}> · branch {branch}</Text> : null}
+        <Text color={C.muted}> · nothing committed</Text>
+      </Text>
+      {mine.length === 0 ? <Text color={C.muted}>  No file changed.</Text> : null}
+      {shown.map((f) => (
+        <Text key={f.path}>
+          {"  "}
+          <Text color={(mark[f.code] ?? mark.M)[1]} bold>
+            {(mark[f.code] ?? mark.M)[0]}
+          </Text>{" "}
+          {f.path}
+        </Text>
+      ))}
+      {mine.length > shown.length ? <Text color={C.muted}>  … and {mine.length - shown.length} more</Text> : null}
+      {notInGit.length ? <Text color={C.muted}>  Not in git (ignored on purpose): {notInGit.join(", ")}</Text> : null}
+      {alreadyModified ? (
+        <Text color={C.muted}>
+          {"  "}
+          {alreadyModified === 1 ? "Your 1 pending change from before is" : `Your ${alreadyModified} pending changes from before are`} left as they were.
+        </Text>
+      ) : null}
+      <Text color={C.muted}>
+        {"  "}Review: VS Code Source Control (Ctrl/Cmd+Shift+G), or <Text color={C.sky}>git diff</Text>
+        {branch && branch.startsWith("likyly/") ? " · keep it: merge the branch; drop it: switch back and delete it" : ""}
+      </Text>
+    </Box>
+  );
+}
+
 /** The closing panel, printed once: what is done, and what the assistant will do next. */
 function DonePanel({ editors, dryRun, level, devKey }) {
   const failed = level === "fail";
@@ -166,9 +204,10 @@ function DonePanel({ editors, dryRun, level, devKey }) {
 }
 
 /** The one remaining choice, Enter by default: hand over to the assistant. */
-function NextAction({ editors, onPick }) {
+function NextAction({ editors, canReview, onPick }) {
   const items = [];
   if (editors.includes("claude-code") && commandExists("claude")) items.push({ label: "Launch Claude Code now", value: "claude", hint: "it starts on this prompt" });
+  if (canReview) items.push({ label: "Review the changes first", value: "review", hint: "git diff of what LIKYLY changed" });
   if (editors.includes("cursor") && commandExists("cursor")) items.push({ label: "Open Cursor", value: "cursor", hint: "the prompt is copied, paste it in the chat" });
   items.push({ label: "Copy the prompt and exit", value: "copy" });
   items.push({ label: "Exit", value: "exit" });
@@ -183,8 +222,13 @@ function App({ opts: initialOpts, result }) {
   const [phase, setPhase] = useState(order[0][0]);
   const [project] = useState(() => detectProject(opts.dir));
   const [compat] = useState(() => checkCompat(opts.dir, project));
+  // Git: where the developer was, and what was already modified, so the end of the run can show
+  // exactly what LIKYLY changed (and work on its own branch if they want).
+  const [repo] = useState(() => (git.isRepo(opts.dir) ? { branch: git.currentBranch(opts.dir), before: git.snapshot(opts.dir) } : null));
+  const workBranch = useRef(repo?.branch ?? null);
   const [log, setLog] = useState([]);
   const keys = useRef({ publicKey: opts.publicKey || null, devKey: null });
+  const reviewRef = useRef([]);
   const [chosenEditors, setChosenEditors] = useState([]);
   // Everything finished is printed once and never redrawn: only the live step is.
   const [printed, setPrinted] = useState([{ key: "header", kind: "header" }]);
@@ -197,9 +241,10 @@ function App({ opts: initialOpts, result }) {
     setPrinted((p) => [...p, { key: id, kind: "step", title: order.find(([k]) => k === id)[1], ...st }]);
   };
   const failed = Object.values(steps).some((s) => s.status === "fail");
-  const end = (code, launch = null) => {
+  const end = (code, launch = null, files = []) => {
     result.code = code;
     result.launch = launch;
+    result.files = files;
     exit();
   };
 
@@ -235,7 +280,10 @@ function App({ opts: initialOpts, result }) {
       verifyInstall(opts, project, { ...keys.current, editors: chosenEditors }).then((r) => {
         const level = failed || r.some((x) => x.level === "fail") ? "fail" : r.some((x) => x.level === "warn") ? "warn" : "ok";
         finish("verify", r, { fail: "needs attention", warn: "one thing left to do", ok: "all good" }[level]);
-        setPrinted((p) => [...p, { key: "done", kind: "done", level }]);
+        const review = repo && !opts.dryRun ? git.changesSince(opts.dir, repo.before) : null;
+        const notInGit = repo ? git.ignored(opts.dir, [project?.envFile, ".likyly/credentials.env"].filter(Boolean)) : [];
+        setPrinted((p) => [...p, { key: "done", kind: "done", level, review: review && { ...review, branch: workBranch.current, notInGit } }]);
+        reviewRef.current = review?.mine ?? [];
         setPhase("next");
       });
     }
@@ -259,8 +307,15 @@ function App({ opts: initialOpts, result }) {
         <Box height={1} />
         <Select
           items={[
-            { label: "Set it up", value: "go", hint: opts.dryRun ? "(dry run)" : undefined },
-            ...(installMode(opts, project) === "run" ? [{ label: "Set it up, but skip the package install", value: "noinstall" }] : []),
+            ...(repo && !opts.dryRun && repo.branch !== git.BRANCH
+              ? [
+                  { label: `Set it up on a new branch ${git.BRANCH}`, value: "branch", hint: `from ${repo.branch ?? "here"} · review before you merge` },
+                  { label: `Set it up on ${repo.branch ?? "the current branch"}`, value: "go" },
+                ]
+              : [{ label: "Set it up", value: "go", hint: opts.dryRun ? "(dry run)" : undefined }]),
+            ...(installMode(opts, project) === "run"
+              ? [{ label: repo && !opts.dryRun && repo.branch !== git.BRANCH ? "Same as the first, but skip the package install" : "Set it up, but skip the package install", value: "noinstall" }]
+              : []),
             { label: "Cancel", value: "cancel" },
           ]}
           onSubmit={(v) => {
@@ -270,7 +325,16 @@ function App({ opts: initialOpts, result }) {
               return;
             }
             if (v === "noinstall") opts.install = false;
-            finish("plan", [], v === "noinstall" ? "approved, no package install" : "approved", "done");
+            const results = [];
+            const onBranch = v === "branch" || (v === "noinstall" && repo && !opts.dryRun && repo.branch !== git.BRANCH);
+            if (onBranch) {
+              const made = git.createBranch(opts.dir);
+              if (made.ok) {
+                workBranch.current = git.BRANCH;
+                results.push({ level: "ok", text: `${made.existed ? "Back on" : "On a new"} branch ${git.BRANCH}`, hint: `(from ${repo.branch ?? "HEAD"}; your pending changes came along, untouched)` });
+              } else results.push({ level: "warn", text: `Could not create ${git.BRANCH}: staying on ${repo.branch}` });
+            }
+            finish("plan", results, v === "noinstall" ? "approved, no package install" : `approved${workBranch.current ? ` · branch ${workBranch.current}` : ""}`, "done");
             setPhase("sdk");
           }}
         />
@@ -321,7 +385,12 @@ function App({ opts: initialOpts, result }) {
                 {item.results.length ? <Results items={item.results} /> : null}
               </Step>
             ) : null}
-            {item.kind === "done" ? <DonePanel editors={chosenEditors} dryRun={opts.dryRun} level={item.level} devKey={keys.current.devKey} /> : null}
+            {item.kind === "done" ? (
+              <>
+                {item.review ? <ReviewPanel review={item.review} /> : null}
+                <DonePanel editors={chosenEditors} dryRun={opts.dryRun} level={item.level} devKey={keys.current.devKey} />
+              </>
+            ) : null}
           </Box>
         )}
       </Static>
@@ -335,7 +404,7 @@ function App({ opts: initialOpts, result }) {
       ) : null}
       {phase === "next" ? (
         <Box paddingX={1} marginTop={1} display={tooSmall ? "none" : "flex"}>
-          <NextAction editors={chosenEditors} onPick={(v) => end(failed ? 1 : 0, v)} />
+          <NextAction editors={chosenEditors} canReview={reviewRef.current.length > 0} onPick={(v) => end(failed ? 1 : 0, v, reviewRef.current)} />
         </Box>
       ) : null}
     </>
@@ -343,7 +412,16 @@ function App({ opts: initialOpts, result }) {
 }
 
 /** After the UI is gone: run what the developer picked, with the terminal handed over. */
-function launch(choice, dir) {
+function launch(choice, dir, files = []) {
+  if (choice === "review") {
+    // Modified files as a diff (in the developer's pager), new ones listed: git diff skips them.
+    const tracked = files.filter((f) => f.code !== "A").map((f) => f.path);
+    const added = files.filter((f) => f.code === "A").map((f) => f.path);
+    if (tracked.length) spawnSync("git", ["diff", "--", ...tracked], { cwd: dir, stdio: "inherit" });
+    if (added.length) console.log(`\n  New files (open them to read): \n${added.map((f) => `    + ${f}`).join("\n")}`);
+    console.log("\n  In VS Code: Source Control (Ctrl/Cmd+Shift+G) shows each change side by side.\n  Then: npx @likyly/wizard again is not needed - run `claude` to let your assistant continue.\n");
+    return;
+  }
   if (choice === "claude") {
     console.log("\n  Starting Claude Code…\n");
     spawnSync("claude", [AGENT_PROMPT], { cwd: dir, stdio: "inherit", shell: process.platform === "win32" });
@@ -360,6 +438,6 @@ export async function runInteractive(opts, version) {
   const result = { code: 130, version, launch: null };
   const app = render(<App opts={opts} result={result} />, { exitOnCtrlC: true });
   await app.waitUntilExit();
-  if (result.launch) launch(result.launch, opts.dir);
+  if (result.launch) launch(result.launch, opts.dir, result.files);
   return result.code;
 }

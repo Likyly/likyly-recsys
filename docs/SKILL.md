@@ -101,6 +101,15 @@ URL, or call the push endpoint from their own code when products change.
 
 ## Phase 3: Integrate
 
+**Work where the developer can review it.** Before editing any file, run `git branch --show-current`
+and `git status --short`. If the project is a git repository on its default branch (main,
+master...), switch to `likyly/setup` (`git switch likyly/setup`, or `git switch -c likyly/setup`
+when it does not exist; the wizard usually created it) and say so in one line. Their uncommitted
+work comes along untouched: never stash, reset, checkout or restore a file you did not write
+yourself. Never commit or push unless the developer asks; when they ask for a pull request,
+commit only the files you changed (not their pending work), push the branch and open it with
+`gh pr create`.
+
 1. Inspect the project: package manager, framework (React/Next.js/Vue/Svelte/vanilla/other),
    whether it's a Client or Server Component context at the integration point, and whether the
    current user's id is already available there (an existing auth hook/session).
@@ -156,7 +165,7 @@ copy per tab: open the page in a new tab to see the fresh recommendations. Never
 
 End every LIKYLY task - finished or stopped - with this report and nothing after it: a table
 the developer reads in five seconds, links to check for themselves, and the single next
-action. Write it in the developer's language. **16 lines at most** outside the table. No
+action. Write it in the developer's language. **20 lines at most** outside the table. No
 narration of what you did, no tool names, no scopes, no explanations of how LIKYLY works,
 no list of optional clean-ups.
 
@@ -170,7 +179,10 @@ no list of optional clean-ups.
 | ✅ | Tracking | <events, e.g. views, add to cart> |
 | ❌ | Display | <the one thing blocking, ≤ 8 words> |
 
-Code: <N> files changed - `<main file>`, `<other file>`
+**Review** (nothing committed · branch `<branch>`)
+- <N> files: `<path>` (new), `<path>` (modified), ...
+- VS Code: Source Control (Ctrl/Cmd+Shift+G) shows each change side by side · or `git diff`
+- Keep it: ask me to commit and open a pull request · Drop it: `git switch <base> && git branch -D likyly/setup`
 
 **Check**
 - Your page: <exact local URL>
@@ -194,6 +206,9 @@ Code: <N> files changed - `<main file>`, `<other file>`
   server error: "Nothing to change in your code: LIKYLY's API fails on this placement. Reload the
   page once it is fixed, then ask me to check again." Give the request id only if the developer
   asks how to report it.
+- **Review**: list every file you created or changed (from `git status --short`, minus what was
+  already modified before you started), new ones marked "new". Leave out the "Drop it" hint when
+  you worked on the developer's own branch. Not a git repository: list the files and skip the rest.
 - **Your setup**: read the account and workspace from the comment lines of
   `.likyly/credentials.env` (`# Account:`, `# Workspace:`); leave the line out if they are not
   there. List only the commands that exist in the project (`.claude/commands/likyly-*.md`); the

@@ -1,6 +1,6 @@
 {
   "name": "@likyly/wizard",
-  "version": "0.5.0",
+  "version": "0.7.0",
   "description": "Install LIKYLY in one command: detects your framework, installs the SDK, writes your public key and connects your AI coding assistant (Claude Code, Cursor, VS Code) to the LIKYLY MCP server.",
   "type": "module",
   "bin": {

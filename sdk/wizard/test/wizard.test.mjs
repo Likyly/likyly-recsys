@@ -295,3 +295,24 @@ test("uninstall keeps a starter file the developer edited", () => {
   assert.match(res.stdout, /edited since the wizard wrote it/);
   assert.ok(existsSync(join(dir, "components/likyly-provider.tsx")));
 });
+
+test("review: only what changed after the snapshot is listed, on the likyly/setup branch", async () => {
+  const git = await import("../src/git.mjs");
+  const dir = project({ "package.json": { name: "x" }, "app/page.tsx": "a\n", ".gitignore": ".env*.local\n" });
+  const run = (...args) => assert.equal(spawnSync("git", args, { cwd: dir }).status, 0, args.join(" "));
+  run("init", "-q");
+  run("add", "-A");
+  run("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "init");
+  writeFileSync(join(dir, "app/page.tsx"), "a\nmine\n"); // the developer's pending work
+  const before = git.snapshot(dir);
+  assert.ok(git.createBranch(dir).ok);
+  assert.equal(git.currentBranch(dir), "likyly/setup");
+  writeFileSync(join(dir, "package.json"), '{"name":"x","dependencies":{"@likyly/sdk":"1"}}');
+  writeFileSync(join(dir, "likyly.ts"), "new\n");
+  writeFileSync(join(dir, ".env.local"), "K=1\n");
+  const { mine, alreadyModified } = git.changesSince(dir, before);
+  assert.deepEqual(mine.map((f) => `${f.code} ${f.path}`).sort(), ["A likyly.ts", "M package.json"]);
+  assert.equal(alreadyModified, 1, "the developer's own change is counted, not listed");
+  assert.deepEqual(git.ignored(dir, [".env.local"]), [".env.local"]);
+  assert.equal(readFileSync(join(dir, "app/page.tsx"), "utf8"), "a\nmine\n", "pending work untouched");
+});

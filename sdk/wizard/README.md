@@ -13,7 +13,8 @@ An interactive terminal UI (built with [Ink](https://github.com/vadimdemedes/ink
    `wp-config.php`) and the package manager already in use (npm, pnpm, yarn, bun, composer, uv,
    poetry, bundler…).
 2. **Review the plan**: every command it will run and every file it will write, before anything
-   happens. Nothing existing is overwritten.
+   happens. Nothing existing is overwritten. In a git repository it offers to work on a new
+   branch, `likyly/setup` (your uncommitted work comes along, untouched), and it never commits.
 3. **Install the SDK** (`@likyly/sdk`, plus `@likyly/react` for React frameworks), with the
    package manager's output streamed live. Bare `pip`, Maven/Gradle and WordPress are shown, not run.
 4. **Connect your LIKYLY account**: opens likyly.com, where you sign in or create an account
@@ -30,6 +31,10 @@ An interactive terminal UI (built with [Ink](https://github.com/vadimdemedes/ink
 6. **Verify the installation**: SDK installed and its version, your stack supported (Next.js
    13+, React 18–19, Node 18+, ...), public and developer keys accepted by the API, assistants
    connected.
+
+Before that, it lists what it changed in your project - apart from what you had already
+modified - and what git does not track on purpose (`.env.local`, `.likyly/`). Review it in VS
+Code's Source Control panel or with `git diff`; "Review the changes first" opens the diff.
 
 It ends on one choice, Enter by default: **Launch Claude Code** on the integration prompt (or open
 Cursor with the prompt copied). Your assistant then connects the catalog, creates the placement,
