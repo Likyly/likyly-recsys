@@ -60,7 +60,7 @@ from schemas import (
     DataSource, PlanLimits, Placement, PlacementUpdate, PlacementHealthOut, TrackingRequirementsOut,
     AnalyticsSummaryOut, AnalyticsDetailOut,
     UpgradeRequestCreate, UpgradeRequestReceived,
-    SyncRun, SyncTriggerRequest,
+    SyncRun, SyncTriggerRequest, DataSourceUpdate, PushSecretIssued,
 )
 
 
@@ -1005,6 +1005,43 @@ async def sync_my_data_source(data_source_id: int, payload: SyncTriggerRequest, 
         raise HTTPException(status_code=429, detail=str(error))
     background_tasks.add_task(data_source_service.run_sync_job, client_id, data_source_id, run["mode"], run["id"])
     return run
+
+@app.patch("/clients/me/data-sources/{data_source_id}", tags=["selfServiceClient"], response_model=DataSource, summary="Update a data source", responses=_errors(401, 404, 422))
+async def update_my_data_source(data_source_id: int, payload: DataSourceUpdate, supabase_user_id: str = Depends(get_current_supabase_user_id), x_workspace_id: WorkspaceIdHeader = None):
+    """Supabase-session-gated mirror of PATCH /data-sources/{id} - the dashboard's connector
+    settings (rename, and whatever else the same service accepts). Same rules underneath."""
+    client_id = await _resolve_my_client_id(supabase_user_id, x_workspace_id)
+    try:
+        return data_source_service.update_data_source(client_id, data_source_id, payload)
+    except data_source_service.NotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error))
+    except data_source_service.ValidationError as error:
+        raise HTTPException(status_code=422, detail=str(error))
+
+@app.delete("/clients/me/data-sources/{data_source_id}", tags=["selfServiceClient"], response_model=Message, summary="Delete a data source", responses=_errors(401, 404))
+async def delete_my_data_source(data_source_id: int, supabase_user_id: str = Depends(get_current_supabase_user_id), x_workspace_id: WorkspaceIdHeader = None):
+    """Supabase-session-gated mirror of DELETE /data-sources/{id} - how the dashboard
+    "changes connector": the source and its sync history go, the catalog's items stay (they
+    belong to the catalog, not to the source), and a different type can then be connected."""
+    client_id = await _resolve_my_client_id(supabase_user_id, x_workspace_id)
+    try:
+        data_source_service.delete_data_source(client_id, data_source_id)
+    except data_source_service.NotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error))
+    return {"message": f"Data source {data_source_id} deleted"}
+
+@app.post("/clients/me/data-sources/{data_source_id}/push-secret/rotate", tags=["selfServiceClient"], response_model=PushSecretIssued, summary="Rotate a push source's shared secret", responses=_errors(401, 404, 422))
+async def rotate_my_push_secret(data_source_id: int, supabase_user_id: str = Depends(get_current_supabase_user_id), x_workspace_id: WorkspaceIdHeader = None):
+    """Supabase-session-gated mirror of POST /data-sources/{id}/push-secret/rotate - push
+    sources (webhook, woocommerce) only. The new secret is returned once; the old one stops
+    working immediately."""
+    client_id = await _resolve_my_client_id(supabase_user_id, x_workspace_id)
+    try:
+        return {"push_secret": data_source_service.rotate_push_secret(client_id, data_source_id)}
+    except data_source_service.NotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error))
+    except data_source_service.ValidationError as error:
+        raise HTTPException(status_code=422, detail=str(error))
 
 @app.get("/clients/me/data-sources/{data_source_id}/syncs", tags=["selfServiceClient"], response_model=List[SyncRun], summary="Recent sync runs", responses=_errors(401, 404, 422))
 async def list_my_data_source_syncs(data_source_id: int, limit: int = Query(20, ge=1, le=100), supabase_user_id: str = Depends(get_current_supabase_user_id), x_workspace_id: WorkspaceIdHeader = None):

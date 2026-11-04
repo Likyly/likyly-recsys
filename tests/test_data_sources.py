@@ -404,3 +404,51 @@ def test_sync_my_data_source_via_supabase_session(http, api, monkeypatch):
         assert cross_tenant.status_code == 404
     finally:
         api.app.dependency_overrides.pop(api.get_current_supabase_user_id, None)
+
+
+def test_manage_my_data_source_via_supabase_session(http, api):
+    # PATCH / DELETE /clients/me/data-sources/{id} and .../push-secret/rotate mirror the
+    # secret-key routes for the dashboard: rename a connector, rotate a webhook's secret,
+    # remove it to connect another type - always scoped to the caller's own workspace.
+    _client_id, secret_key, _public_key = db.create_client_for_supabase_user("workspace-manage-test", "supabase-uid-manage-1")
+    webhook = http.post("/data-sources", headers={"X-API-Key": secret_key}, json={
+        "name": "hook", "type": "webhook", "product_type": "shop-manage",
+    }).json()
+    rest = http.post("/data-sources", headers={"X-API-Key": secret_key}, json={
+        "name": "rest", "type": "rest_api", "product_type": "shop-manage-rest",
+        "config": {"base_url": "https://example.invalid/products", "items_path": "products"},
+    })
+    _other_id, other_secret, _ = db.create_client_for_supabase_user("workspace-manage-other", "supabase-uid-manage-2")
+    other = http.post("/data-sources", headers={"X-API-Key": other_secret}, json={
+        "name": "other-hook", "type": "webhook", "product_type": "shop-manage-other",
+    }).json()
+
+    assert http.patch(f"/clients/me/data-sources/{webhook['id']}", json={"name": "x"}).status_code == 401
+    assert http.delete(f"/clients/me/data-sources/{webhook['id']}").status_code == 401
+
+    api.app.dependency_overrides[api.get_current_supabase_user_id] = lambda: "supabase-uid-manage-1"
+    try:
+        renamed = http.patch(f"/clients/me/data-sources/{webhook['id']}", json={"name": "Boutique (webhook)"})
+        assert renamed.status_code == 200
+        assert renamed.json()["name"] == "Boutique (webhook)"
+
+        rotated = http.post(f"/clients/me/data-sources/{webhook['id']}/push-secret/rotate")
+        assert rotated.status_code == 200
+        new_secret = rotated.json()["push_secret"]
+        assert new_secret and new_secret != webhook["push_secret"]
+
+        if rest.status_code == 201:
+            # A pull source has no push secret to rotate.
+            assert http.post(f"/clients/me/data-sources/{rest.json()['id']}/push-secret/rotate").status_code == 422
+
+        # Never someone else's source.
+        assert http.patch(f"/clients/me/data-sources/{other['id']}", json={"name": "x"}).status_code == 404
+        assert http.delete(f"/clients/me/data-sources/{other['id']}").status_code == 404
+        assert http.post(f"/clients/me/data-sources/{other['id']}/push-secret/rotate").status_code == 404
+
+        deleted = http.delete(f"/clients/me/data-sources/{webhook['id']}")
+        assert deleted.status_code == 200
+        remaining = [s["id"] for s in http.get("/clients/me/data-sources").json()]
+        assert webhook["id"] not in remaining
+    finally:
+        api.app.dependency_overrides.pop(api.get_current_supabase_user_id, None)
