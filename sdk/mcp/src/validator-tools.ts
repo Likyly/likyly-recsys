@@ -39,6 +39,16 @@ export function createLikylyValidatorTools(server: McpServer, client: LikylyClie
   );
 
   server.tool(
+    "get_model_overview",
+    "Read-only report on one catalog's recommendation model - what /likyly-model shows. `versions`: every trained version of the collaborative (ALS) model, newest first, with trained_at, triggered_by (manual or auto), precision_at_k (k = precision_k, measured on a held-out 20% of interactions), and the users/items/interactions it learned from; `is_active` marks the one serving production, the others are history or candidates rejected for scoring lower. `performance`: per engine that actually served this catalog in the last `days` (hybrid, content, collaborative, session, popular - the strategy after any fallback), recommendations served and the impressions, clicks, add-to-carts and purchases attributed to them, with ctr. Only collaborative and hybrid use the trained model; content uses item similarity, session the visitor's recent views, popular the catalog's popularity - none of those three is versioned. Get the catalog name from list_placements (each placement's product_type).",
+    {
+      product_type: z.string().min(1).max(64).describe("The catalog, e.g. a placement's product_type."),
+      days: z.number().int().min(1).max(90).default(7).describe("How many days of production traffic to count. Default 7."),
+    },
+    async ({ product_type, days }) => jsonResult(await client.getModelOverview(product_type, days)),
+  );
+
+  server.tool(
     "validate_integration",
     "Step 11 of wiring up a placement: verifies the integration is actually working, from LIKYLY's own data - not a guess from reading the site's source. Call this after rendering the placement and adding tracking, whenever a developer asks to \"check\"/\"verify\" their LIKYLY integration. Renders a checklist (✓ ok, ⚠ received but worth a look, ✗ missing/critical) and, for anything not ok, a concrete next step - loop back to get_integration_recipe or get_tracking_requirements for the ones it names.",
     { slug, window_hours: windowHours },

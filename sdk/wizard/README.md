@@ -43,7 +43,18 @@ integration", "empty the LIKYLY cache"), there are no commands to learn.
 
 In Claude Code the same are `/likyly-clear-cache [placement]` and `/likyly-uninstall`, plus
 `/likyly-help` (the list of commands), installed with the skill: Claude Code runs the command
-itself and shows its result. Uninstall shows the plan, then asks whether to proceed and on which
+itself and shows its result. Two read-only reports come with them:
+
+- `/likyly-inventory` - what LIKYLY added to the site: each recommendation block, the page it is
+  on, how it is set up in LIKYLY and what it served in the last 24 h; the events the code sends;
+  the setup files. It starts from `inventory` (below), then reads the code and asks LIKYLY.
+- `/likyly-model [catalog] [days]` - the recommendation model: the version serving production
+  (training date, precision@10, the data it learned from), the other versions and why they are
+  not live, and what each engine served and earned on the site (MCP tool `get_model_overview`,
+  API `GET /models/overview`, readable with the developer key).
+
+`inventory` (also `--json`) lists the LIKYLY packages and versions, the key variable (never its
+value), the setup files and every source line that mentions LIKYLY; it changes nothing. Uninstall shows the plan, then asks whether to proceed and on which
 branch: a new `likyly/uninstall` branch (recommended) or the current one. When the wizard runs
 from a local checkout instead of npm, the commands call that checkout.
 

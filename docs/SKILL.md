@@ -256,6 +256,8 @@ no list of optional clean-ups.
 | Command | What it does |
 |---|---|
 | `/likyly-help` | Lists these commands and what you can ask in plain words |
+| `/likyly-inventory` | What LIKYLY added to this site: each recommendation block and its page, tracking, setup |
+| `/likyly-model [catalog] [days]` | The recommendation model: versions, which one is live, training date, performance |
 | `/likyly-clear-cache [placement]` | Shows fresh recommendations right away (otherwise they refresh within the hour) |
 | `/likyly-uninstall` | Removes LIKYLY from this project: shows what it will remove, asks on which branch |
 

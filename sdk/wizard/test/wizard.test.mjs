@@ -166,6 +166,43 @@ test("end to end: mcp add for Claude Code installs the skill", () => {
   assert.match(readFileSync(join(dir, ".claude/commands/likyly-clear-cache.md"), "utf8"), /node \S+likyly-wizard\.mjs cache clear \$ARGUMENTS/);
   assert.match(readFileSync(join(dir, ".claude/commands/likyly-uninstall.md"), "utf8"), /uninstall --yes --branch new/);
   assert.match(readFileSync(join(dir, ".claude/commands/likyly-help.md"), "utf8"), /\/likyly-clear-cache \[placement\]/);
+  const help = readFileSync(join(dir, ".claude/commands/likyly-help.md"), "utf8");
+  assert.match(help, /\/likyly-inventory/);
+  assert.match(help, /\/likyly-model \[catalog\] \[days\]/);
+  const inventory = readFileSync(join(dir, ".claude/commands/likyly-inventory.md"), "utf8");
+  assert.match(inventory, /likyly-wizard\.mjs inventory`/);
+  assert.match(inventory, /mcp__likyly__list_placements/);
+  const model = readFileSync(join(dir, ".claude/commands/likyly-model.md"), "utf8");
+  assert.match(model, /mcp__likyly__get_model_overview/);
+  for (const text of [inventory, model]) assert.doesNotMatch(text, /LIKYLY_DEVELOPER_KEY/, "never reads the key line");
+});
+
+test("inventory lists what LIKYLY put in a project, never a key value", () => {
+  const dir = project({
+    "package.json": { dependencies: { next: "15.0.0", react: "19.0.0", "@likyly/react": "^0.2.0", "@likyly/sdk": "^1.1.0" } },
+    ".env.local": "OTHER=1\nNEXT_PUBLIC_LIKYLY_KEY=pk_secretvalue123\n",
+    ".mcp.json": { mcpServers: { likyly: { command: "npx" } } },
+    ".likyly/credentials.env": "# Account: dev@example.com\n# Workspace: Shop\n# Console: https://www.likyly.com\nLIKYLY_DEVELOPER_KEY=lk_topsecret\n",
+    "src/app/products/[id]/page.tsx": 'import { LikylyRecommendations } from "@likyly/react";\nexport default function P() {\n  return <LikylyRecommendations placement="pdp-related" />;\n}\n',
+    "src/app/page.tsx": "export default function Home() { return null; }\n",
+    "node_modules/@likyly/react/package.json": { name: "@likyly/react", version: "0.2.0" },
+  });
+  const res = runCli(["inventory", "--json", "--dir", dir], dir);
+  assert.equal(res.status, 0, res.stderr);
+  const inv = JSON.parse(res.stdout);
+  assert.deepEqual(inv.packages.map((p) => [p.name, p.version]), [["@likyly/react", "0.2.0"], ["@likyly/sdk", null]]);
+  assert.deepEqual(inv.keys, [{ file: ".env.local", variable: "NEXT_PUBLIC_LIKYLY_KEY" }]);
+  assert.deepEqual(inv.account, { account: "dev@example.com", workspace: "Shop", console: "https://www.likyly.com" });
+  assert.ok(inv.setup.some((s) => s.what === "mcp" && s.path === ".mcp.json"));
+  assert.deepEqual(inv.code.map((f) => f.file), ["src/app/products/[id]/page.tsx"], "files without LIKYLY are left out");
+  assert.deepEqual(inv.code[0].lines.map((l) => l.line), [1, 3]);
+
+  const text = runCli(["inventory", "--dir", dir], dir);
+  assert.equal(text.status, 0, text.stderr);
+  assert.match(text.stdout, /NEXT_PUBLIC_LIKYLY_KEY in \.env\.local/);
+  for (const out of [res.stdout, text.stdout]) {
+    assert.doesNotMatch(out, /pk_secretvalue123|lk_topsecret/, "key values are never printed");
+  }
 });
 
 test("commands call npx from the npm package, the file itself from a checkout", async () => {
@@ -291,7 +328,7 @@ test("uninstall removes only what the wizard added, after a dry run that removes
   assert.equal(existsSync(join(dir, "components/likyly-provider.tsx")), false);
   assert.equal(existsSync(join(dir, ".mcp.json")), false, "only LIKYLY was in it");
   assert.deepEqual(JSON.parse(readFileSync(join(dir, ".cursor/mcp.json"), "utf8")), { mcpServers: { other: { command: "x" } } });
-  for (const gone of [".claude/skills/likyly", ".claude/commands/likyly-help.md", ".claude/commands/likyly-clear-cache.md", ".claude/commands/likyly-uninstall.md", ".likyly"]) {
+  for (const gone of [".claude/skills/likyly", ".claude/commands/likyly-help.md", ".claude/commands/likyly-inventory.md", ".claude/commands/likyly-model.md", ".claude/commands/likyly-clear-cache.md", ".claude/commands/likyly-uninstall.md", ".likyly"]) {
     assert.equal(existsSync(join(dir, gone)), false, gone);
   }
   assert.equal(readFileSync(join(dir, "src/page.tsx"), "utf8"), 'import { LikylyRecommendations } from "@likyly/react";\n', "code is never edited");

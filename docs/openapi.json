@@ -2663,6 +2663,59 @@
         "title": "Message",
         "type": "object"
       },
+      "ModelOverview": {
+        "description": "Everything about one catalog's model in one read-only call, for a coding agent (MCP\n`get_model_overview`): the trained versions (which one is live, the others kept as\nhistory or rejected because they scored lower), and how each engine performs in\nproduction. Accepts the secret key or a developer key with placements:read.",
+        "properties": {
+          "active_version": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ModelVersion"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The version serving the collaborative and hybrid engines. Null: no model trained yet, those engines fall back."
+          },
+          "data_product_type": {
+            "title": "Data Product Type",
+            "type": "string"
+          },
+          "performance": {
+            "items": {
+              "$ref": "#/components/schemas/StrategyPerformance"
+            },
+            "title": "Performance",
+            "type": "array"
+          },
+          "precision_k": {
+            "default": 10,
+            "description": "The k of precision_at_k: share of a held-out 20% of interactions found in each user's top k.",
+            "title": "Precision K",
+            "type": "integer"
+          },
+          "versions": {
+            "description": "Most recent first, at most 20. is_active marks the live one.",
+            "items": {
+              "$ref": "#/components/schemas/ModelVersion"
+            },
+            "title": "Versions",
+            "type": "array"
+          },
+          "window_days": {
+            "title": "Window Days",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "data_product_type",
+          "versions",
+          "window_days",
+          "performance"
+        ],
+        "title": "ModelOverview",
+        "type": "object"
+      },
       "ModelStatus": {
         "description": "Everything a client dashboard needs to show \"your model\" in one call: which\nversion is live and how it got there, plus today's quota usage - so a free-tier\nclient can see clearly why a training run was refused or an auto-retrain skipped,\nrather than just noticing nothing changed.",
         "properties": {
@@ -4793,6 +4846,58 @@
           "requires_credentials"
         ],
         "title": "SourceTypeOut",
+        "type": "object"
+      },
+      "StrategyPerformance": {
+        "description": "What one engine did in production over the window - counted from LIKYLY's own\nrecommendation traces and the events attributed to them.",
+        "properties": {
+          "add_to_carts": {
+            "title": "Add To Carts",
+            "type": "integer"
+          },
+          "clicks": {
+            "title": "Clicks",
+            "type": "integer"
+          },
+          "ctr": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "clicks / impressions; null when nothing was shown.",
+            "title": "Ctr"
+          },
+          "impressions": {
+            "title": "Impressions",
+            "type": "integer"
+          },
+          "purchases": {
+            "title": "Purchases",
+            "type": "integer"
+          },
+          "recommendations_served": {
+            "title": "Recommendations Served",
+            "type": "integer"
+          },
+          "strategy": {
+            "description": "The engine that produced the items, after any fallback: hybrid, content, collaborative, session or popular.",
+            "title": "Strategy",
+            "type": "string"
+          }
+        },
+        "required": [
+          "strategy",
+          "recommendations_served",
+          "impressions",
+          "clicks",
+          "add_to_carts",
+          "purchases"
+        ],
+        "title": "StrategyPerformance",
         "type": "object"
       },
       "SyncRun": {
@@ -15439,6 +15544,97 @@
           "items"
         ],
         "x-required-key": "secret"
+      }
+    },
+    "/models/overview": {
+      "get": {
+        "description": "Read-only, for a coding agent: the trained versions of this catalog's collaborative\nmodel (which one is live, its date, precision@10, the data it learned from) and, per\nengine, what it served in production over the last `days` with the impressions, clicks,\nadd-to-carts and purchases attributed to it. No personal data - counts only - so a\ndeveloper key with placements:read is enough (the training and quota routes stay\nsecret-key only).",
+        "operationId": "get_model_overview",
+        "parameters": [
+          {
+            "description": "Catalog namespace, e.g. 'movies' or a customer's own catalog name",
+            "in": "query",
+            "name": "data_product_type",
+            "required": true,
+            "schema": {
+              "description": "Catalog namespace, e.g. 'movies' or a customer's own catalog name",
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[a-zA-Z0-9_-]+$",
+              "title": "Data Product Type",
+              "type": "string"
+            }
+          },
+          {
+            "description": "How many days of production traffic to count.",
+            "in": "query",
+            "name": "days",
+            "required": false,
+            "schema": {
+              "default": 7,
+              "description": "How many days of production traffic to count.",
+              "maximum": 90,
+              "minimum": 1,
+              "title": "Days",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelOverview"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing, invalid or revoked `X-API-Key`."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The public key can't do this (secret key required), or a plan limit was reached."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The request is malformed - `detail` lists the offending fields."
+          },
+          "429": {
+            "description": "Rate limit exceeded at the API gateway - retry shortly."
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Model versions and production performance (read-only)",
+        "tags": [
+          "models"
+        ],
+        "x-required-key": "scope:placements:read"
       }
     },
     "/models/status": {

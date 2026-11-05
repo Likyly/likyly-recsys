@@ -38,6 +38,12 @@ export async function main(argv = process.argv.slice(2)) {
     return r.ok ? 0 : 1;
   }
   if (opts.command === "uninstall") return uninstall(opts);
+  if (opts.command === "inventory") {
+    const { takeInventory, formatInventory } = await import("./inventory.mjs");
+    const inv = takeInventory(opts.dir);
+    console.log(opts.json ? JSON.stringify(inv, null, 2) : formatInventory(inv, opts.dir));
+    return 0;
+  }
   if (opts.command === "detect") {
     console.log(JSON.stringify({ project: detectProject(opts.dir), editors: detectEditors(opts.dir) }, null, 2));
     return 0;

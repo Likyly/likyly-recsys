@@ -201,7 +201,7 @@ export function wizardInvocation(argv1 = process.argv[1]) {
   return `node ${bin.includes(" ") ? JSON.stringify(bin) : bin}`;
 }
 
-export const CLAUDE_COMMANDS = ["likyly-help.md", "likyly-clear-cache.md", "likyly-uninstall.md"];
+export const CLAUDE_COMMANDS = ["likyly-help.md", "likyly-inventory.md", "likyly-model.md", "likyly-clear-cache.md", "likyly-uninstall.md"];
 
 // Claude Code slash command: the exact `cache clear` CLI, run by Claude Code itself (the `!`
 // line executes before the model sees the prompt), so the result is the API's, not a guess.
@@ -238,6 +238,124 @@ where the code still uses LIKYLY, offer to remove that code (on the same branch)
 those pages showed before.
 `;
 
+// The account lines of .likyly/credentials.env (never the key line): which LIKYLY the report is about.
+const ACCOUNT_LINES = "grep -E '^# (Account|Workspace|Console):' .likyly/credentials.env 2>/dev/null || echo '(no .likyly/credentials.env)'";
+
+const NOT_CONNECTED = `If a likyly tool is unavailable or fails to connect, show only the local part, then exactly:
+**✕ LIKYLY · Not connected** - What to do: 1. \`/mcp\` → likyly → Reconnect 2. run the command again.
+No diagnosis, nothing else.`;
+
+// What LIKYLY put in the site: the wizard reads the files (deterministic), Claude reads the code
+// to say which page shows which block, LIKYLY says how each block is configured and used.
+const inventoryCommand = (w) => `---
+description: List what LIKYLY added to this site - each recommendation block and its page, tracking, setup
+allowed-tools: Bash(${w} inventory:*), Bash(grep -E *), Read, Grep, Glob, mcp__likyly__list_placements, mcp__likyly__get_placement_health
+---
+!\`${w} inventory\`
+
+LIKYLY account: !\`${ACCOUNT_LINES}\`
+
+Read-only: change nothing. Build the report below from the inventory above, the code it lists,
+and LIKYLY's own data.
+
+1. Call \`list_placements\`. For each file under "Code that mentions LIKYLY", read it and work out
+   which placement each recommendation block uses - follow wrapper components and their default
+   props (a \`placement = "pdp-related"\` default counts), and find the page each one is rendered on
+   (Next.js app/ or pages/ path → URL route; otherwise the component and where it is imported).
+2. For each placement found in the code, call \`get_placement_health\` (window_hours 24).
+3. Tracking: list the events the code sends (product view, add to cart, purchase, identify,
+   impressions/clicks sent by the SDK component) and where.
+
+Report, in the developer's language, with LIKYLY's marks (◆ done, ◇ not yet / not needed,
+✕ blocked) and nothing before the title:
+
+**◆ LIKYLY · On <project folder name>**
+
+**On your pages**
+| Page | Block | Shows | In LIKYLY | Last 24 h |
+|---|---|---|---|---|
+| \`/catalogs/[slug]/[id]\` · product page | You may also like · \`pdp-related\` | 4 products · similar items | ◆ Active | 12 requests · 40 shown · 2 clicks |
+
+"Shows": the placement's limit and strategy in plain words (similar items, for this visitor,
+recently viewed, popular, automatic). "In LIKYLY": ◆ Active, ◇ Disabled, ✕ Unknown to LIKYLY.
+"Last 24 h": counts from get_placement_health, or "nothing yet".
+
+**Tracking**
+| Event | Sent from |
+|---|---|
+| Product view | \`src/.../file.tsx:21\` |
+
+**Setup**
+| What | Where |
+|---|---|
+| SDK | @likyly/react 0.2.0 · @likyly/sdk 1.1.0 |
+| Public key | \`NEXT_PUBLIC_LIKYLY_KEY\` in .env.local |
+
+(one row per setup line of the inventory: provider, assistant connection, skill, commands,
+developer key file - never a key value)
+
+Then, only when there are some: **In LIKYLY but not on your site** (placements no code uses, ◇)
+and **In your code but unknown to LIKYLY** (✕, with the file). Last line: the console link
+\`<Console>/account\` from the account lines above (https://www.likyly.com if none).
+
+${NOT_CONNECTED}
+`;
+
+// The model: versions, which one serves production, when it was trained, how it performs.
+const modelCommand = (w) => `---
+description: Show the recommendation model - versions, which one is live, training date, performance
+argument-hint: [catalog] [days]
+allowed-tools: Bash(grep -E *), mcp__likyly__list_placements, mcp__likyly__get_model_overview
+---
+LIKYLY account: !\`${ACCOUNT_LINES}\`
+
+Arguments: "$ARGUMENTS" (optional: a catalog name, a number of days - default 7).
+
+Read-only: change nothing. Call \`list_placements\`; the catalogs are the placements'
+\`product_type\` (or the catalog given above). For each catalog call \`get_model_overview\`
+(days as given). Then report, in the developer's language, with LIKYLY's marks (◆ live,
+◇ not live) and nothing before the title:
+
+**◆ LIKYLY · Model · <catalog>**
+
+**In production**
+| | |
+|---|---|
+| Version | #12 · trained 3 Nov 2026, 14:02 · automatic retrain |
+| Precision@10 | 21 % - on held-out data, about 2 of every 10 recommended products are ones the visitor really went on to use |
+| Learned from | 40 visitors · 8 products · 300 interactions |
+| Settings | 64 factors · regularization 0.05 · 20 iterations |
+
+No active version: say "◇ No model trained yet" and that the placements meanwhile use
+engines that need no training (similar items, recent views, popular); it trains itself once
+enough interactions have come in, or from the console.
+
+**Other versions** (not in production) - newest first, at most 5:
+| Version | Trained | Precision@10 | Learned from | Status |
+|---|---|---|---|---|
+| #13 | 4 Nov 2026 | 18 % | 41 · 8 · 310 | ◇ Rejected: scored lower than #12 |
+| #11 | 1 Nov 2026 | 19 % | 38 · 8 · 280 | ◇ Replaced by a better version |
+
+(trained after the live one = rejected for scoring lower; before it = replaced)
+
+**Performance on your site · last <days> days**
+| Engine | Uses the model | Served | Shown | Clicks | CTR | Add to cart | Purchases |
+|---|---|---|---|---|---|---|---|
+| Similar items (content) | ◇ no | 120 | 400 | 12 | 3.0 % | 2 | 0 |
+
+Engines: content = similar items, session = recently viewed, popular = most popular - none
+uses the trained model; collaborative = for this visitor and hybrid = both - ◆ yes, version #N.
+No traffic: "Nothing served in the last <days> days."
+
+**Your placements**: one line per placement: name · \`slug\` · configured strategy in plain
+words · which engine actually served it most (from Performance when it can be told).
+
+Last line: \`<Console>/account\` from the account lines above (https://www.likyly.com if none),
+to retrain or compare versions.
+
+${NOT_CONNECTED}
+`;
+
 // Static help: no shell, so it works even when the wizard or the MCP server is unreachable.
 const helpCommand = (w) => `---
 description: List the LIKYLY commands and what each one does
@@ -249,6 +367,8 @@ Show the developer exactly this, nothing more:
 | Command | What it does |
 |---|---|
 | \`/likyly-help\` | This list |
+| \`/likyly-inventory\` | What LIKYLY added to this site: each recommendation block and its page, tracking, setup |
+| \`/likyly-model [catalog] [days]\` | The recommendation model: versions, which one is live, training date, performance |
 | \`/likyly-clear-cache [placement]\` | Shows fresh recommendations right away (otherwise they refresh within the hour) |
 | \`/likyly-uninstall\` | Removes LIKYLY from this project: shows what it will remove, asks on which branch |
 
@@ -257,14 +377,16 @@ Show the developer exactly this, nothing more:
 - "Check my LIKYLY integration" - what works, what's missing
 - "Change the recommendations on my product page" - placement settings
 
-**In a terminal**: \`${w} cache clear\` · \`${w} uninstall\` · \`${w} help\`
+**In a terminal**: \`${w} inventory\` · \`${w} cache clear\` · \`${w} uninstall\` · \`${w} help\`
 `;
 
-/** Install /likyly-help, /likyly-clear-cache and /likyly-uninstall for Claude Code (`.claude/commands/`). */
+/** Install the /likyly-* commands for Claude Code (`.claude/commands/`). */
 export function writeClaudeCommands(dir, { dryRun = false, invocation = wizardInvocation() } = {}) {
   const folder = join(dir, ".claude", "commands");
   const files = {
     "likyly-help.md": helpCommand(invocation),
+    "likyly-inventory.md": inventoryCommand(invocation),
+    "likyly-model.md": modelCommand(invocation),
     "likyly-clear-cache.md": clearCacheCommand(invocation),
     "likyly-uninstall.md": uninstallCommand(invocation),
   };

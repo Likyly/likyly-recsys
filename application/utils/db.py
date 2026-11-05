@@ -2461,6 +2461,54 @@ def recommendation_performance_by_placement(client_id: int, since, until=None) -
     return result
 
 
+def recommendation_performance_by_strategy(client_id: int, product_type: str, since) -> list[dict[str, Any]]:
+    """One row per engine that actually served this catalog since `since` (the strategy stored
+    on each recommendation, after any fallback): how many recommendations it served and the
+    impressions, clicks, add-to-carts and purchases attributed to them through their
+    recommendation_id. What "how is the model doing in production" means, next to the
+    offline precision@k of the trained versions."""
+    tracked = ("impression", "click", "add_to_cart", "purchase")
+    with SessionLocal() as session:
+        served_rows = session.query(
+            RecommendationModel.strategy, func.count(RecommendationModel.recommendation_id).label("served"),
+        ).filter(
+            RecommendationModel.client_id == client_id, RecommendationModel.product_type == product_type,
+            RecommendationModel.created_at >= since,
+        ).group_by(RecommendationModel.strategy).all()
+
+        event_rows = session.query(
+            RecommendationModel.strategy, InteractionModel.event_type, func.count(InteractionModel.id).label("n"),
+        ).join(
+            RecommendationModel,
+            (RecommendationModel.recommendation_id == InteractionModel.recommendation_id)
+            & (RecommendationModel.client_id == InteractionModel.client_id),
+        ).filter(
+            InteractionModel.client_id == client_id, RecommendationModel.product_type == product_type,
+            InteractionModel.occurred_at >= since, InteractionModel.event_type.in_(tracked),
+        ).group_by(RecommendationModel.strategy, InteractionModel.event_type).all()
+
+    counts: dict[str, dict[str, int]] = {}
+    for row in served_rows:
+        counts.setdefault(row.strategy, {})["served"] = row.served
+    for row in event_rows:
+        counts.setdefault(row.strategy, {})[row.event_type] = row.n
+
+    result = []
+    for strategy in sorted(counts, key=lambda s: -counts[s].get("served", 0)):
+        c = counts[strategy]
+        impressions, clicks = c.get("impression", 0), c.get("click", 0)
+        result.append({
+            "strategy": strategy,
+            "recommendations_served": c.get("served", 0),
+            "impressions": impressions,
+            "clicks": clicks,
+            "add_to_carts": c.get("add_to_cart", 0),
+            "purchases": c.get("purchase", 0),
+            "ctr": round(clicks / impressions, 4) if impressions else None,
+        })
+    return result
+
+
 def recommendation_attributed_revenue(client_id: int, since, until=None, placement: Optional[str] = None) -> dict[str, Any]:
     """Purchases that carry a recommendation_id - i.e. actually attributable to a
     recommendation, not every purchase the catalog ever recorded. Price comes from

@@ -24,6 +24,8 @@ ${blue("Commands")}
                  connect your AI assistant to the LIKYLY MCP server
   mcp add        only connect your AI assistant (Claude Code, Cursor, VS Code)
   detect         print what was detected, change nothing
+  inventory      list what LIKYLY put in this project: packages, key variable, setup files,
+                 and every source line that uses LIKYLY (read-only; --json for data)
   cache clear [placement]
                  empty LIKYLY's recommendation cache: one placement, or all of them
                  (uses your developer key from .likyly/credentials.env)
@@ -38,6 +40,7 @@ ${blue("Options")}
   --placement <slug>     with cache clear: the placement to empty (default: all)
   --branch <new|current> with uninstall, in a git repository: work on a new branch
                          likyly/uninstall, or on the current one (asked otherwise)
+  --json                 with inventory: print JSON
   --hosted               use the hosted MCP server (mcp.likyly.com) instead of npx
   --no-install           do not run the package manager
   --dry-run              show what would happen, write nothing
@@ -47,7 +50,7 @@ ${blue("Options")}
 `;
 
 export function parseArgs(argv) {
-  const opts = { command: "install", dir: process.cwd(), yes: false, dryRun: false, install: true, hosted: false, editors: null, publicKey: null, placement: null, branch: null };
+  const opts = { command: "install", dir: process.cwd(), yes: false, dryRun: false, install: true, hosted: false, editors: null, publicKey: null, placement: null, branch: null, json: false };
   const positional = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -62,6 +65,7 @@ export function parseArgs(argv) {
     else if (a === "--dry-run") opts.dryRun = true;
     else if (a === "--no-install") opts.install = false;
     else if (a === "--hosted") opts.hosted = true;
+    else if (a === "--json") opts.json = true;
     else if (a === "--dir") opts.dir = next();
     else if (a === "--public-key") opts.publicKey = next();
     else if (a === "--placement") opts.placement = next();
@@ -83,6 +87,7 @@ export function parseArgs(argv) {
       opts.placement = positional[2] ?? opts.placement;
     } else if (cmd === "mcp add" || cmd === "mcp") opts.command = "mcp";
     else if (cmd === "detect") opts.command = "detect";
+    else if (cmd === "inventory") opts.command = "inventory";
     else if (cmd === "uninstall") opts.command = "uninstall";
     else if (cmd === "install") opts.command = "install";
     else if (cmd === "help") opts.command = "help";

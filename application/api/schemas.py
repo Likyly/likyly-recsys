@@ -349,6 +349,31 @@ class ModelStatus(BaseModel):
     auto_retrain_skip_reason: Optional[str] = None
 
 
+class StrategyPerformance(BaseModel):
+    """What one engine did in production over the window - counted from LIKYLY's own
+    recommendation traces and the events attributed to them."""
+    strategy: str = Field(description="The engine that produced the items, after any fallback: hybrid, content, collaborative, session or popular.")
+    recommendations_served: int
+    impressions: int
+    clicks: int
+    add_to_carts: int
+    purchases: int
+    ctr: Optional[float] = Field(default=None, description="clicks / impressions; null when nothing was shown.")
+
+
+class ModelOverview(BaseModel):
+    """Everything about one catalog's model in one read-only call, for a coding agent (MCP
+    `get_model_overview`): the trained versions (which one is live, the others kept as
+    history or rejected because they scored lower), and how each engine performs in
+    production. Accepts the secret key or a developer key with placements:read."""
+    data_product_type: str
+    active_version: Optional[ModelVersion] = Field(default=None, description="The version serving the collaborative and hybrid engines. Null: no model trained yet, those engines fall back.")
+    versions: List[ModelVersion] = Field(description="Most recent first, at most 20. is_active marks the live one.")
+    precision_k: int = Field(default=10, description="The k of precision_at_k: share of a held-out 20% of interactions found in each user's top k.")
+    window_days: int
+    performance: List[StrategyPerformance]
+
+
 class Event(BaseModel):
     """Body of POST /events/{event_type} (and of /events/view, /events/purchase). The event
     type is in the URL; this is the event itself. Works for identified users, anonymous

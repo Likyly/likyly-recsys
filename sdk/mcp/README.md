@@ -155,6 +155,7 @@ see [`docs/getting-started.md`](../../docs/getting-started.md)) - same `placemen
 | `validate_integration` | `GET /placements/{slug}/health`, rendered as a ✓/⚠/✗ checklist with next steps |
 | `get_placement_health` | `GET /placements/{slug}/health` (structured data, no rendering) |
 | `get_recent_integration_events` | `GET /placements/{slug}/recent-events` |
+| `get_model_overview` | `GET /models/overview` - trained versions (which one is live, precision@10) and production performance per engine; read-only, `placements:read` |
 
 The runtime call, `POST /placements/{slug}/recommend`, is **not an MCP tool** - it's a plain
 HTTP call the site's own code makes, safe with the public key, exactly like `POST /getRec`.

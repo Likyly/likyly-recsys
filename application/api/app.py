@@ -49,7 +49,7 @@ import uvicorn
 import pandas as pd
 
 from schemas import (
-    RecommendedProduct, VectorRecommendation, User, Message, CachePurged, GenerateModelJobStatus, ModelVersion, ModelStatus,
+    RecommendedProduct, VectorRecommendation, User, Message, CachePurged, GenerateModelJobStatus, ModelVersion, ModelStatus, ModelOverview,
     ClientSelf,
     ClientAdminView, DailyUsage, ClientRename, ClientUsageSummary, WorkspaceRename, WorkspaceSummary, CatalogIndex,
     EventType, EventTypeCreate, EventTypeUpdate, ImportSummary, Item, ItemUpsert, ItemImportRequest, ItemDeleteRequest, BatchResult, ErrorResponse,
@@ -96,6 +96,7 @@ from db import (
     link_session_to_user,
     recommendation_performance_summary, recommendation_performance_timeseries,
     recommendation_performance_by_placement, recommendation_attributed_revenue,
+    recommendation_performance_by_strategy,
 )
 from ids import new_recommendation_id
 from observability import coerce_request_id, get_logger, log_event, request_id_var
@@ -110,6 +111,7 @@ from recommender import (
 from data_sources import router as data_sources_router
 from upgrade_requests import UPGRADE_REQUESTS_PER_DAY, notify_team, render_email
 from placements import router as placements_router
+from scoped_auth import require_scope
 import placement_service
 import data_source_service
 
@@ -1878,6 +1880,27 @@ async def get_model_versions(data_product_type: Catalog, client_id: int = Depend
 async def get_model_status(data_product_type: Catalog, client_id: int = Depends(get_current_client_id)):
     """The active model version (when it was trained and whether manually or automatically) plus today's training quota usage. Secret key only."""
     return build_model_status(client_id, data_product_type)
+
+@app.get("/models/overview", tags=["models"], response_model=ModelOverview, summary="Model versions and production performance (read-only)", responses=_errors(401, 403, 422))
+async def get_model_overview(
+    data_product_type: ProductType, days: int = Query(7, ge=1, le=90, description="How many days of production traffic to count."),
+    client_id: int = Depends(require_scope("placements:read")),
+):
+    """Read-only, for a coding agent: the trained versions of this catalog's collaborative
+    model (which one is live, its date, precision@10, the data it learned from) and, per
+    engine, what it served in production over the last `days` with the impressions, clicks,
+    add-to-carts and purchases attributed to it. No personal data - counts only - so a
+    developer key with placements:read is enough (the training and quota routes stay
+    secret-key only)."""
+    since = utcnow() - timedelta(days=days)
+    return {
+        "data_product_type": data_product_type,
+        "active_version": get_active_model_version(client_id, data_product_type),
+        "versions": list_model_versions(client_id, data_product_type),
+        "precision_k": 10,
+        "window_days": days,
+        "performance": recommendation_performance_by_strategy(client_id, data_product_type, since),
+    }
 
 @app.post("/clients/me/generateModel", tags=["selfServiceClient"], response_model=GenerateModelJobStatus, summary="Train my model", responses=_errors(401, 404, 422))
 async def generate_my_model(

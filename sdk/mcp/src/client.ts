@@ -209,6 +209,11 @@ export class LikylyClient {
     return this.request("GET", `/placements/${encodeURIComponent(slug)}/health`, { query: { window_hours: windowHours } });
   }
 
+  /** Read-only model report for one catalog: trained versions (which is live) and production performance per engine. */
+  async getModelOverview(productType: string, days?: number) {
+    return this.request("GET", "/models/overview", { query: { data_product_type: productType, days } });
+  }
+
   async getRecentIntegrationEvents(slug: string, windowHours?: number, limit?: number) {
     return this.request("GET", `/placements/${encodeURIComponent(slug)}/recent-events`, { query: { window_hours: windowHours, limit } });
   }
