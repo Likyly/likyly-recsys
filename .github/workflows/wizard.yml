@@ -1,0 +1,24 @@
+name: Wizard
+
+# @likyly/wizard. The other SDKs and the MCP server moved to https://github.com/Likyly/sdks.
+on:
+  pull_request:
+    paths: ["sdk/wizard/**", "docs/SKILL.md", ".github/workflows/wizard.yml"]
+  push:
+    branches: [main]
+    paths: ["sdk/wizard/**", "docs/SKILL.md", ".github/workflows/wizard.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: sdk/wizard } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: npm test
+      - run: npm pack --dry-run

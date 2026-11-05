@@ -163,11 +163,11 @@ call it directly:
 - **`@likyly/sdk`** (JS/TS): `likyly.recommend({ placement, context })` -
   `likyly.placements.recommend(...)`'s shorthand, and `likyly.events.recommendationImpression`/
   `recommendationClick`/`productView`/`identify` for tracking. See
-  [`sdk/js/README.md`](../sdk/js/README.md).
+  [`typescript/README.md`](https://github.com/Likyly/sdks/blob/main/typescript/README.md).
 - **`@likyly/react`**: `useRecommendations({ placement, context })` (headless - you render the
   markup) or `<LikylyRecommendations placement itemId userId />` (ready-to-use, auto-tracks
   impression/click via `IntersectionObserver`). A separate package from `@likyly/sdk` on
-  purpose - see [`sdk/react/README.md`](../sdk/react/README.md) for why. Other frameworks use
+  purpose - see [`react/README.md`](https://github.com/Likyly/sdks/blob/main/react/README.md) for why. Other frameworks use
   `@likyly/sdk` directly; there's no `@likyly/vue`/`@likyly/svelte` yet.
 - **Anonymous sessions**: `@likyly/sdk`'s `LikylySession` is a first-party, cookieless
   anonymous id (`localStorage`, no third-party cookie) - `getAnonymousId()` for
@@ -176,7 +176,7 @@ call it directly:
   [`docs/events.md`](events.md)).
 - **Never in a browser bundle**: only the restricted public key belongs in client-side code.
   `@likyly/sdk`'s `Likyly` constructor refuses a secret/developer-shaped key (`sk_`/`lk_`
-  prefix) when it detects it's running in a browser - see `sdk/js/README.md`'s "Which key?".
+  prefix) when it detects it's running in a browser - see the TypeScript SDK README's "Which key?".
 
 ## Integration recipe & validator
 
@@ -204,7 +204,7 @@ and guess.
 
 ## MCP tools
 
-See [`sdk/mcp/README.md`](../sdk/mcp/README.md) for setup. `list_placements, get_placement,
+See [`mcp/README.md`](https://github.com/Likyly/sdks/blob/main/mcp/README.md) for setup. `list_placements, get_placement,
 create_placement, update_placement, delete_or_disable_placement, preview_placement,
 get_placement_requirements, get_integration_recipe, get_tracking_requirements,
 validate_integration, get_placement_health, get_recent_integration_events` -
@@ -265,7 +265,7 @@ irrelevant-signal checks omitted, tenant isolation, scope enforcement).
 `tests/test_e2e_integration_journey.py` is the full brief's-Definition-of-Done proof: catalog
 (a data source) -> sync -> placement -> recommend -> impression -> click -> purchase
 attribution -> validator, driven only through the public HTTP surface a coding agent would
-actually call. `sdk/react/test/controller.test.ts` covers the client-side fetch/tracking state
+actually call. `react/test/controller.test.ts` (Likyly/sdks) covers the client-side fetch/tracking state
 machine (`useRecommendations`/`<LikylyRecommendations>`'s shared logic) without needing a DOM.
 
 ## Environment variables & migrations

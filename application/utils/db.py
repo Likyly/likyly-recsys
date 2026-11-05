@@ -210,7 +210,7 @@ def hash_api_key(raw_key: str) -> str:
 def generate_api_key(prefix: Optional[str] = None) -> str:
     """`prefix` ("sk"/"pk"/"lk") makes a newly-issued key's *kind* visible at a glance - the
     one structural way an SDK can refuse to run with a browser-unsafe key at construction
-    time, instead of just documenting "don't do this" (see sdk/js's LikylyClient guard).
+    time, instead of just documenting "don't do this" (see the TypeScript SDK's LikylyClient guard, Likyly/sdks).
     Purely additive: verification is hash-based and format-agnostic (hash_api_key doesn't
     care what the raw string looks like), so every key issued before this existed keeps
     authenticating exactly as it does today - only newly-generated ones get a prefix."""

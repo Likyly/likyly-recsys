@@ -10,7 +10,7 @@ If you just want to *use* it from Claude Code, skip to [Example prompts](#exampl
 ## Architecture
 
 ```
- MCP admin tools (sdk/mcp)
+ MCP admin tools (Likyly/sdks, mcp/)
         |  (secret key or a developer key with sources:* scope)
         v
  /data-sources* routes (application/api/data_sources.py)
@@ -185,8 +185,8 @@ history, never the items already imported.
 
 ## MCP admin tools
 
-Added to `sdk/mcp` alongside the existing recommendation/event tools (`get_recommendations`,
-`track_event`, ...), which are unchanged. See [`sdk/mcp/README.md`](../sdk/mcp/README.md) for
+Added to the MCP server (`mcp/` in Likyly/sdks) alongside the existing recommendation/event tools (`get_recommendations`,
+`track_event`, ...), which are unchanged. See [`mcp/README.md`](https://github.com/Likyly/sdks/blob/main/mcp/README.md) for
 setup. Every tool below needs `LIKYLY_API_KEY` to be a secret key or a developer key with
 `sources:read`/`sources:write` - a public key gets a clear 401/403 back through the tool
 result, not a crash.
