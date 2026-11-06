@@ -5,7 +5,7 @@ ALLOWED_SCOPES - plus, for a runtime-safe endpoint, the restricted public key to
 Deliberately standalone rather than importing app.py's own get_current_client_id /
 get_current_client_id_public_ok: app.py mounts these routers, so the reverse import would be
 circular. Small, intentional duplication of the same secret/public lookup, same tradeoff
-data_sources.py already made and sdk/mcp/src/client.ts's own docstring calls out for itself.
+data_sources.py already made and the MCP server's client.ts (Likyly/sdks, mcp/src) docstring calls out for itself.
 """
 import os
 import sys

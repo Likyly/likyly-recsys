@@ -45,7 +45,7 @@ change was needed:
 | `item_id` | `item_id` | Required. |
 | `position` | `properties.position` | Not a first-class column - `properties` is the established free-form extension point (price, currency, order_id already live there); add `position` (the item's rank in the list you rendered) the same way. |
 | `user_id` (optional) | `user_id` | |
-| `anonymous_id` / `session_id` | `session_id` | One vocabulary: the SDK's `LikylySession`/`context.anonymousId` both ultimately send `session_id` on the wire - see `sdk/js`'s `LikylySession`. |
+| `anonymous_id` / `session_id` | `session_id` | One vocabulary: the SDK's `LikylySession`/`context.anonymousId` both ultimately send `session_id` on the wire - see the TypeScript SDK's `LikylySession` (Likyly/sdks, `typescript/`). |
 | `timestamp` | `occurred_at` | Optional; defaults to server time. |
 | `metadata` | `properties` | Free-form, any additional keys. |
 
@@ -65,7 +65,7 @@ Every past interaction of `session_id` **not already attributed to a user** is r
 `user_id` - a session that already belongs to a different user (a shared device) is left
 alone, and calling it twice is harmless (nothing left to link the second time). Public-key-ok,
 the same trust tier as tracking the events themselves - call it right after login/signup, from
-the browser. `sdk/js`'s `LikylySession.identify(likyly, userId)` does this and remembers the
+the browser. The TypeScript SDK's `LikylySession.identify(likyly, userId)` does this and remembers the
 session locally in one call.
 
 ## Testing

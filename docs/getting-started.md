@@ -25,7 +25,7 @@ it directly instead of re-explaining the flow in your own words.
 
 1. Create a developer key from your account (or ask an admin to): `POST
    /clients/me/developer-keys` with `scopes: ["sources:read", "sources:write",
-   "placements:read", "placements:write"]` - see [`sdk/mcp/README.md`](../sdk/mcp/README.md).
+   "placements:read", "placements:write"]` - see [`mcp/README.md`](https://github.com/Likyly/sdks/blob/main/mcp/README.md).
    **Never** put this key in a browser bundle, a public file, a `NEXT_PUBLIC_*`/`VITE_PUBLIC_*`
    env var, or committed code - it's for your coding agent's local environment only.
 2. Point your MCP client (`.mcp.json`, `claude_desktop_config.json`, ...) at
@@ -73,7 +73,7 @@ The agent:
    integration: a `<LikylyProvider>` at the app root (or reuses the app's existing provider
    tree) with the **public** key, then `<LikylyRecommendations placement="pdp-related"
    itemId={product.id} userId={user?.id} />` (or `useRecommendations` if the project's design
-   system needs full control over the cards - see [`sdk/react/README.md`](../sdk/react/README.md)).
+   system needs full control over the cards - see [`react/README.md`](https://github.com/Likyly/sdks/blob/main/react/README.md)).
    Impression/click tracking is automatic with either the component or the hook's `trackImpression`/
    `trackClick` helpers wired to the project's own card markup.
 4. `get_tracking_requirements` for the rest of the funnel, then adds
@@ -134,5 +134,5 @@ own MCP smoke tests drove through a real, running MCP server.
 - [`docs/placements.md`](placements.md) - the Placement object, strategy resolution, filters,
   the integration recipe & validator.
 - [`docs/events.md`](events.md) - the event vocabulary, aliases, `identify`.
-- [`sdk/js/README.md`](../sdk/js/README.md), [`sdk/react/README.md`](../sdk/react/README.md).
-- [`sdk/mcp/README.md`](../sdk/mcp/README.md) - every MCP tool, which key each needs.
+- [`typescript/README.md`](https://github.com/Likyly/sdks/blob/main/typescript/README.md), [`react/README.md`](https://github.com/Likyly/sdks/blob/main/react/README.md).
+- [`mcp/README.md`](https://github.com/Likyly/sdks/blob/main/mcp/README.md) - every MCP tool, which key each needs.
