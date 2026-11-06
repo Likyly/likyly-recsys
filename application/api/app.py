@@ -110,6 +110,7 @@ from recommender import (
 )
 from data_sources import router as data_sources_router
 from upgrade_requests import UPGRADE_REQUESTS_PER_DAY, notify_team, render_email
+from alerts import new_account_message, send_team_alert
 from placements import router as placements_router
 from scoped_auth import require_scope
 import placement_service
@@ -609,7 +610,7 @@ async def api_reference():
 WorkspaceIdHeader = Annotated[Optional[int], Header(alias="X-Workspace-Id", description="Which of this account's workspaces this call is about. Omitted: the primary (oldest) one.")]
 
 @app.post("/clients/me", tags=["selfServiceClient"], response_model=ClientSelf, summary="Get or create my account", responses=_errors(401))
-async def get_or_create_my_client(identity: tuple[str, Optional[str]] = Depends(get_current_supabase_identity)):
+async def get_or_create_my_client(background_tasks: BackgroundTasks, identity: tuple[str, Optional[str]] = Depends(get_current_supabase_identity)):
     """Called from the website once a Supabase user is logged in. First call for a given
     account provisions a client + both keys (each shown once); later calls just confirm
     the existing client without re-exposing them - see /clients/me/regenerate-secret-key
@@ -629,6 +630,8 @@ async def get_or_create_my_client(identity: tuple[str, Optional[str]] = Depends(
         name=f"li_{uuid.uuid4().hex[:16]}", supabase_user_id=supabase_user_id, email=email,
     )
     created = get_client_by_supabase_user_id(supabase_user_id)
+    # first workspace of a new account = a new sign-up: tell the team (TEAM_ALERT_WEBHOOK_URL, best effort)
+    background_tasks.add_task(send_team_alert, new_account_message(email, client_id))
     return {
         "client_id": client_id, "name": created["name"], "display_name": created["display_name"],
         "secret_key": raw_secret_key, "public_key": raw_public_key,
