@@ -3,7 +3,7 @@ package likyly
 import "runtime"
 
 // Version is the SDK version, sent in the User-Agent header.
-const Version = "1.0.0"
+const Version = "1.0.1"
 
 // DefaultBaseURL is the production API.
 const DefaultBaseURL = "https://api.likyly.com"

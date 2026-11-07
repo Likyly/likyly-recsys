@@ -15,6 +15,20 @@ Eight official SDKs over one public API (`items`, `users`, `events`, `recommenda
 
 Method names per language: [docs/METHODS.md](docs/METHODS.md). `mcp/` is the separate MCP server.
 
+## Mobile and front-end SDKs
+
+They run on the visitor's device, so they take the **public key** (they refuse a secret or developer key)
+and cover what it allows: placements, events (`identify` included), recommendations, plus an anonymous
+visitor id kept on the device. The catalog stays synced from your backend with a server SDK above.
+
+| Platform | Package | Directory |
+|---|---|---|
+| iOS / iPadOS / macOS / tvOS / watchOS (Swift) | `Likyly` (Swift Package Manager) | [swift](swift) |
+| Android (Kotlin, coroutines) | `com.likyly:likyly-android` (Maven) | [android](android) |
+| React (web, Next.js) | `@likyly/react` (npm) | [react](react) |
+
+They replay the same `conformance/scenarios.json` for the public-key operations.
+
 ## How it is kept correct
 
 - **Source of truth**: the OpenAPI document (`docs/openapi.json`, identical to `https://api.likyly.com/recsys-api/openapi.json`).

@@ -2,9 +2,11 @@
 name = "likyly"
 version = "1.0.0"
 edition = "2021"
-description = "Official Rust client for the LIKYLY recommendations API"
+description = "Product recommendations for your site (\"You may also like\", \"Recommended for you\"), learned from what your visitors do. Official LIKYLY client."
 license = "MIT"
-homepage = "https://likyly.com"
+homepage = "https://www.likyly.com"
+repository = "https://github.com/Likyly/likyly-recsys"
+authors = ["LIKYLY"]
 documentation = "https://docs.rs/likyly"
 readme = "README.md"
 keywords = ["recommendations", "recommender", "ecommerce", "likyly", "api-client"]

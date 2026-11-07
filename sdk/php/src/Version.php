@@ -6,7 +6,7 @@ namespace Likyly;
 
 final class Version
 {
-    public const SDK = '1.0.0';
+    public const SDK = '1.0.1';
     public const DEFAULT_BASE_URL = 'https://api.likyly.com';
     public const USER_AGENT = 'likyly-php/' . self::SDK;
 }

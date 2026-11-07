@@ -16,7 +16,12 @@ final class ConformanceTest extends TestCase
     /** @return array<string, array{0: array<string, mixed>, 1: array<string, mixed>}> */
     public static function scenarios(): array
     {
-        $file = json_decode((string) file_get_contents(__DIR__ . '/../../conformance/scenarios.json'), true, 512, JSON_THROW_ON_ERROR);
+        // A copy next to the SDK in its own repository, the shared file in the monorepo.
+        $path = __DIR__ . '/../conformance/scenarios.json';
+        if (!is_file($path)) {
+            $path = __DIR__ . '/../../conformance/scenarios.json';
+        }
+        $file = json_decode((string) file_get_contents($path), true, 512, JSON_THROW_ON_ERROR);
         $out = [];
         foreach ($file['scenarios'] as $s) {
             $out[$s['id']] = [$s, $file['defaults']];

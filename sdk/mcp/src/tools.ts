@@ -17,7 +17,7 @@ import type { LikylyClient } from "./client.js";
 // capabilities up front) keeps this server simple and lets the API stay the single source of
 // truth for what a given key can do.
 export function createLikylyServer(client: LikylyClient, defaultProductType?: string): McpServer {
-  const server = new McpServer({ name: "likyly-recsys", version: "0.2.0" });
+  const server = new McpServer({ name: "likyly-recsys", version: "0.4.1" });
 
   const productType = defaultProductType
     ? z.string().optional().describe(`Catalog namespace. Defaults to "${defaultProductType}" if omitted.`)

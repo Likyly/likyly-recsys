@@ -57,7 +57,11 @@ type scenarioFile struct {
 
 func loadScenarios(t *testing.T) scenarioFile {
 	t.Helper()
-	raw, err := os.ReadFile("../conformance/scenarios.json")
+	// A copy next to the SDK in its own repository, the shared file in the monorepo.
+	raw, err := os.ReadFile("conformance/scenarios.json")
+	if os.IsNotExist(err) {
+		raw, err = os.ReadFile("../conformance/scenarios.json")
+	}
 	if err != nil {
 		t.Fatal(err)
 	}

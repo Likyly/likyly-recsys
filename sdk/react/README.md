@@ -1,44 +1,27 @@
 # @likyly/react
 
-React bindings for [`@likyly/sdk`](../js): `useRecommendations` (headless) and
-`<LikylyRecommendations>` (ready-to-use) for rendering a LIKYLY [placement](../../docs/placements.md)
-and tracking the impression/click events it needs to learn from.
+Show LIKYLY recommendations in a React app, with the impressions and clicks LIKYLY learns from
+tracked for you.
 
-## Why a separate package (not React support inside `@likyly/sdk`)
+The fastest way to set it up is the wizard, which installs this package, writes your public key
+and connects your AI coding assistant:
 
-- `@likyly/sdk` is dependency-free and runs in Node, edge runtimes and browsers alike (it's used
-  server-side for `items`/`users` too). Adding React to it would force that dependency - and the
-  `"use client"` boundary Next.js's App Router needs - onto every consumer, including
-  server-side-only integrations that never render anything.
-- This repo's own convention is one package per surface (`sdk/js`, `sdk/python`, `sdk/php`,
-  `sdk/mcp`, ...) - `@likyly/react` is that same pattern applied to a second JS surface, not a
-  new idea.
-- It matches how this kind of binding is normally split in the ecosystem (a core client plus a
-  thin framework package: `stripe` / `@stripe/react-stripe-js`, `algoliasearch` /
-  `react-instantsearch`).
-- `@likyly/react` depends on `@likyly/sdk` and adds **zero** wire/HTTP logic of its own - every
-  method here calls straight through to the `Likyly` client underneath (see `src/controller.ts`,
-  the plain-JS state machine both `useRecommendations` and `<LikylyRecommendations>` share - it
-  has no React import at all, which is also why it's unit-tested with no DOM/renderer needed).
+```sh
+npx @likyly/wizard
+```
 
 ## Install
 
 ```sh
-npm install @likyly/react @likyly/sdk react
+npm install @likyly/react
 ```
 
-> During local development in the `likyly-recsys` monorepo (before `@likyly/sdk` is published
-> to npm), this package's `dependencies` point at it via a relative `file:../js` reference.
-> Once published, that becomes a normal semver range - nothing a consumer needs to think about.
-> One consequence in the meantime: npm installs a `file:` dependency as a symlink pointing
-> outside the consuming app's own folder, which **Turbopack fails to resolve** ("Module not
-> found"). Run `next dev`/`next build` with `--webpack` until both packages are on npm - see
-> `examples/demo-storefront` for a working setup with this already applied.
+React 18 or 19. Works with Next.js (App Router included), Vite, Remix and others.
 
 ## Quick start
 
 ```tsx
-import { LikylyProvider, LikylyRecommendations } from "@likyly/react";
+import { LikylyProvider, LikylyRecommendations, useLikyly } from "@likyly/react";
 
 export function App() {
   return (
@@ -48,133 +31,76 @@ export function App() {
   );
 }
 
-function ProductPage({ product, user, sessionId }) {
+function ProductPage({ product, user }) {
+  const { session } = useLikyly();
   return (
-    <LikylyRecommendations
-      placement="pdp-related"
-      itemId={product.id}
-      userId={user?.id}
-      sessionId={sessionId}
-      limit={4}
-    />
+    <LikylyRecommendations placement="pdp-related" itemId={product.id} limit={4}
+      userId={user?.id} sessionId={session.getAnonymousId()} />
   );
 }
 ```
 
-`apiKey` must be your **restricted public key** - this runs in the browser. `Likyly`'s own
-constructor (from `@likyly/sdk`) refuses a secret- or developer-shaped key when it detects it's
-running in one, so passing the wrong key here fails loudly and immediately rather than shipping
-quietly. See [Security](#security) below.
+- `apiKey` is your **public key** (`pk_…`). A secret or developer key is refused in the browser.
+- `pdp-related` is a placement you create once in LIKYLY (console or AI assistant), not in code.
+- `sessionId` is the visitor's anonymous id, kept in the browser (first-party, no cookie). Pass it
+  so visitors who are not signed in count too.
 
-Configure the placement itself (`pdp-related` above) once via the LIKYLY MCP admin tools
-(`create_placement`) or dashboard - never from this package, which is intentionally
-runtime-only. `get_placement_requirements` tells you exactly which of `itemId`/`userId`/
-`sessionId`/... a given placement actually needs.
+## Your own markup
 
-## Level 1: headless (`useRecommendations`)
-
-100% of the markup is yours; the hook fetches and gives you tracking helpers to call yourself:
+Keep your own cards; impressions and clicks are still tracked:
 
 ```tsx
-import { useRecommendations } from "@likyly/react";
-
-function RelatedProducts({ product, user, sessionId }) {
-  const { items, isLoading, strategyUsed, trackImpression, trackClick } = useRecommendations({
-    placement: "pdp-related",
-    context: { itemId: product.id, userId: user?.id, sessionId },
-    limit: 4,
-  });
-
-  if (isLoading) return <Skeleton />;
-  return (
-    <div className="my-own-grid">
-      {items.map((item) => (
-        <MyOwnCard
-          key={item.itemId}
-          item={item}
-          onVisible={() => trackImpression(item.itemId)}
-          onClick={() => trackClick(item.itemId)}
-        />
-      ))}
-    </div>
-  );
-}
-```
-
-`trackImpression`/`trackClick` are manual here - a headless hook has no DOM for LIKYLY to
-observe, so it can't tell what the visitor actually saw. Call `trackImpression` once your own
-card is actually visible (e.g. from your own `IntersectionObserver`, or eagerly on render if
-that's an acceptable approximation for your UI), and `trackClick` from your card's click handler.
-
-## Level 2: ready-to-use (`<LikylyRecommendations>`)
-
-Fetches, renders, **and auto-tracks** `recommendationImpression` (via `IntersectionObserver` -
-fired when a card is actually scrolled into view, not merely fetched) and `recommendationClick`.
-Doesn't lock you out of styling it:
-
-```tsx
-// Default markup, styled via className / the data-likyly-* attributes it sets:
-<LikylyRecommendations placement="pdp-related" itemId={product.id} userId={user?.id} className="related-grid" />
-
-// Full control over each card, while impression/click tracking stays automatic:
 <LikylyRecommendations
   placement="pdp-related"
   itemId={product.id}
-  userId={user?.id}
-  renderItem={(item, { onClick }) => (
-    <MyExistingProductCard product={item} onClick={onClick} />
-  )}
+  renderItem={(item, { onClick }) => <ProductCard product={item} onClick={onClick} />}
 />
 ```
 
-## What's never auto-tracked
-
-`product_view`, `add_to_cart` and `purchase` are **never** fired by this package, on purpose -
-LIKYLY has no reliable, universal way to know when your app navigated to a product page, added
-something to a cart, or completed a checkout across every possible stack. Instrument these
-yourself with the plain SDK helpers, at the point in your own code where each actually happens:
-
-```ts
-await likyly.events.productView({ itemId: product.id, userId: user?.id, sessionId });
-await likyly.events.addToCart({ itemId: product.id, userId: user?.id, sessionId, quantity: 1 });
-await likyly.events.purchase({ eventId: `purchase_${orderId}_${item.id}`, itemId: item.id, userId: user?.id, quantity: item.quantity, properties: { price: item.price, currency: "EUR", orderId } });
-```
-
-Call `get_tracking_requirements` (an MCP tool, or `GET /placements/{slug}/tracking-requirements`)
-for exactly which events a given placement needs, and `get_placement_health` /
-`validate_integration` to confirm they're actually arriving once wired up.
-
-## Anonymous sessions
-
-`@likyly/sdk`'s `LikylySession` (held by `<LikylyProvider>`, reachable via `useLikyly().session`)
-is a first-party, cookieless anonymous id - no need to invent your own:
+Or take full control with the hook, and report what was seen and clicked:
 
 ```tsx
-import { useLikyly } from "@likyly/react";
+import { useLikyly, useRecommendations } from "@likyly/react";
 
-function LoginForm() {
-  const { client, session } = useLikyly();
-  async function onLogin(user) {
-    await session.identify(client, user.id); // attaches this session's past interactions to them
-  }
+function Related({ product }) {
+  const { session } = useLikyly();
+  const { items, isLoading, trackImpression, trackClick } = useRecommendations({
+    placement: "pdp-related",
+    context: { itemId: product.id, sessionId: session.getAnonymousId() },
+    limit: 4,
+  });
+  if (isLoading) return null;
+  return items.map((item) => (
+    <ProductCard key={item.itemId} product={item}
+      onVisible={() => trackImpression(item.itemId)} onClick={() => trackClick(item.itemId)} />
+  ));
 }
 ```
 
-## Security
+## Other events
 
-- `<LikylyProvider apiKey>` must be the **public** key. `@likyly/sdk`'s `Likyly` constructor
-  throws immediately if it detects a secret/developer-shaped key (`sk_`/`lk_` prefix) running
-  where `window`/`document` exist - i.e. exactly the "this ended up in a browser" mistake.
-- Never read that key from a server-only env var, and never name the env var something like
-  `NEXT_PUBLIC_LIKYLY_SECRET_KEY` - only the public key belongs in a `NEXT_PUBLIC_*`/
-  `VITE_PUBLIC_*`-style variable at all.
-- This package has no method that accepts or needs a secret/developer key - there is
-  structurally nothing here that would tempt using one. Placement/data-source configuration is
-  the LIKYLY MCP admin tools' job (secret/developer key, server-side, from your coding agent),
-  never this runtime package's.
+Product views, add-to-cart and purchases happen in your own code, so send them from there:
 
-## Requirements
+```ts
+const { client } = useLikyly();
+await client.events.productView({ itemId: product.id, userId: user?.id });
+await client.events.addToCart({ itemId: product.id, userId: user?.id, quantity: 1 });
+await client.events.purchase({ eventId: `purchase_${order.id}_${item.id}`, itemId: item.id, userId: user?.id,
+  quantity: item.quantity, properties: { price: item.price, currency: "EUR" } });
+```
 
-React 18 or 19 (`useSyncExternalStore`). Server-rendered frameworks (Next.js, Remix, ...): the
-files that use hooks or browser APIs are marked `"use client"` already - use `<LikylyRecommendations>`/
-`useRecommendations` from a Client Component.
+Set `eventId` on purchases: a retried purchase is then never counted twice.
+
+## Sign-in
+
+At sign-in, attach what the visitor did anonymously to their account:
+
+```tsx
+const { client, session } = useLikyly();
+await session.identify(client, user.id);
+```
+
+## Links
+
+- [`@likyly/sdk`](https://www.npmjs.com/package/@likyly/sdk): the JavaScript client this package is built on
+- [likyly.com](https://likyly.com)

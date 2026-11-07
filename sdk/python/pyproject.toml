@@ -5,17 +5,29 @@ build-backend = "hatchling.build"
 [project]
 name = "likyly"
 dynamic = ["version"]
-description = "Official LIKYLY SDK for Python: items, users, events and recommendations."
+description = "Product recommendations for your site (\"You may also like\", \"Recommended for you\"), learned from what your visitors do. Official LIKYLY client for Python."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
-keywords = ["recommendations", "recommender", "personalization", "likyly"]
+keywords = ["likyly", "recommendations", "product recommendations", "recommender", "personalization", "ecommerce"]
+authors = [{ name = "LIKYLY" }]
 classifiers = [
     "Programming Language :: Python :: 3",
     "Typing :: Typed",
     "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Intended Audience :: Developers",
+    "Framework :: AsyncIO",
+    "Topic :: Internet :: WWW/HTTP",
+    "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = ["httpx>=0.27,<1"]
+
+[project.urls]
+Homepage = "https://www.likyly.com"
+Documentation = "https://likyly.com/docs/sdk/python"
+Source = "https://github.com/Likyly/likyly-recsys/tree/main/sdk/python"
+Issues = "https://github.com/Likyly/likyly-recsys/issues"
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "pytest-asyncio>=0.23", "ruff>=0.5", "mypy>=1.10"]

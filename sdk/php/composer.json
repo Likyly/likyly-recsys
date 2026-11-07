@@ -1,9 +1,16 @@
 {
     "name": "likyly/sdk",
-    "description": "Official LIKYLY SDK for PHP: items, users, events and recommendations.",
+    "description": "Product recommendations for your PHP site (\"You may also like\", \"Recommended for you\"), learned from what your visitors do. Official LIKYLY SDK.",
     "type": "library",
     "license": "MIT",
-    "keywords": ["recommendations", "recommender", "personalization", "likyly"],
+    "keywords": ["recommendations", "product recommendations", "recommender", "personalization", "e-commerce", "you may also like", "likyly"],
+    "homepage": "https://www.likyly.com",
+    "authors": [{ "name": "LIKYLY", "homepage": "https://www.likyly.com" }],
+    "support": {
+        "docs": "https://likyly.com/docs/sdk/php",
+        "issues": "https://github.com/Likyly/likyly-php/issues",
+        "source": "https://github.com/Likyly/likyly-php"
+    },
     "require": {
         "php": "^8.1",
         "ext-json": "*",

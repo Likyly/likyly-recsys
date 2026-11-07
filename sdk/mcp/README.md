@@ -1,33 +1,34 @@
 # @likyly/mcp-server
 
-MCP (Model Context Protocol) server for the LIKYLY API. Lets an MCP-compatible AI coding
-assistant (Claude Code, Codex, Claude Desktop, Cursor...) call recommendations and record
-events directly, connect and sync a catalog data source (Shopify, a REST API, a CSV, a
-webhook, ...) end to end, configure a **Placement** - a named recommendation setup ("4 related
-products on a PDP, session-based for anonymous visitors, add history once logged in, exclude
-out-of-stock") - and then get a structured integration recipe for a real codebase
-(`get_integration_recipe`) and verify the result from LIKYLY's own data instead of guessing
-from the source (`validate_integration`). LIKYLY doesn't ship its own chat - the coding agent
-calling these tools *is* the conversational interface; see
-[`docs/getting-started.md`](../../docs/getting-started.md) for the full "zero to working
-recommendations" walkthrough.
+Lets your AI coding assistant (Claude Code, Cursor, VS Code, Codex, Claude Desktop…) set up
+[LIKYLY](https://likyly.com) recommendations on your site for you.
 
-Two tiers of tools, gated by which key you give `LIKYLY_API_KEY` - the server itself doesn't
-decide what a key can do, the API does:
+[LIKYLY](https://likyly.com) shows each visitor the products they are most likely to want ("You may
+also like", "Recommended for you"), learned from what visitors do on your site. With this server, you
+ask your assistant in plain words and it does the work:
 
-- **Recommendations/events** (`get_recommendations`, `track_event`, ...) - safe with your
-  **restricted public key** (account page's "Clé publique"). Safe in an untrusted assistant
-  context, the same way client-side JS would be.
-- **Admin tools** (`create_data_source`, `create_placement`, ...) - need your **secret key**,
-  or better, a **developer key** (see below) - a third credential kind meant for exactly this:
-  a coding agent managing your data sources and placements, without handing it full account
-  access. **Never put a secret or developer key where browser-facing code could read it** -
-  only in a trusted local environment (your own machine, Claude Code, Codex, CI) or
-  server-side config.
+- **connect your catalog**: Shopify, a REST API, a CSV, a webhook, or products pushed from your code;
+- **create a placement**: where recommendations appear and how ("4 related products on the product
+  page, exclude out-of-stock");
+- **integrate it into your code** from a recipe written for your stack;
+- **check it works**, from LIKYLY's own data: recommendations served, impressions and clicks received.
 
-If you only ever want recommendations/events, a public key is all you need - the admin tools
-are simply unusable without a secret/developer key (a clear 401/403 in the tool result, not a
-crash).
+The quickest way to install it is the wizard, which also installs the SDK and writes your key:
+
+```sh
+npx @likyly/wizard
+```
+
+## Which key
+
+The API decides what a key can do, not the server:
+
+- **Public key** (`pk_…`): recommendations and events only. Safe anywhere.
+- **Developer key** (`lk_…`, recommended for assistants) or secret key (`sk_…`): also the admin tools
+  (catalog sources, placements, cache). Keep it on your machine or in server-side config, never in
+  browser code.
+
+Without a developer or secret key, the admin tools answer with a clear 401/403; nothing breaks.
 
 ## Install
 
@@ -110,7 +111,7 @@ Recommendations/events - work with the public key:
 | `track_event` | `POST /events/{event_type}` (impression, view, click, add_to_cart, remove_from_cart, purchase, ...) |
 
 Admin - data source integrations - need the secret key or a developer key with `sources:read`/
-`sources:write` (see [`docs/data-sources.md`](../../docs/data-sources.md) for the full
+`sources:write` (see [`docs/data-sources.md`](https://github.com/Likyly/likyly-recsys/blob/main/docs/data-sources.md) for the full
 architecture, source types and config shapes):
 
 | Tool | Maps to |
@@ -130,7 +131,7 @@ architecture, source types and config shapes):
 | `rotate_push_secret` | `POST /data-sources/{id}/push-secret/rotate` |
 
 Admin - placements (the recommended way to wire up recommendations - see
-[`docs/placements.md`](../../docs/placements.md)) - need the secret key or a developer key
+[`docs/placements.md`](https://github.com/Likyly/likyly-recsys/blob/main/docs/placements.md)) - need the secret key or a developer key
 with `placements:read`/`placements:write`:
 
 | Tool | Maps to |
@@ -145,7 +146,7 @@ with `placements:read`/`placements:write`:
 | `purge_recommendation_cache` | `POST /placements/{slug}/cache/purge`, or `POST /placements/cache/purge` for all - empties the anonymous recommendation cache (see docs/placements.md, "Caching") |
 
 Admin - integration recipe & validator (writing and verifying the client-side integration -
-see [`docs/getting-started.md`](../../docs/getting-started.md)) - same `placements:read`/
+see [`docs/getting-started.md`](https://github.com/Likyly/likyly-recsys/blob/main/docs/getting-started.md)) - same `placements:read`/
 `placements:write` requirement:
 
 | Tool | Maps to |

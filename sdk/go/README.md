@@ -1,10 +1,18 @@
 # LIKYLY SDK for Go
 
-The official Go client for the [LIKYLY](https://likyly.com) recommendations API. Send your catalog and what your visitors do, get personalised recommendations back.
+[LIKYLY](https://likyly.com) shows each visitor of your site the products they are most likely to want:
+"You may also like" on a product page, "Recommended for you" on the home page, "Complete your order" in
+the cart. It learns from what visitors actually do, and gets better as they do it.
 
-```
-catalog (items)  →  events  →  recommendations  →  impression → click → purchase
-```
+This is the official Go client for the LIKYLY API. Your code uses it to:
+
+1. **Send your catalog**: the products, articles or films you want recommended.
+2. **Report what visitors do**: they view a product, add it to their cart, sometimes buy it. Browsing
+   alone is useful: a visitor who never buys still teaches LIKYLY what goes together, and still gets
+   recommendations.
+3. **Ask what to show**: the products to recommend on a page, for a visitor, or both.
+4. **Report what happened to the recommendations**: which ones were shown and which were clicked. LIKYLY
+   learns which recommendations work, and you can measure what they bring in.
 
 ## Install
 

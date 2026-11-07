@@ -1,7 +1,27 @@
 {
   "name": "@likyly/react",
-  "version": "0.2.0",
-  "description": "React bindings for @likyly/sdk: useRecommendations (headless) and <LikylyRecommendations> (ready-to-use) for LIKYLY placements.",
+  "version": "0.2.2",
+  "description": "LIKYLY product recommendations for React and Next.js: a ready-made component and a hook, with impressions and clicks tracked for you.",
+  "keywords": [
+    "likyly",
+    "react",
+    "nextjs",
+    "recommendations",
+    "product recommendations",
+    "personalization",
+    "ecommerce",
+    "hooks"
+  ],
+  "homepage": "https://www.likyly.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Likyly/likyly-recsys.git",
+    "directory": "sdk/react"
+  },
+  "bugs": {
+    "url": "https://github.com/Likyly/likyly-recsys/issues"
+  },
+  "author": "LIKYLY (https://www.likyly.com)",
   "license": "MIT",
   "type": "module",
   "sideEffects": false,

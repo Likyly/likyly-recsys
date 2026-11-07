@@ -1,7 +1,28 @@
 {
   "name": "@likyly/wizard",
-  "version": "0.7.0",
-  "description": "Install LIKYLY in one command: detects your framework, installs the SDK, writes your public key and connects your AI coding assistant (Claude Code, Cursor, VS Code) to the LIKYLY MCP server.",
+  "version": "0.7.1",
+  "description": "Add LIKYLY product recommendations to your project in one command: detects your framework, installs the SDK, writes your key and connects your AI coding assistant.",
+  "keywords": [
+    "likyly",
+    "recommendations",
+    "installer",
+    "cli",
+    "setup",
+    "mcp",
+    "claude-code",
+    "cursor",
+    "ecommerce"
+  ],
+  "homepage": "https://www.likyly.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Likyly/likyly-recsys.git",
+    "directory": "sdk/wizard"
+  },
+  "bugs": {
+    "url": "https://github.com/Likyly/likyly-recsys/issues"
+  },
+  "author": "LIKYLY (https://www.likyly.com)",
   "type": "module",
   "bin": {
     "likyly-wizard": "./bin/likyly-wizard.mjs",

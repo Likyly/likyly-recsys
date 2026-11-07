@@ -1,7 +1,27 @@
 {
   "name": "@likyly/sdk",
-  "version": "1.1.0",
-  "description": "Official LIKYLY SDK for TypeScript / Node.js: items, users, events, recommendations and placements.",
+  "version": "1.1.1",
+  "description": "Product recommendations for your site (\"You may also like\", \"Recommended for you\"), learned from what your visitors do. Official LIKYLY client for JavaScript and TypeScript: browser, Node.js, edge.",
+  "keywords": [
+    "likyly",
+    "recommendations",
+    "product recommendations",
+    "recommender",
+    "personalization",
+    "ecommerce",
+    "you may also like",
+    "typescript"
+  ],
+  "homepage": "https://www.likyly.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Likyly/likyly-recsys.git",
+    "directory": "sdk/js"
+  },
+  "bugs": {
+    "url": "https://github.com/Likyly/likyly-recsys/issues"
+  },
+  "author": "LIKYLY (https://www.likyly.com)",
   "license": "MIT",
   "type": "module",
   "sideEffects": false,

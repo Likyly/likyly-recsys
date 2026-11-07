@@ -1,7 +1,27 @@
 {
   "name": "@likyly/mcp-server",
-  "version": "0.4.0",
-  "description": "MCP (Model Context Protocol) server exposing the LIKYLY API as tools for AI coding assistants - recommendations and event tracking (restricted public key), plus admin tools to connect and sync a catalog data source - Shopify, a REST API, a CSV, a webhook, ... (secret key or a scoped developer key). Runs locally (stdio) or as a hosted HTTP service.",
+  "version": "0.4.1",
+  "description": "Lets your AI coding assistant (Claude Code, Cursor, VS Code, Codex) set up LIKYLY product recommendations: connect your catalog, create placements, integrate and verify.",
+  "keywords": [
+    "likyly",
+    "mcp",
+    "model-context-protocol",
+    "mcp-server",
+    "claude-code",
+    "cursor",
+    "recommendations",
+    "ecommerce"
+  ],
+  "homepage": "https://www.likyly.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Likyly/likyly-recsys.git",
+    "directory": "sdk/mcp"
+  },
+  "bugs": {
+    "url": "https://github.com/Likyly/likyly-recsys/issues"
+  },
+  "author": "LIKYLY (https://www.likyly.com)",
   "type": "module",
   "bin": {
     "likyly-mcp-server": "./dist/index.js",

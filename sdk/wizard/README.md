@@ -23,7 +23,7 @@ An interactive terminal UI (built with [Ink](https://github.com/vadimdemedes/ink
    skip. The key is written under the name the framework exposes to the browser
    (`NEXT_PUBLIC_LIKYLY_KEY`, `VITE_LIKYLY_KEY`, `PUBLIC_LIKYLY_KEY`…), plus a starter file (React
    provider, Nuxt plugin, SvelteKit module…). Secret (`sk_`) and developer (`lk_`) keys are refused.
-5. **Connect your AI assistant** to the [LIKYLY MCP server](../mcp): `.mcp.json` (Claude Code, plus
+5. **Connect your AI assistant** to the [LIKYLY MCP server](https://www.npmjs.com/package/@likyly/mcp-server): `.mcp.json` (Claude Code, plus
    the skill in `.claude/skills/likyly`), `.cursor/mcp.json` (Cursor), `.vscode/mcp.json` (VS Code).
    The developer key is never written to these files: they reference `LIKYLY_DEVELOPER_KEY` (or VS
    Code asks for it on start).
