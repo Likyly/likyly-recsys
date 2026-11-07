@@ -37,7 +37,8 @@ jobs:
           [ "$declared" = "$version" ] || { echo "tag $GITHUB_REF_NAME but $dir/package.json says $declared"; exit 1; }
           echo "dir=$dir" >> "$GITHUB_OUTPUT"
 
-      - run: npm ci
+      # sdk/react and sdk/mcp keep no lockfile in git
+      - run: if [ -f package-lock.json ]; then npm ci; else npm install; fi
         working-directory: ${{ steps.pkg.outputs.dir }}
       - run: npm run build --if-present
         working-directory: ${{ steps.pkg.outputs.dir }}
