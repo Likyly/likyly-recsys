@@ -20,10 +20,6 @@ dependencies {
 
 Your app needs the `INTERNET` permission (`<uses-permission android:name="android.permission.INTERNET" />`).
 
-> Until the package is published, build it from this folder (`./gradlew jar`, then
-> `implementation(files("libs/likyly-android-1.0.0.jar"))` plus `kotlinx-coroutines-core`), or
-> `./gradlew publishToMavenLocal` and add `mavenLocal()` to your repositories.
-
 ## Use the public key - never the secret key
 
 An app runs on the visitor's phone, and anyone can extract a key from an APK. Use the **public key**
