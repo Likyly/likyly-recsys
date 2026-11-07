@@ -46,6 +46,14 @@ test("meta-frameworks win over the library they are built on", () => {
 test("detects PHP, Python, Ruby, Go and WordPress stacks", () => {
   assert.equal(detectProject(project({ "composer.json": { require: { "laravel/framework": "^11" } } })).id, "laravel");
   assert.equal(detectProject(project({ "composer.json": { require: { "symfony/framework-bundle": "^7" } } })).envFile, ".env.local");
+  // Laravel ships a package.json for Vite: still Laravel, with the PHP SDK.
+  const laravel = detectProject(project({ "composer.json": { require: { "laravel/framework": "^13" } }, ...pkg({ vite: "8", "laravel-vite-plugin": "3" }) }));
+  assert.equal(laravel.id, "laravel");
+  assert.deepEqual(laravel.packages, ["likyly/sdk"]);
+  assert.equal(detectProject(project({ "composer.json": { require: { "symfony/framework-bundle": "^8" } }, ...pkg({ "@symfony/webpack-encore": "5" }) })).id, "symfony");
+  assert.equal(detectProject(project({ "composer.json": { require: { "drupal/core-recommended": "^11" } } })).label, "Drupal");
+  // A plain composer.json next to a JS framework stays a JS project.
+  assert.equal(detectProject(project({ "composer.json": { require: { "guzzlehttp/guzzle": "^7" } }, ...pkg({ next: "16", react: "19" }) })).id, "nextjs");
   const django = detectProject(project({ "manage.py": "", "requirements.txt": "Django==5" }));
   assert.equal(django.id, "django");
   assert.equal(django.install.run, false, "bare pip is printed, not run");

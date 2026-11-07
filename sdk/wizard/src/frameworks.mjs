@@ -161,6 +161,7 @@ function detectPhp(dir) {
   const req = { ...composer.require, ...composer["require-dev"] };
   const base = { language: "php", sdkDocs: "php", packages: ["likyly/sdk"], install: { cmd: ["composer", "require", "likyly/sdk"], run: true }, starter: null };
   if (req["laravel/framework"]) return { ...base, id: "laravel", label: "Laravel", envFile: ".env", envVar: "LIKYLY_KEY" };
+  if (req["drupal/core"] || req["drupal/core-recommended"]) return { ...base, id: "drupal", label: "Drupal", envFile: ".env", envVar: "LIKYLY_KEY" };
   if (req["symfony/framework-bundle"]) return { ...base, id: "symfony", label: "Symfony", envFile: ".env.local", envVar: "LIKYLY_KEY" };
   return { ...base, id: "php", label: "PHP", envFile: ".env", envVar: "LIKYLY_KEY" };
 }
@@ -217,7 +218,11 @@ function detectOthers(dir) {
 export function detectProject(dir) {
   // WordPress first: a WP install often ships a package.json for its theme tooling.
   const wp = has(dir, "wp-config.php", "wp-config-sample.php", "wp-content") ? detectPhp(dir) : null;
-  return wp ?? detectJs(dir) ?? detectPhp(dir) ?? detectPython(dir) ?? detectOthers(dir);
+  // A PHP framework next to a package.json (Laravel ships Vite, Symfony may ship Encore) is a PHP
+  // project: its package.json only builds the front assets.
+  const php = detectPhp(dir);
+  const phpFramework = php && php.id !== "php" ? php : null;
+  return wp ?? phpFramework ?? detectJs(dir) ?? php ?? detectPython(dir) ?? detectOthers(dir);
 }
 
 /** AI coding tools whose project-level MCP config we know how to write. */
