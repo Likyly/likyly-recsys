@@ -1,0 +1,36 @@
+# Publishes the Rust SDK (sdk/rust) to crates.io with Trusted Publishing: no token is stored, crates.io
+# checks that the run comes from this workflow (set once on crates.io: likyly > Settings > Trusted
+# Publishing > GitHub, Likyly / likyly-recsys / release-crates.yml).
+#
+# Release: set version in sdk/rust/Cargo.toml, commit, then:
+#   git tag rust-v1.0.1 && git push origin rust-v1.0.1
+name: release-crates
+
+on:
+  push:
+    tags: ["rust-v*"]
+
+permissions:
+  contents: read
+  id-token: write # Trusted Publishing
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: sdk/rust } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: The tag matches the crate version
+        run: |
+          declared=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          [ "rust-v$declared" = "$GITHUB_REF_NAME" ] || { echo "tag $GITHUB_REF_NAME but Cargo.toml says $declared"; exit 1; }
+
+      - run: cargo test
+
+      - uses: rust-lang/crates-io-auth-action@v1
+        id: auth
+      - run: cargo publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}

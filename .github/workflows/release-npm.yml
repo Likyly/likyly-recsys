@@ -1,0 +1,47 @@
+# Publishes an npm package with Trusted Publishing: no token is stored, npm checks that the run comes from
+# this workflow (set once per package on npmjs.com: Settings > Trusted Publisher > GitHub Actions,
+# Likyly / likyly-recsys / release-npm.yml).
+#
+# Release: set "version" in the package's package.json, commit, then push a tag <folder>-v<version>:
+#   js-v1.1.2      -> sdk/js      (@likyly/sdk)
+#   react-v0.2.3   -> sdk/react   (@likyly/react)
+#   wizard-v0.7.2  -> sdk/wizard  (@likyly/wizard)
+#   mcp-v0.4.2     -> sdk/mcp     (@likyly/mcp-server)
+name: release-npm
+
+on:
+  push:
+    tags: ["js-v*", "react-v*", "wizard-v*", "mcp-v*"]
+
+permissions:
+  contents: read
+  id-token: write # Trusted Publishing, and the provenance statement npm attaches to the package
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 24, registry-url: "https://registry.npmjs.org" }
+      - run: npm install -g npm@latest # Trusted Publishing needs npm 11.5.1 or later
+
+      - name: The tag names a package and matches its version
+        id: pkg
+        run: |
+          folder=${GITHUB_REF_NAME%-v*}
+          version=${GITHUB_REF_NAME##*-v}
+          dir=sdk/$folder
+          [ -f "$dir/package.json" ] || { echo "no package in $dir"; exit 1; }
+          declared=$(node -p "require('./$dir/package.json').version")
+          [ "$declared" = "$version" ] || { echo "tag $GITHUB_REF_NAME but $dir/package.json says $declared"; exit 1; }
+          echo "dir=$dir" >> "$GITHUB_OUTPUT"
+
+      - run: npm ci
+        working-directory: ${{ steps.pkg.outputs.dir }}
+      - run: npm run build --if-present
+        working-directory: ${{ steps.pkg.outputs.dir }}
+      - run: npm test --if-present
+        working-directory: ${{ steps.pkg.outputs.dir }}
+      - run: npm publish --access public
+        working-directory: ${{ steps.pkg.outputs.dir }}
