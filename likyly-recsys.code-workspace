@@ -10,7 +10,16 @@
 			"path": "../likyly-wordpress"
 		},
 		{
-			"path": "../likyly-site-sandbox"
+			"path": "../likyly-cms-sandboxes"
+		},
+		{
+			"path": "../likyly-recsys-sdk-move"
+		},
+		{
+			"path": "../sdks"
+		},
+		{
+			"path": "../likyly-videos"
 		}
 	],
 	"settings": {}
