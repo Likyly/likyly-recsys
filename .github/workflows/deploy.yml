@@ -5,23 +5,28 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
-# Serializes deploys - two overlapping runs used to race (one's `docker rm -f
-# recsys-api` killing the container the other had just built and started),
-# causing a real production outage on 2026-09-02. A queued run waits instead of
-# running concurrently; cancel-in-progress stays false so a build never gets cut
-# off mid-way.
-concurrency:
-  group: deploy-recsys-api
-  cancel-in-progress: false
+# The image is built ONCE, in the test job: loaded locally for the tests and pushed as
+# ghcr.io/likyly/recsys-api:<commit sha> in the same build. Only the deploy job promotes it to
+# :latest, so an image whose tests failed never reaches production.
+#
+# Deploys are serialized (concurrency on the deploy job only): two overlapping deploys used to
+# race (one's `docker rm -f recsys-api` killing the container the other had just started),
+# causing a real production outage on 2026-09-02. The tests of a new push no longer wait for
+# the previous run, only its deploy does. GitHub keeps one pending deploy per group: a newer
+# push replaces the one waiting, never the one running.
+
+env:
+  IMAGE: ghcr.io/likyly/recsys-api
 
 jobs:
-  # Nothing is pushed or deployed unless this passes. The tests run INSIDE the production image
+  # Nothing is deployed unless this passes. The tests run INSIDE the production image
   # (same Python, same pinned dependencies as what will actually serve traffic) against a
   # throwaway Postgres+pgvector - never against the production database.
   test:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      packages: write
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -48,12 +53,22 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build image (cached, reused by the push job)
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build the image once (loaded for the tests, pushed as the commit's tag)
         uses: docker/build-push-action@v6
         with:
           context: .
           load: true
-          tags: recsys-api:test
+          push: true
+          tags: |
+            recsys-api:test
+            ${{ env.IMAGE }}:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -75,46 +90,51 @@ jobs:
             sh -c "python scripts/export_openapi.py && cp docs/openapi.json /out/openapi.generated.json"
           diff docs/openapi.json docs/openapi.generated.json
 
-  build-and-push:
+  deploy:
     needs: test
     runs-on: ubuntu-latest
+    concurrency:
+      group: deploy-recsys-api
+      cancel-in-progress: false
     permissions:
       contents: read
       packages: write
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4.2.2
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      # Tests now run in parallel across pushes, so an older run can reach this point after a
+      # newer one: it then steps aside and lets the newer commit's run deploy.
+      - name: Still the latest commit of the branch?
+        id: latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          head=$(gh api "repos/${{ github.repository }}/commits/${{ github.ref_name }}" --jq .sha)
+          if [ "$head" = "${{ github.sha }}" ]; then
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::${{ github.ref_name }} is now at $head: its own run deploys it, this one is skipped."
+          fi
 
       - name: Log in to GHCR
+        if: steps.latest.outputs.deploy == 'true'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: true
-          tags: ghcr.io/likyly/recsys-api:latest
-          cache-from: type=gha
+      - name: Promote the tested image to :latest
+        if: steps.latest.outputs.deploy == 'true'
+        run: docker buildx imagetools create -t "$IMAGE:latest" "$IMAGE:${{ github.sha }}"
 
-  deploy:
-    needs: build-and-push
-    runs-on: ubuntu-latest
-    permissions:
-      packages: read
-    steps:
       - name: Setup SSH
+        if: steps.latest.outputs.deploy == 'true'
         uses: webfactory/ssh-agent@v0.9.0
         with:
           ssh-private-key: ${{ secrets.DIGITALOCEAN_DEPLOY_KEY }}
 
       - name: Write recsys .env (remote)
+        if: steps.latest.outputs.deploy == 'true'
         run: |
           # Lives outside ~/app/recsys (no longer rsynced - the image is built in CI
           # now) and is bind-mounted into the container at runtime by docker-compose.yml,
@@ -130,6 +150,7 @@ jobs:
           ENV
 
       - name: Pull and restart recsys-api (remote)
+        if: steps.latest.outputs.deploy == 'true'
         run: |
           ssh -o StrictHostKeyChecking=no deployer@${{ secrets.DIGITALOCEAN_HOST }} 'bash -se' <<'EOF'
           set -euo pipefail
