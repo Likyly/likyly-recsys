@@ -8,9 +8,16 @@
   <version>1.0.0</version>
   <packaging>jar</packaging>
   <name>LIKYLY SDK</name>
-  <description>Official LIKYLY SDK for Java: items, users, events and recommendations.</description>
+  <description>Product recommendations for your site ("You may also like", "Recommended for you"), learned from what your visitors do. Official LIKYLY client for Java.</description>
   <url>https://www.likyly.com</url>
   <licenses><license><name>MIT</name><url>https://opensource.org/licenses/MIT</url></license></licenses>
+  <developers><developer><name>LIKYLY</name><url>https://www.likyly.com</url></developer></developers>
+  <scm>
+    <connection>scm:git:https://github.com/Likyly/likyly-recsys.git</connection>
+    <developerConnection>scm:git:https://github.com/Likyly/likyly-recsys.git</developerConnection>
+    <url>https://github.com/Likyly/likyly-recsys/tree/main/sdk/java</url>
+  </scm>
+  <issueManagement><system>GitHub</system><url>https://github.com/Likyly/likyly-recsys/issues</url></issueManagement>
 
   <properties>
     <maven.compiler.release>17</maven.compiler.release>
@@ -61,7 +68,26 @@
         <artifactId>maven-javadoc-plugin</artifactId>
         <version>3.8.0</version>
         <configuration><doclint>none</doclint></configuration>
+        <executions><execution><id>attach-javadocs</id><goals><goal>jar</goal></goals></execution></executions>
       </plugin>
     </plugins>
   </build>
+
+  <!-- Maven Central release: mvn -Prelease deploy -DaltDeploymentRepository=bundle::file:target/bundle
+       signs every file with your GPG key; zip target/bundle and upload it on central.sonatype.com. -->
+  <profiles>
+    <profile>
+      <id>release</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-gpg-plugin</artifactId>
+            <version>3.2.7</version>
+            <executions><execution><id>sign</id><phase>verify</phase><goals><goal>sign</goal></goals></execution></executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
 </project>
