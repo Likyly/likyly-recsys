@@ -66,9 +66,7 @@ jobs:
           context: .
           load: true
           push: true
-          tags: |
-            recsys-api:test
-            ${{ env.IMAGE }}:${{ github.sha }}
+          tags: ${{ env.IMAGE }}:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -76,7 +74,7 @@ jobs:
         run: |
           docker run --rm --network host \
             -e TEST_DATABASE_URL=postgresql://test:test@localhost:5432/likyly_test \
-            -w /srv recsys-api:test \
+            -w /srv "$IMAGE:${{ github.sha }}" \
             sh -c "pip install --quiet pytest==9.1.1 mypy==2.3.1 \
               && mypy application/api/ids.py application/api/observability.py application/api/schemas.py \
                       application/api/ingestion.py application/api/recommender.py application/utils/migrate.py \
@@ -86,7 +84,7 @@ jobs:
         run: |
           docker run --rm --network host \
             -e TEST_DATABASE_URL=postgresql://test:test@localhost:5432/likyly_test \
-            -v "$PWD/docs:/out" -w /srv recsys-api:test \
+            -v "$PWD/docs:/out" -w /srv "$IMAGE:${{ github.sha }}" \
             sh -c "python scripts/export_openapi.py && cp docs/openapi.json /out/openapi.generated.json"
           diff docs/openapi.json docs/openapi.generated.json
 
