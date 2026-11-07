@@ -142,6 +142,7 @@ jobs:
           PINECONE_API_KEY=${{ secrets.PINECONE_API_KEY }}
           DATABASE_URL=${{ secrets.DATABASE_URL }}
           SUPABASE_URL=${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY=${{ secrets.SUPABASE_SECRET_KEY }}
           SENTRY_DSN=${{ secrets.SENTRY_DSN }}
           SENTRY_ENVIRONMENT=production
           TEAM_ALERT_WEBHOOK_URL=${{ secrets.TEAM_ALERT_WEBHOOK_URL }}

@@ -39,6 +39,7 @@ import json
 import logging
 import time
 import uuid
+import httpx
 import jwt
 from jwt import PyJWKClient
 
@@ -50,7 +51,7 @@ import pandas as pd
 
 from schemas import (
     RecommendedProduct, VectorRecommendation, User, Message, CachePurged, GenerateModelJobStatus, ModelVersion, ModelStatus, ModelOverview,
-    ClientSelf,
+    ClientSelf, AccountDeletion,
     ClientAdminView, DailyUsage, ClientRename, ClientUsageSummary, WorkspaceRename, WorkspaceSummary, CatalogIndex,
     EventType, EventTypeCreate, EventTypeUpdate, ImportSummary, Item, ItemUpsert, ItemImportRequest, ItemDeleteRequest, BatchResult, ErrorResponse,
     UserUpsert, UserImportRequest, Event, EventBatch, EventResult, EventBatchResult,
@@ -110,7 +111,7 @@ from recommender import (
 )
 from data_sources import router as data_sources_router
 from upgrade_requests import UPGRADE_REQUESTS_PER_DAY, notify_team, render_email
-from alerts import new_account_message, send_team_alert
+from alerts import deleted_account_message, new_account_message, send_team_alert
 from placements import router as placements_router
 from scoped_auth import require_scope
 import placement_service
@@ -1861,6 +1862,51 @@ async def _resolve_my_client_id(supabase_user_id: str, x_workspace_id: Optional[
     if not any(c["id"] == x_workspace_id for c in owned):
         raise HTTPException(status_code=403, detail="That workspace does not belong to this account")
     return x_workspace_id
+
+
+# The Supabase Admin API is the only way to delete an auth user - the account's own session
+# can't. SUPABASE_SECRET_KEY (an sb_secret_... key, or the legacy service_role JWT) is only
+# read by delete_supabase_auth_user; every other Supabase call here stays JWKS-only.
+def delete_supabase_auth_user(supabase_user_id: str) -> None:
+    secret_key = os.environ.get("SUPABASE_SECRET_KEY", "").strip()
+    if not SUPABASE_URL or not secret_key:
+        raise HTTPException(status_code=503, detail="Account deletion is not available right now - contact support@likyly.com")
+    headers = {"apikey": secret_key}
+    if secret_key.startswith("eyJ"):  # legacy service_role JWT: also expected as the bearer
+        headers["Authorization"] = f"Bearer {secret_key}"
+    try:
+        response = httpx.delete(f"{SUPABASE_URL}/auth/v1/admin/users/{supabase_user_id}", headers=headers, timeout=10)
+    except httpx.HTTPError as error:
+        sentry_sdk.capture_exception(error)
+        raise HTTPException(status_code=502, detail="Could not delete the account - try again in a moment")
+    # 404: already gone (a retry after a partial failure) - the data deletion can still proceed.
+    if response.status_code >= 400 and response.status_code != 404:
+        log_event("supabase_user_delete_failed", status=response.status_code)
+        raise HTTPException(status_code=502, detail="Could not delete the account - try again in a moment")
+
+
+@app.delete("/clients/me/account", tags=["selfServiceClient"], response_model=Message, summary="Delete my account permanently", responses=_errors(401, 403, 422))
+async def delete_my_account(payload: AccountDeletion, background_tasks: BackgroundTasks, identity: tuple[str, Optional[str]] = Depends(get_current_supabase_identity)):
+    """Deletes the signed-in account for good: the login itself, then every workspace it owns
+    with everything scoped to them (catalogs, events, models, keys, connectors, placements).
+    No undo. `confirmation` must repeat the account's e-mail address (case and surrounding
+    spaces ignored) - `403` otherwise, nothing deleted. The login goes first: if Supabase
+    refuses, nothing is lost and the call can be retried; once it's gone, the same session
+    token still works until it expires, so a failed data deletion can be retried too."""
+    supabase_user_id, email = identity
+    expected = (email or "").strip().lower()
+    if not expected or payload.confirmation.strip().lower() != expected:
+        raise HTTPException(status_code=403, detail="The confirmation does not match this account's e-mail address")
+    owned_ids = [c["id"] for c in list_clients_by_supabase_user_id(supabase_user_id)]
+    if DEMO_CLIENT_ID in owned_ids:
+        raise HTTPException(status_code=403, detail="This account owns the built-in demo workspace and cannot be deleted")
+
+    delete_supabase_auth_user(supabase_user_id)
+    for client_id in owned_ids:
+        delete_client(client_id)
+    log_event("account_deleted", workspaces=len(owned_ids))
+    background_tasks.add_task(send_team_alert, deleted_account_message(email, owned_ids))
+    return {"message": "Account permanently deleted"}
 
 
 @app.get("/generateModel", tags=["models"], response_model=GenerateModelJobStatus, summary="Train the model (background job)", responses=_errors(401, 403, 422))

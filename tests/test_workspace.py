@@ -391,3 +391,72 @@ class TestPlacements:
     def test_write_routes_require_a_session(self, http):
         assert http.patch("/clients/me/placements/pdp-related", json={"enabled": False}).status_code == 401
         assert http.get("/clients/me/placements/pdp-related/tracking-requirements").status_code == 401
+
+
+# --- Account deletion ------------------------------------------------------------------------
+
+DELETER_ID = "supabase-user-deleting-account"
+
+
+@pytest.fixture
+def deleter(monkeypatch):
+    monkeypatch.setattr(app_module, "_decode_supabase_jwt", lambda authorization: {"sub": DELETER_ID, "email": "Leaving@Example.com"})
+    monkeypatch.setenv("SUPABASE_SECRET_KEY", "sb_secret_test")
+    monkeypatch.setattr(app_module, "SUPABASE_URL", "https://project.supabase.test")
+    calls = []
+
+    class FakeResponse:
+        status_code = 200
+
+    def fake_delete(url, headers, timeout):
+        calls.append((url, headers))
+        return FakeResponse()
+
+    monkeypatch.setattr(app_module.httpx, "delete", fake_delete)
+    return {"Authorization": "Bearer fake"}, calls
+
+
+def test_delete_account_removes_the_login_and_every_workspace(http, deleter):
+    headers, calls = deleter
+    http.post("/clients/me", headers=headers)
+    owned_before = [c["id"] for c in db.list_clients_by_supabase_user_id(DELETER_ID)]
+    assert owned_before
+
+    response = http.request("DELETE", "/clients/me/account", headers=headers, json={"confirmation": "  leaving@example.com "})
+    assert response.status_code == 200, response.text
+    assert calls == [("https://project.supabase.test/auth/v1/admin/users/" + DELETER_ID, {"apikey": "sb_secret_test"})]
+    assert db.list_clients_by_supabase_user_id(DELETER_ID) == []
+    for client_id in owned_before:
+        assert db.get_client_self_by_id(client_id) is None
+
+
+def test_delete_account_refuses_a_wrong_confirmation_and_deletes_nothing(http, deleter):
+    headers, calls = deleter
+    http.post("/clients/me", headers=headers)
+    response = http.request("DELETE", "/clients/me/account", headers=headers, json={"confirmation": "someone@else.com"})
+    assert response.status_code == 403
+    assert calls == []
+    assert db.list_clients_by_supabase_user_id(DELETER_ID)
+
+
+def test_delete_account_keeps_the_data_when_supabase_refuses(http, deleter, monkeypatch):
+    headers, _ = deleter
+    http.post("/clients/me", headers=headers)
+
+    class Refused:
+        status_code = 500
+
+    monkeypatch.setattr(app_module.httpx, "delete", lambda url, headers, timeout: Refused())
+    response = http.request("DELETE", "/clients/me/account", headers=headers, json={"confirmation": "leaving@example.com"})
+    assert response.status_code == 502
+    assert db.list_clients_by_supabase_user_id(DELETER_ID)
+
+
+def test_delete_account_is_unavailable_without_the_secret_key(http, deleter, monkeypatch):
+    headers, calls = deleter
+    monkeypatch.delenv("SUPABASE_SECRET_KEY")
+    http.post("/clients/me", headers=headers)
+    response = http.request("DELETE", "/clients/me/account", headers=headers, json={"confirmation": "leaving@example.com"})
+    assert response.status_code == 503
+    assert calls == []
+    assert db.list_clients_by_supabase_user_id(DELETER_ID)

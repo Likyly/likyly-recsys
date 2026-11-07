@@ -36,3 +36,9 @@ def send_team_alert(message: str) -> bool:
 def new_account_message(email: str | None, client_id: int) -> str:
     who = email or "(e-mail inconnu)"
     return f"🆕 Nouveau compte LIKYLY : **{who}** (workspace #{client_id})\nhttps://www.likyly.com/admin/clients"
+
+
+def deleted_account_message(email: str | None, client_ids: list[int]) -> str:
+    who = email or "(e-mail inconnu)"
+    workspaces = ", ".join(f"#{i}" for i in client_ids) or "aucun"
+    return f"🗑️ Compte LIKYLY supprimé par son titulaire : **{who}** (workspaces : {workspaces})"

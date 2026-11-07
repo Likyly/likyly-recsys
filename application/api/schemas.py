@@ -515,6 +515,10 @@ class WorkspaceSummary(BaseModel):
     created_at: datetime
 
 
+class AccountDeletion(BaseModel):
+    confirmation: str = Field(min_length=1, max_length=320, description="The account's e-mail address, typed again - proof the deletion is deliberate, not a stray call.", examples=["jane@example.com"])
+
+
 class WorkspaceRename(BaseModel):
     display_name: str = Field(min_length=1, max_length=200, description="The name shown for the workspace (whitespace around it is trimmed). The technical `name` never changes.", examples=["Acme Store"])
 

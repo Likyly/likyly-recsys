@@ -1,6 +1,25 @@
 {
   "components": {
     "schemas": {
+      "AccountDeletion": {
+        "properties": {
+          "confirmation": {
+            "description": "The account's e-mail address, typed again - proof the deletion is deliberate, not a stray call.",
+            "examples": [
+              "jane@example.com"
+            ],
+            "maxLength": 320,
+            "minLength": 1,
+            "title": "Confirmation",
+            "type": "string"
+          }
+        },
+        "required": [
+          "confirmation"
+        ],
+        "title": "AccountDeletion",
+        "type": "object"
+      },
       "AnalyticsDetailOut": {
         "description": "Pro-only - the depth Free's summary doesn't include.",
         "properties": {
@@ -7144,6 +7163,94 @@
           }
         ],
         "summary": "Get or create my account",
+        "tags": [
+          "selfServiceClient"
+        ]
+      }
+    },
+    "/clients/me/account": {
+      "delete": {
+        "description": "Deletes the signed-in account for good: the login itself, then every workspace it owns\nwith everything scoped to them (catalogs, events, models, keys, connectors, placements).\nNo undo. `confirmation` must repeat the account's e-mail address (case and surrounding\nspaces ignored) - `403` otherwise, nothing deleted. The login goes first: if Supabase\nrefuses, nothing is lost and the call can be retried; once it's gone, the same session\ntoken still works until it expires, so a failed data deletion can be retried too.",
+        "operationId": "delete_my_account",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AccountDeletion"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing, invalid or revoked `X-API-Key`."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The public key can't do this (secret key required), or a plan limit was reached."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The request is malformed - `detail` lists the offending fields."
+          },
+          "429": {
+            "description": "Rate limit exceeded at the API gateway - retry shortly."
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Delete my account permanently",
         "tags": [
           "selfServiceClient"
         ]
