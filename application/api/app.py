@@ -112,6 +112,7 @@ from recommender import (
 from data_sources import router as data_sources_router
 from upgrade_requests import UPGRADE_REQUESTS_PER_DAY, notify_team, render_email
 from alerts import deleted_account_message, new_account_message, send_team_alert
+from welcome import send_welcome
 from placements import router as placements_router
 from scoped_auth import require_scope
 import placement_service
@@ -392,6 +393,14 @@ async def get_current_supabase_identity(authorization: Optional[str] = Header(No
     return payload["sub"], payload.get("email")
 
 
+async def get_current_supabase_profile(authorization: Optional[str] = Header(None)) -> tuple[str, Optional[str], Optional[str]]:
+    """get_current_supabase_identity plus the account's language (user_metadata.locale, written by
+    the website at sign-up) - for the emails the API sends itself."""
+    payload = _decode_supabase_jwt(authorization)
+    locale = (payload.get("user_metadata") or {}).get("locale")
+    return payload["sub"], payload.get("email"), locale if isinstance(locale, str) else None
+
+
 async def get_current_admin_user_id(authorization: Optional[str] = Header(None)) -> str:
     """Same JWT verification as get_current_supabase_user_id, plus an app_metadata.
     is_admin check - app_metadata (unlike user_metadata) can only be set via Supabase's
@@ -611,14 +620,15 @@ async def api_reference():
 WorkspaceIdHeader = Annotated[Optional[int], Header(alias="X-Workspace-Id", description="Which of this account's workspaces this call is about. Omitted: the primary (oldest) one.")]
 
 @app.post("/clients/me", tags=["selfServiceClient"], response_model=ClientSelf, summary="Get or create my account", responses=_errors(401))
-async def get_or_create_my_client(background_tasks: BackgroundTasks, identity: tuple[str, Optional[str]] = Depends(get_current_supabase_identity)):
+async def get_or_create_my_client(background_tasks: BackgroundTasks, profile: tuple[str, Optional[str], Optional[str]] = Depends(get_current_supabase_profile)):
     """Called from the website once a Supabase user is logged in. First call for a given
     account provisions a client + both keys (each shown once); later calls just confirm
     the existing client without re-exposing them - see /clients/me/regenerate-secret-key
     and /clients/me/regenerate-public-key for that. Also keeps contact_email in sync from
     the JWT on every call, not just creation, so it self-heals for accounts created
-    before this field existed and stays correct if the email ever changes."""
-    supabase_user_id, email = identity
+    before this field existed and stays correct if the email ever changes. The account's very
+    first workspace also sends the welcome email (welcome.py), whatever the sign-in method."""
+    supabase_user_id, email, locale = profile
     existing = get_client_by_supabase_user_id(supabase_user_id)
     if existing:
         set_client_contact_email(existing["id"], email)
@@ -633,6 +643,7 @@ async def get_or_create_my_client(background_tasks: BackgroundTasks, identity: t
     created = get_client_by_supabase_user_id(supabase_user_id)
     # first workspace of a new account = a new sign-up: tell the team (TEAM_ALERT_WEBHOOK_URL, best effort)
     background_tasks.add_task(send_team_alert, new_account_message(email, client_id))
+    background_tasks.add_task(send_welcome, email, locale)
     return {
         "client_id": client_id, "name": created["name"], "display_name": created["display_name"],
         "secret_key": raw_secret_key, "public_key": raw_public_key,

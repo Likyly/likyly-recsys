@@ -7102,7 +7102,7 @@
         ]
       },
       "post": {
-        "description": "Called from the website once a Supabase user is logged in. First call for a given\naccount provisions a client + both keys (each shown once); later calls just confirm\nthe existing client without re-exposing them - see /clients/me/regenerate-secret-key\nand /clients/me/regenerate-public-key for that. Also keeps contact_email in sync from\nthe JWT on every call, not just creation, so it self-heals for accounts created\nbefore this field existed and stays correct if the email ever changes.",
+        "description": "Called from the website once a Supabase user is logged in. First call for a given\naccount provisions a client + both keys (each shown once); later calls just confirm\nthe existing client without re-exposing them - see /clients/me/regenerate-secret-key\nand /clients/me/regenerate-public-key for that. Also keeps contact_email in sync from\nthe JWT on every call, not just creation, so it self-heals for accounts created\nbefore this field existed and stays correct if the email ever changes. The account's very\nfirst workspace also sends the welcome email (welcome.py), whatever the sign-in method.",
         "operationId": "get_or_create_my_client",
         "parameters": [
           {

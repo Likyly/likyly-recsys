@@ -115,10 +115,10 @@ def smtp_settings() -> Optional[dict[str, Any]]:
         return None
     user = os.environ.get("SMTP_USER")
     return {
-        "host": host, "port": int(os.environ.get("SMTP_PORT", "587")),
+        "host": host, "port": int(os.environ.get("SMTP_PORT") or "587"),  # the deploy writes an empty value when unset
         "user": user, "password": os.environ.get("SMTP_PASSWORD"),
         "sender": os.environ.get("SMTP_FROM") or user,
-        "security": os.environ.get("SMTP_SECURITY", "starttls").lower(),
+        "security": (os.environ.get("SMTP_SECURITY") or "starttls").lower(),
     }
 
 
