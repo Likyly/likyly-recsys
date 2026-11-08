@@ -58,7 +58,7 @@ from schemas import (
     ClientAdminView, AdminOverview, AdminClientInsights, AdminIntegrationRow, AdminUpgradeRequest, AdminUser,
     DailyUsage, ClientRename, ClientUsageSummary, WorkspaceRename, WorkspaceSummary, CatalogIndex,
     EventType, EventTypeCreate, EventTypeUpdate, ImportSummary, Item, ItemUpsert, ItemImportRequest, ItemDeleteRequest, BatchResult, ErrorResponse,
-    UserUpsert, UserImportRequest, Event, EventBatch, EventResult, EventBatchResult,
+    UserUpsert, UserImportRequest, CatalogEraseRequest, CatalogErased, Event, EventBatch, EventResult, EventBatchResult,
     RecommendationRequest, RecommendationResponse,
     DeveloperKey, DeveloperKeyCreate, DeveloperKeyCreated,
     IdentifyRequest, IdentifyResult,
@@ -88,7 +88,7 @@ from db import (
     set_client_active, delete_client, get_client_admin_row, rename_client, set_client_display_name,
     touch_client_usage, list_all_clients_with_usage, get_client_usage_by_day,
     get_active_model_version, count_products_in_catalog,
-    count_users_in_catalog, count_trainings_today, list_data_sources, delete_catalog,
+    count_users_in_catalog, count_trainings_today, list_data_sources, delete_catalog, erase_catalog_data,
     DEFAULT_ITEM_SORT,
     get_client_contact_email, create_upgrade_request, count_upgrade_requests_since,
     list_product_types_for_client, get_client_plan, set_client_plan,
@@ -1771,6 +1771,22 @@ def users_delete(user_id: UserIdPath, data_product_type: Catalog, client_id: int
     if not delete_user(client_id, data_product_type, user_id):
         raise HTTPException(status_code=404, detail=f"No user '{user_id}' in data_product_type={data_product_type}")
     return {"message": f"User '{user_id}' deleted from data_product_type={data_product_type}"}
+
+
+@app.post(
+    "/catalog/erase", tags=["users"], response_model=CatalogErased, summary="Erase a catalog's data",
+    responses=_errors(401, 403, 422),
+)
+def catalog_erase(payload: CatalogEraseRequest, data_product_type: Catalog, client_id: int = Depends(get_current_client_id)):
+    """Erases everything this catalog holds: items, user profiles, **every event** and every
+    served recommendation - for a shop that leaves for good (Shopify's `shop/redact`, a GDPR
+    erasure of a whole store). Placements and data sources stay configured. `confirm` must
+    repeat the catalog name. Irreversible. Secret key only."""
+    if payload.confirm != data_product_type:
+        raise HTTPException(status_code=422, detail=f"confirm must be the catalog name ('{data_product_type}')")
+    counts = erase_catalog_data(client_id, data_product_type)
+    placement_service.purge_cache(client_id)
+    return {"catalog": data_product_type, **counts}
 
 
 @app.post(

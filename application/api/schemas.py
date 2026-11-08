@@ -296,6 +296,18 @@ class UserImportRequest(BaseModel):
     ]}]})
 
 
+class CatalogEraseRequest(BaseModel):
+    confirm: str = Field(min_length=1, max_length=128, description="The catalog's name (`data_product_type`), typed again - proof the erasure is deliberate, not a stray call.", examples=["shop"])
+
+
+class CatalogErased(BaseModel):
+    catalog: str
+    items: int
+    users: int
+    events: int
+    recommendations: int
+
+
 class Message(BaseModel):
     message: str
 

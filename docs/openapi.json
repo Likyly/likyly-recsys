@@ -1838,6 +1838,58 @@
         "title": "CachePurged",
         "type": "object"
       },
+      "CatalogEraseRequest": {
+        "properties": {
+          "confirm": {
+            "description": "The catalog's name (`data_product_type`), typed again - proof the erasure is deliberate, not a stray call.",
+            "examples": [
+              "shop"
+            ],
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Confirm",
+            "type": "string"
+          }
+        },
+        "required": [
+          "confirm"
+        ],
+        "title": "CatalogEraseRequest",
+        "type": "object"
+      },
+      "CatalogErased": {
+        "properties": {
+          "catalog": {
+            "title": "Catalog",
+            "type": "string"
+          },
+          "events": {
+            "title": "Events",
+            "type": "integer"
+          },
+          "items": {
+            "title": "Items",
+            "type": "integer"
+          },
+          "recommendations": {
+            "title": "Recommendations",
+            "type": "integer"
+          },
+          "users": {
+            "title": "Users",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "catalog",
+          "items",
+          "users",
+          "events",
+          "recommendations"
+        ],
+        "title": "CatalogErased",
+        "type": "object"
+      },
       "CatalogIndex": {
         "description": "One index of the workspace = one catalog namespace (product_type): its own items, its\nown trained model. Indexes have no separate lifecycle - one appears as soon as a data\nsource or an item push writes into a new product_type.",
         "properties": {
@@ -9345,6 +9397,103 @@
           "analytics"
         ],
         "x-required-key": "scope:analytics:read"
+      }
+    },
+    "/catalog/erase": {
+      "post": {
+        "description": "Erases everything this catalog holds: items, user profiles, **every event** and every\nserved recommendation - for a shop that leaves for good (Shopify's `shop/redact`, a GDPR\nerasure of a whole store). Placements and data sources stay configured. `confirm` must\nrepeat the catalog name. Irreversible. Secret key only.",
+        "operationId": "catalog_erase",
+        "parameters": [
+          {
+            "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise).",
+            "in": "query",
+            "name": "data_product_type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "minLength": 1,
+                  "pattern": "^[a-zA-Z0-9_-]+$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise).",
+              "examples": [
+                "shop"
+              ],
+              "title": "Data Product Type"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CatalogEraseRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogErased"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing, invalid or revoked `X-API-Key`."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The public key can't do this (secret key required), or a plan limit was reached."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The request is malformed - `detail` lists the offending fields."
+          },
+          "429": {
+            "description": "Rate limit exceeded at the API gateway - retry shortly."
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Erase a catalog's data",
+        "tags": [
+          "users"
+        ],
+        "x-required-key": "secret"
       }
     },
     "/clients/me": {

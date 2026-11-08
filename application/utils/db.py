@@ -1616,6 +1616,26 @@ def delete_catalog(client_id: int, product_type: str) -> int:
         return removed
 
 
+def erase_catalog_data(client_id: int, product_type: str) -> dict[str, int]:
+    """Erases everything this catalog holds about its items and its people: items, user
+    profiles, every interaction, every served recommendation (they carry user and session
+    ids) and the id mappings. What a shop leaving for good (Shopify's shop/redact, GDPR)
+    expects - unlike delete_catalog, which forgets the items only and keeps the interactions
+    as collaborative signal. Placements, data sources and trained models are left alone: they
+    hold no personal data and are removed (or retrained) on their own. Returns the counts."""
+    with SessionLocal() as session:
+        scope = {"client_id": client_id, "product_type": product_type}
+        counts = {
+            "events": session.query(InteractionModel).filter_by(**scope).delete(synchronize_session=False),
+            "recommendations": session.query(RecommendationModel).filter_by(**scope).delete(synchronize_session=False),
+            "users": session.query(UserModel).filter_by(**scope).delete(synchronize_session=False),
+            "items": session.query(ProductModel).filter_by(**scope).delete(synchronize_session=False),
+        }
+        session.query(IdMapModel).filter_by(**scope).delete(synchronize_session=False)
+        session.commit()
+        return counts
+
+
 def insert_interactions(rows: list[dict[str, Any]]) -> int:
     """Bulk insert; returns how many rows were actually written. A row whose (client_id,
     event_id) already exists is skipped silently (ON CONFLICT DO NOTHING against the partial
