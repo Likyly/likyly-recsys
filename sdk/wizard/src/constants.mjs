@@ -2,7 +2,7 @@
 
 export const KEYS_URL = "https://www.likyly.com/account/keys";
 export const DOCS_URL = "https://www.likyly.com/docs/installation";
-export const WP_PLUGIN_URL = "https://www.likyly.com/docs/installation#wordpress";
+export const WP_PLUGIN_URL = "https://www.likyly.com/wordpress";
 
 export const TAGLINE = "Recommendations on your site, installed for you.";
 

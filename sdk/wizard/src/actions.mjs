@@ -33,7 +33,7 @@ export async function installSdk(opts, project, onLine) {
   const line = project.install?.cmd.join(" ");
   switch (installMode(opts, project)) {
     case "plugin":
-      return [warn("WordPress: install the Likyly Connector plugin, then set your key in Settings › Likyly.", WP_PLUGIN_URL)];
+      return [warn("WordPress: install the LIKYLY plugin, then paste your two keys in the LIKYLY menu of your admin.", WP_PLUGIN_URL)];
     case "none":
       return [];
     case "manual":
@@ -98,7 +98,7 @@ export function describePlan(opts, project) {
   const mode = installMode(opts, project);
   if (mode === "run") rows.push(["Run", project.install.cmd.join(" ")]);
   else if (mode === "manual" || mode === "missing") rows.push(["Show", project.install.cmd.join(" ")]);
-  else if (mode === "plugin") rows.push(["Plugin", "Likyly Connector (WordPress)"]);
+  else if (mode === "plugin") rows.push(["Plugin", "LIKYLY for WordPress / WooCommerce"]);
   if (project.envFile && project.envVar) rows.push(["Key", `${project.envVar} → ${project.envFile}`]);
   if (project.starter) rows.push(["Create", project.starter.path]);
   rows.push(["Connect", "your AI assistant to the LIKYLY MCP server"]);
