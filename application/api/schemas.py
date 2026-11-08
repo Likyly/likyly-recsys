@@ -1144,3 +1144,74 @@ class AnalyticsDetailOut(BaseModel):
     timeseries: List[AnalyticsTimeseriesPoint]
     by_placement: List[AnalyticsPlacementRow]
     revenue: AnalyticsRevenue
+
+
+# ---------------------------------------------------------------------------
+# Key-authenticated performance analytics - GET /analytics/* (analytics.py)
+# Same numbers as the console's /clients/me/analytics/*, for an integration that only holds
+# the secret key (or a developer key with `analytics:read`) - e.g. the WordPress plugin.
+# ---------------------------------------------------------------------------
+
+
+class AnalyticsWindow(BaseModel):
+    """The period a /analytics/* answer covers - always the one the server actually used,
+    after clamping the requested `start`/`end` to the account's plan."""
+    start: str = Field(description="First day included (YYYY-MM-DD, UTC).", examples=["2026-11-02"])
+    end: str = Field(description="Last day included (YYYY-MM-DD, UTC).", examples=["2026-11-08"])
+    plan: str = Field(description="The account's plan: `free`, `pro` or `unlimited`.", examples=["free"])
+    window_days: int = Field(description="Number of days in [start, end], both included.", examples=[7])
+    max_window_days: Optional[int] = Field(default=None, description="Longest window this plan may request (`null` = no cap). A longer request is shortened from its start.", examples=[7])
+
+
+class AnalyticsKeySummaryOut(AnalyticsWindow):
+    """Totals over the window - available on every plan."""
+    recommendations_served: int = Field(description="Recommendation calls answered (each call counts once, whatever the number of items).")
+    impressions: int = Field(description="`impression` events received.")
+    clicks: int = Field(description="`click` events received.")
+    ctr: float = Field(description="clicks / impressions (0 when there was no impression).")
+
+
+class AnalyticsPlacementPerformanceRow(AnalyticsPlacementRow):
+    """One recommendation block (placement). Impressions and clicks are counted on the events'
+    `placement`; purchases and revenue are those carrying a `recommendation_id`, credited to
+    the placement that recommendation was served for (or the purchase's own `placement`)."""
+    purchases: int = Field(description="Purchases attributed to a recommendation of this placement.")
+    revenue: float = Field(description="Sum of `properties.price` x `quantity` of those purchases (currency as sent in your events).")
+
+
+class AnalyticsPlacementsOut(AnalyticsWindow):
+    """Per-placement breakdown - available on every plan."""
+    placements: List[AnalyticsPlacementPerformanceRow]
+
+
+class AnalyticsKeyDetailOut(AnalyticsWindow):
+    """Day-by-day trend and total attributed revenue - Pro plan and above."""
+    timeseries: List[AnalyticsTimeseriesPoint] = Field(description="One point per day that had any activity.")
+    revenue: AnalyticsRevenue = Field(description="Purchases carrying a `recommendation_id`, and their `properties.price` x `quantity` total.")
+
+
+class AnalyticsTopItem(BaseModel):
+    """How one item performed when it was recommended."""
+    item_id: str = Field(description="Your own item id.", examples=["SKU-NIKE-001"])
+    product_type: str = Field(description="The catalog the item belongs to (`data_product_type` elsewhere in this API).", examples=["shop"])
+    title: Optional[str] = Field(default=None, description="The item's title in the catalog - `null` when it is no longer there.", examples=["Nike Air Zoom Pegasus 41"])
+    recommended: int = Field(description="Recommendation responses that included this item.")
+    impressions: int = Field(description="`impression` events on this item carrying a `recommendation_id`.")
+    clicks: int = Field(description="`click` events on this item carrying a `recommendation_id`.")
+    ctr: float = Field(description="clicks / impressions (0 when there was no impression).")
+    purchases: int = Field(description="Purchases of this item carrying a `recommendation_id`.")
+    revenue: float = Field(description="Sum of `properties.price` x `quantity` of those purchases.")
+
+
+class AnalyticsItemsOut(AnalyticsWindow):
+    """Top recommended items, by clicks then purchases - Pro plan and above."""
+    items: List[AnalyticsTopItem]
+
+
+class AnalyticsPlanOut(BaseModel):
+    """The account's plan, what it allows and what is used - e.g. "20 / 50 products, Free"."""
+    plan: str = Field(description="`free`, `pro` or `unlimited`.", examples=["free"])
+    plan_name: str = Field(description="Display name of the plan.", examples=["Free"])
+    limits: PlanLimits = Field(description="Everything the plan allows (`null` = no cap).")
+    usage: ClientUsageSummary = Field(description="Current usage next to each capped quantity.")
+    upgrade_url: str = Field(description="Where to ask for a higher plan.", examples=["https://likyly.com/account/upgrade"])

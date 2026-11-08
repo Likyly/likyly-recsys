@@ -145,6 +145,11 @@ UPGRADE_URL = "https://likyly.com/account/upgrade"
 _PLAN_DISPLAY_NAMES = {PLAN_FREE: "Free", PLAN_PRO: "Pro", PLAN_UNLIMITED: "Unlimited"}
 
 
+def plan_display_name(plan: str) -> str:
+    """"Free", "Pro", "Unlimited" - an unrecognized plan string reads as Free, like get_plan_limits."""
+    return _PLAN_DISPLAY_NAMES.get(plan, "Free")
+
+
 def plan_limit_message(plan: str, what: str) -> str:
     """"Free plan limit reached: 1 catalog max. Request the Pro plan: https://..." - `what` is the
     "1 catalog max" part. The plan name is real (a Pro workspace at its cap isn't told it is on Free)."""
@@ -483,6 +488,9 @@ ALLOWED_SCOPES = {
     "sources:read", "sources:write",
     "placements:read", "placements:write",
     "integrations:read", "events:read",
+    # GET /analytics/* (analytics.py) - read-only performance numbers and the plan's usage,
+    # e.g. for a CMS plugin that shows how its recommendation blocks perform.
+    "analytics:read",
 }
 
 
@@ -2531,3 +2539,109 @@ def recommendation_attributed_revenue(client_id: int, since, until=None, placeme
         if isinstance(price, (int, float)):
             revenue += price * (r.quantity or 1)
     return {"purchases": purchases, "revenue": round(revenue, 2)}
+
+
+# Same convention as recommendation_attributed_revenue's Python loop, in SQL: properties.price
+# counts only when it is a JSON number, times the event's quantity (1 when unset).
+_ATTRIBUTED_PRICE_SQL = (
+    "CASE WHEN jsonb_typeof(i.properties->'price') = 'number' "
+    "THEN (i.properties->>'price')::numeric * COALESCE(i.quantity, 1) ELSE 0 END"
+)
+
+
+def recommendation_attributed_revenue_by_placement(client_id: int, since, until) -> dict[str, dict[str, Any]]:
+    """placement slug -> {"purchases", "revenue"} for purchases carrying a recommendation_id in
+    [since, until]. The placement is the one the recommendation call was logged with
+    (recommendations.placement - the block that actually surfaced the item), falling back to
+    the purchase event's own `placement` when the recommendation has none (or is unknown).
+    Purchases attributable to no placement at all are left out, like the impression/click
+    breakdown does. One aggregate query, scoped to client_id on both tables."""
+    sql = text(
+        "SELECT COALESCE(r.placement, i.placement) AS placement, COUNT(*) AS purchases, "
+        f"COALESCE(SUM({_ATTRIBUTED_PRICE_SQL}), 0) AS revenue "
+        "FROM interactions i "
+        "LEFT JOIN recommendations r ON r.recommendation_id = i.recommendation_id AND r.client_id = i.client_id "
+        "WHERE i.client_id = :client_id AND i.event_type = 'purchase' AND i.recommendation_id IS NOT NULL "
+        "AND i.occurred_at >= :since AND i.occurred_at <= :until "
+        "AND COALESCE(r.placement, i.placement) IS NOT NULL "
+        "GROUP BY 1"
+    )
+    with SessionLocal() as session:
+        rows = session.execute(sql, {"client_id": client_id, "since": since, "until": until}).all()
+    return {row.placement: {"purchases": int(row.purchases), "revenue": round(float(row.revenue), 2)} for row in rows}
+
+
+def recommendation_performance_by_placement_with_revenue(client_id: int, since, until) -> list[dict[str, Any]]:
+    """recommendation_performance_by_placement's rows plus `purchases`/`revenue` attributed to
+    each placement (see recommendation_attributed_revenue_by_placement) - a placement with
+    attributed purchases but no impression/click in the window still gets its row."""
+    rows = {row["placement"]: row for row in recommendation_performance_by_placement(client_id, since, until=until)}
+    attributed = recommendation_attributed_revenue_by_placement(client_id, since, until)
+    result = []
+    for slug in sorted(set(rows) | set(attributed)):
+        row = rows.get(slug) or {"placement": slug, "recommendations_served": 0, "impressions": 0, "clicks": 0, "ctr": 0.0}
+        money = attributed.get(slug, {"purchases": 0, "revenue": 0.0})
+        result.append({**row, "purchases": money["purchases"], "revenue": money["revenue"]})
+    return result
+
+
+def recommendation_top_items(client_id: int, since, until, limit: int = 10) -> list[dict[str, Any]]:
+    """The items recommendations performed best on in [since, until], aggregated in the
+    database: per (catalog, item), how many recommendation responses included it
+    (`recommended`), and the impressions, clicks, purchases and revenue of events that carry a
+    recommendation_id. Ordered by clicks, then purchases (then impressions, times recommended,
+    item id - so the order is stable). `title` comes from the catalog when the item still
+    exists there. Every table is filtered on client_id."""
+    sql = text(
+        "WITH events AS ("
+        "  SELECT i.product_type, i.work_id,"
+        "    COUNT(*) FILTER (WHERE i.event_type = 'impression') AS impressions,"
+        "    COUNT(*) FILTER (WHERE i.event_type = 'click') AS clicks,"
+        "    COUNT(*) FILTER (WHERE i.event_type = 'purchase') AS purchases,"
+        f"    COALESCE(SUM({_ATTRIBUTED_PRICE_SQL}) FILTER (WHERE i.event_type = 'purchase'), 0) AS revenue"
+        "  FROM interactions i"
+        "  WHERE i.client_id = :client_id AND i.recommendation_id IS NOT NULL"
+        "    AND i.event_type IN ('impression', 'click', 'purchase')"
+        "    AND i.occurred_at >= :since AND i.occurred_at <= :until"
+        "  GROUP BY i.product_type, i.work_id"
+        "), ev AS ("
+        "  SELECT e.*, COALESCE(m.external_id, e.work_id::text) AS item_id FROM events e"
+        "  LEFT JOIN id_map m ON m.client_id = :client_id AND m.product_type = e.product_type"
+        "    AND m.kind = :kind AND m.internal_id = e.work_id"
+        "), served AS ("
+        "  SELECT r.product_type, x.item_id, COUNT(*) AS recommended"
+        "  FROM recommendations r CROSS JOIN LATERAL jsonb_array_elements_text("
+        "    CASE WHEN jsonb_typeof(r.item_ids) = 'array' THEN r.item_ids ELSE '[]'::jsonb END) AS x(item_id)"
+        "  WHERE r.client_id = :client_id AND r.created_at >= :since AND r.created_at <= :until"
+        "  GROUP BY r.product_type, x.item_id"
+        "), merged AS ("
+        "  SELECT COALESCE(ev.product_type, s.product_type) AS product_type,"
+        "    COALESCE(ev.item_id, s.item_id) AS item_id,"
+        "    COALESCE(s.recommended, 0) AS recommended, COALESCE(ev.impressions, 0) AS impressions,"
+        "    COALESCE(ev.clicks, 0) AS clicks, COALESCE(ev.purchases, 0) AS purchases,"
+        "    COALESCE(ev.revenue, 0) AS revenue"
+        "  FROM ev FULL OUTER JOIN served s ON s.product_type = ev.product_type AND s.item_id = ev.item_id"
+        "), top AS ("
+        "  SELECT * FROM merged"
+        "  ORDER BY clicks DESC, purchases DESC, impressions DESC, recommended DESC, item_id"
+        "  LIMIT :limit"
+        ")"
+        " SELECT top.*, p.title FROM top"
+        " LEFT JOIN id_map m2 ON m2.client_id = :client_id AND m2.product_type = top.product_type"
+        "   AND m2.kind = :kind AND m2.external_id = top.item_id"
+        " LEFT JOIN products p ON p.client_id = :client_id AND p.product_type = top.product_type"
+        "   AND p.work_id = m2.internal_id"
+        " ORDER BY top.clicks DESC, top.purchases DESC, top.impressions DESC, top.recommended DESC, top.item_id"
+    )
+    params = {"client_id": client_id, "since": since, "until": until, "limit": limit, "kind": KIND_ITEM}
+    with SessionLocal() as session:
+        rows = session.execute(sql, params).all()
+    return [
+        {
+            "item_id": row.item_id, "product_type": row.product_type, "title": row.title,
+            "recommended": int(row.recommended), "impressions": int(row.impressions), "clicks": int(row.clicks),
+            "ctr": round(row.clicks / row.impressions, 4) if row.impressions else 0.0,
+            "purchases": int(row.purchases), "revenue": round(float(row.revenue), 2),
+        }
+        for row in rows
+    ]

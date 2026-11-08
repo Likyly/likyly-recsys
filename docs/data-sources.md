@@ -131,7 +131,7 @@ A third credential kind, alongside the existing secret/public API keys:
 |---|---|---|
 | Public key | Recommendations + event tracking only | Browser-side JS |
 | Secret key | Everything, unchanged | Server-side only |
-| **Developer key** | Whatever explicit `scopes` it was minted with (this release enforces `sources:read`/`sources:write`; `catalog:read`, `catalog:write`, `placements:read`, `placements:write`, `integrations:read`, `events:read` are reserved for future resources) | A trusted local dev environment (your machine, Claude Code, Codex, CI) - **never** browser-facing code |
+| **Developer key** | Whatever explicit `scopes` it was minted with (enforced: `sources:read`/`sources:write` on `/data-sources*`, `placements:read`/`placements:write` on `/placements*`, `analytics:read` on `/analytics/*`; `catalog:read`, `catalog:write`, `integrations:read`, `events:read` are reserved for future resources) | A trusted local dev environment (your machine, Claude Code, Codex, CI) - **never** browser-facing code |
 
 Minted via the same self-service pattern as key rotation:
 

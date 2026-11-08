@@ -59,6 +59,278 @@
         "title": "AnalyticsDetailOut",
         "type": "object"
       },
+      "AnalyticsItemsOut": {
+        "description": "Top recommended items, by clicks then purchases - Pro plan and above.",
+        "properties": {
+          "end": {
+            "description": "Last day included (YYYY-MM-DD, UTC).",
+            "examples": [
+              "2026-11-08"
+            ],
+            "title": "End",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AnalyticsTopItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "max_window_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Longest window this plan may request (`null` = no cap). A longer request is shortened from its start.",
+            "examples": [
+              7
+            ],
+            "title": "Max Window Days"
+          },
+          "plan": {
+            "description": "The account's plan: `free`, `pro` or `unlimited`.",
+            "examples": [
+              "free"
+            ],
+            "title": "Plan",
+            "type": "string"
+          },
+          "start": {
+            "description": "First day included (YYYY-MM-DD, UTC).",
+            "examples": [
+              "2026-11-02"
+            ],
+            "title": "Start",
+            "type": "string"
+          },
+          "window_days": {
+            "description": "Number of days in [start, end], both included.",
+            "examples": [
+              7
+            ],
+            "title": "Window Days",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "start",
+          "end",
+          "plan",
+          "window_days",
+          "items"
+        ],
+        "title": "AnalyticsItemsOut",
+        "type": "object"
+      },
+      "AnalyticsKeyDetailOut": {
+        "description": "Day-by-day trend and total attributed revenue - Pro plan and above.",
+        "properties": {
+          "end": {
+            "description": "Last day included (YYYY-MM-DD, UTC).",
+            "examples": [
+              "2026-11-08"
+            ],
+            "title": "End",
+            "type": "string"
+          },
+          "max_window_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Longest window this plan may request (`null` = no cap). A longer request is shortened from its start.",
+            "examples": [
+              7
+            ],
+            "title": "Max Window Days"
+          },
+          "plan": {
+            "description": "The account's plan: `free`, `pro` or `unlimited`.",
+            "examples": [
+              "free"
+            ],
+            "title": "Plan",
+            "type": "string"
+          },
+          "revenue": {
+            "$ref": "#/components/schemas/AnalyticsRevenue",
+            "description": "Purchases carrying a `recommendation_id`, and their `properties.price` x `quantity` total."
+          },
+          "start": {
+            "description": "First day included (YYYY-MM-DD, UTC).",
+            "examples": [
+              "2026-11-02"
+            ],
+            "title": "Start",
+            "type": "string"
+          },
+          "timeseries": {
+            "description": "One point per day that had any activity.",
+            "items": {
+              "$ref": "#/components/schemas/AnalyticsTimeseriesPoint"
+            },
+            "title": "Timeseries",
+            "type": "array"
+          },
+          "window_days": {
+            "description": "Number of days in [start, end], both included.",
+            "examples": [
+              7
+            ],
+            "title": "Window Days",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "start",
+          "end",
+          "plan",
+          "window_days",
+          "timeseries",
+          "revenue"
+        ],
+        "title": "AnalyticsKeyDetailOut",
+        "type": "object"
+      },
+      "AnalyticsKeySummaryOut": {
+        "description": "Totals over the window - available on every plan.",
+        "properties": {
+          "clicks": {
+            "description": "`click` events received.",
+            "title": "Clicks",
+            "type": "integer"
+          },
+          "ctr": {
+            "description": "clicks / impressions (0 when there was no impression).",
+            "title": "Ctr",
+            "type": "number"
+          },
+          "end": {
+            "description": "Last day included (YYYY-MM-DD, UTC).",
+            "examples": [
+              "2026-11-08"
+            ],
+            "title": "End",
+            "type": "string"
+          },
+          "impressions": {
+            "description": "`impression` events received.",
+            "title": "Impressions",
+            "type": "integer"
+          },
+          "max_window_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Longest window this plan may request (`null` = no cap). A longer request is shortened from its start.",
+            "examples": [
+              7
+            ],
+            "title": "Max Window Days"
+          },
+          "plan": {
+            "description": "The account's plan: `free`, `pro` or `unlimited`.",
+            "examples": [
+              "free"
+            ],
+            "title": "Plan",
+            "type": "string"
+          },
+          "recommendations_served": {
+            "description": "Recommendation calls answered (each call counts once, whatever the number of items).",
+            "title": "Recommendations Served",
+            "type": "integer"
+          },
+          "start": {
+            "description": "First day included (YYYY-MM-DD, UTC).",
+            "examples": [
+              "2026-11-02"
+            ],
+            "title": "Start",
+            "type": "string"
+          },
+          "window_days": {
+            "description": "Number of days in [start, end], both included.",
+            "examples": [
+              7
+            ],
+            "title": "Window Days",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "start",
+          "end",
+          "plan",
+          "window_days",
+          "recommendations_served",
+          "impressions",
+          "clicks",
+          "ctr"
+        ],
+        "title": "AnalyticsKeySummaryOut",
+        "type": "object"
+      },
+      "AnalyticsPlacementPerformanceRow": {
+        "description": "One recommendation block (placement). Impressions and clicks are counted on the events'\n`placement`; purchases and revenue are those carrying a `recommendation_id`, credited to\nthe placement that recommendation was served for (or the purchase's own `placement`).",
+        "properties": {
+          "clicks": {
+            "title": "Clicks",
+            "type": "integer"
+          },
+          "ctr": {
+            "title": "Ctr",
+            "type": "number"
+          },
+          "impressions": {
+            "title": "Impressions",
+            "type": "integer"
+          },
+          "placement": {
+            "title": "Placement",
+            "type": "string"
+          },
+          "purchases": {
+            "description": "Purchases attributed to a recommendation of this placement.",
+            "title": "Purchases",
+            "type": "integer"
+          },
+          "recommendations_served": {
+            "title": "Recommendations Served",
+            "type": "integer"
+          },
+          "revenue": {
+            "description": "Sum of `properties.price` x `quantity` of those purchases (currency as sent in your events).",
+            "title": "Revenue",
+            "type": "number"
+          }
+        },
+        "required": [
+          "placement",
+          "recommendations_served",
+          "impressions",
+          "clicks",
+          "ctr",
+          "purchases",
+          "revenue"
+        ],
+        "title": "AnalyticsPlacementPerformanceRow",
+        "type": "object"
+      },
       "AnalyticsPlacementRow": {
         "properties": {
           "clicks": {
@@ -90,6 +362,120 @@
           "ctr"
         ],
         "title": "AnalyticsPlacementRow",
+        "type": "object"
+      },
+      "AnalyticsPlacementsOut": {
+        "description": "Per-placement breakdown - available on every plan.",
+        "properties": {
+          "end": {
+            "description": "Last day included (YYYY-MM-DD, UTC).",
+            "examples": [
+              "2026-11-08"
+            ],
+            "title": "End",
+            "type": "string"
+          },
+          "max_window_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Longest window this plan may request (`null` = no cap). A longer request is shortened from its start.",
+            "examples": [
+              7
+            ],
+            "title": "Max Window Days"
+          },
+          "placements": {
+            "items": {
+              "$ref": "#/components/schemas/AnalyticsPlacementPerformanceRow"
+            },
+            "title": "Placements",
+            "type": "array"
+          },
+          "plan": {
+            "description": "The account's plan: `free`, `pro` or `unlimited`.",
+            "examples": [
+              "free"
+            ],
+            "title": "Plan",
+            "type": "string"
+          },
+          "start": {
+            "description": "First day included (YYYY-MM-DD, UTC).",
+            "examples": [
+              "2026-11-02"
+            ],
+            "title": "Start",
+            "type": "string"
+          },
+          "window_days": {
+            "description": "Number of days in [start, end], both included.",
+            "examples": [
+              7
+            ],
+            "title": "Window Days",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "start",
+          "end",
+          "plan",
+          "window_days",
+          "placements"
+        ],
+        "title": "AnalyticsPlacementsOut",
+        "type": "object"
+      },
+      "AnalyticsPlanOut": {
+        "description": "The account's plan, what it allows and what is used - e.g. \"20 / 50 products, Free\".",
+        "properties": {
+          "limits": {
+            "$ref": "#/components/schemas/PlanLimits",
+            "description": "Everything the plan allows (`null` = no cap)."
+          },
+          "plan": {
+            "description": "`free`, `pro` or `unlimited`.",
+            "examples": [
+              "free"
+            ],
+            "title": "Plan",
+            "type": "string"
+          },
+          "plan_name": {
+            "description": "Display name of the plan.",
+            "examples": [
+              "Free"
+            ],
+            "title": "Plan Name",
+            "type": "string"
+          },
+          "upgrade_url": {
+            "description": "Where to ask for a higher plan.",
+            "examples": [
+              "https://likyly.com/account/upgrade"
+            ],
+            "title": "Upgrade Url",
+            "type": "string"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/ClientUsageSummary",
+            "description": "Current usage next to each capped quantity."
+          }
+        },
+        "required": [
+          "plan",
+          "plan_name",
+          "limits",
+          "usage",
+          "upgrade_url"
+        ],
+        "title": "AnalyticsPlanOut",
         "type": "object"
       },
       "AnalyticsRevenue": {
@@ -180,6 +566,84 @@
           "ctr"
         ],
         "title": "AnalyticsTimeseriesPoint",
+        "type": "object"
+      },
+      "AnalyticsTopItem": {
+        "description": "How one item performed when it was recommended.",
+        "properties": {
+          "clicks": {
+            "description": "`click` events on this item carrying a `recommendation_id`.",
+            "title": "Clicks",
+            "type": "integer"
+          },
+          "ctr": {
+            "description": "clicks / impressions (0 when there was no impression).",
+            "title": "Ctr",
+            "type": "number"
+          },
+          "impressions": {
+            "description": "`impression` events on this item carrying a `recommendation_id`.",
+            "title": "Impressions",
+            "type": "integer"
+          },
+          "item_id": {
+            "description": "Your own item id.",
+            "examples": [
+              "SKU-NIKE-001"
+            ],
+            "title": "Item Id",
+            "type": "string"
+          },
+          "product_type": {
+            "description": "The catalog the item belongs to (`data_product_type` elsewhere in this API).",
+            "examples": [
+              "shop"
+            ],
+            "title": "Product Type",
+            "type": "string"
+          },
+          "purchases": {
+            "description": "Purchases of this item carrying a `recommendation_id`.",
+            "title": "Purchases",
+            "type": "integer"
+          },
+          "recommended": {
+            "description": "Recommendation responses that included this item.",
+            "title": "Recommended",
+            "type": "integer"
+          },
+          "revenue": {
+            "description": "Sum of `properties.price` x `quantity` of those purchases.",
+            "title": "Revenue",
+            "type": "number"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The item's title in the catalog - `null` when it is no longer there.",
+            "examples": [
+              "Nike Air Zoom Pegasus 41"
+            ],
+            "title": "Title"
+          }
+        },
+        "required": [
+          "item_id",
+          "product_type",
+          "recommended",
+          "impressions",
+          "clicks",
+          "ctr",
+          "purchases",
+          "revenue"
+        ],
+        "title": "AnalyticsTopItem",
         "type": "object"
       },
       "BatchItemError": {
@@ -6900,6 +7364,460 @@
         "tags": [
           "admin"
         ]
+      }
+    },
+    "/analytics/detail": {
+      "get": {
+        "description": "A day-by-day trend (recommendations served, impressions, clicks, CTR) and the total\nrevenue attributed to recommendations (purchases carrying a `recommendation_id`). Pro plan\nand above: 403 on Free. Window: last 30 days by default, clamped to the plan.",
+        "operationId": "analytics_detail",
+        "parameters": [
+          {
+            "description": "First day included (YYYY-MM-DD, UTC). Defaults to the window's default length before `end`; moved forward when the span exceeds the plan's cap.",
+            "in": "query",
+            "name": "start",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "First day included (YYYY-MM-DD, UTC). Defaults to the window's default length before `end`; moved forward when the span exceeds the plan's cap.",
+              "title": "Start"
+            }
+          },
+          {
+            "description": "Last day included (YYYY-MM-DD, UTC). Defaults to today.",
+            "in": "query",
+            "name": "end",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Last day included (YYYY-MM-DD, UTC). Defaults to today.",
+              "title": "End"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalyticsKeyDetailOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing or invalid X-API-Key."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The key can't read analytics (the public key, or a developer key without `analytics:read`), or this plan doesn't include this data."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "A query parameter is malformed (dates are YYYY-MM-DD)."
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Recommendation performance - daily trend and revenue",
+        "tags": [
+          "analytics"
+        ],
+        "x-required-key": "scope:analytics:read"
+      }
+    },
+    "/analytics/items": {
+      "get": {
+        "description": "The items recommendations worked best on: per item, how many recommendation responses\nincluded it, and the impressions, clicks, purchases and revenue of events carrying a\n`recommendation_id` - ordered by clicks, then purchases. `title` comes from the catalog.\nPro plan and above: 403 on Free. Window: last 30 days by default, clamped to the plan.",
+        "operationId": "analytics_items",
+        "parameters": [
+          {
+            "description": "First day included (YYYY-MM-DD, UTC). Defaults to the window's default length before `end`; moved forward when the span exceeds the plan's cap.",
+            "in": "query",
+            "name": "start",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "First day included (YYYY-MM-DD, UTC). Defaults to the window's default length before `end`; moved forward when the span exceeds the plan's cap.",
+              "title": "Start"
+            }
+          },
+          {
+            "description": "Last day included (YYYY-MM-DD, UTC). Defaults to today.",
+            "in": "query",
+            "name": "end",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Last day included (YYYY-MM-DD, UTC). Defaults to today.",
+              "title": "End"
+            }
+          },
+          {
+            "description": "How many items to return (1-50).",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 10,
+              "description": "How many items to return (1-50).",
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalyticsItemsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing or invalid X-API-Key."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The key can't read analytics (the public key, or a developer key without `analytics:read`), or this plan doesn't include this data."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "A query parameter is malformed (dates are YYYY-MM-DD)."
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Top recommended items",
+        "tags": [
+          "analytics"
+        ],
+        "x-required-key": "scope:analytics:read"
+      }
+    },
+    "/analytics/placements": {
+      "get": {
+        "description": "One row per placement (recommendation block) with activity in the window:\nrecommendations served, impressions, clicks, CTR, and the purchases and revenue attributed\nto it - every plan. A purchase is attributed when it carries a `recommendation_id`; it is\ncredited to the placement that recommendation was served for, or to the purchase's own\n`placement`. Revenue is `properties.price` x `quantity`. Window: last 7 days by default,\nclamped to the plan.",
+        "operationId": "analytics_placements",
+        "parameters": [
+          {
+            "description": "First day included (YYYY-MM-DD, UTC). Defaults to the window's default length before `end`; moved forward when the span exceeds the plan's cap.",
+            "in": "query",
+            "name": "start",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "First day included (YYYY-MM-DD, UTC). Defaults to the window's default length before `end`; moved forward when the span exceeds the plan's cap.",
+              "title": "Start"
+            }
+          },
+          {
+            "description": "Last day included (YYYY-MM-DD, UTC). Defaults to today.",
+            "in": "query",
+            "name": "end",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Last day included (YYYY-MM-DD, UTC). Defaults to today.",
+              "title": "End"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalyticsPlacementsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing or invalid X-API-Key."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The key can't read analytics (the public key, or a developer key without `analytics:read`), or this plan doesn't include this data."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "A query parameter is malformed (dates are YYYY-MM-DD)."
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Recommendation performance - by placement",
+        "tags": [
+          "analytics"
+        ],
+        "x-required-key": "scope:analytics:read"
+      }
+    },
+    "/analytics/plan": {
+      "get": {
+        "description": "The account's plan, everything it allows, and the current usage next to each capped\nquantity (products, catalogs, data sources) - enough to show e.g. \"20 / 50 products, Free\"\nand which analytics this plan includes (`limits.analytics_window_days`,\n`limits.analytics_detail`). Every plan.",
+        "operationId": "analytics_plan",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalyticsPlanOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing or invalid X-API-Key."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The key can't read analytics (the public key, or a developer key without `analytics:read`), or this plan doesn't include this data."
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "My plan, its limits and usage",
+        "tags": [
+          "analytics"
+        ],
+        "x-required-key": "scope:analytics:read"
+      }
+    },
+    "/analytics/summary": {
+      "get": {
+        "description": "Recommendations served, impressions, clicks and CTR over the window - every plan. The\nwindow defaults to the last 7 days and is clamped to the plan (Free: 7 days, Pro: 90);\n`start`, `end`, `window_days` and `plan` in the answer say what was actually used.",
+        "operationId": "analytics_summary",
+        "parameters": [
+          {
+            "description": "First day included (YYYY-MM-DD, UTC). Defaults to the window's default length before `end`; moved forward when the span exceeds the plan's cap.",
+            "in": "query",
+            "name": "start",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "First day included (YYYY-MM-DD, UTC). Defaults to the window's default length before `end`; moved forward when the span exceeds the plan's cap.",
+              "title": "Start"
+            }
+          },
+          {
+            "description": "Last day included (YYYY-MM-DD, UTC). Defaults to today.",
+            "in": "query",
+            "name": "end",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Last day included (YYYY-MM-DD, UTC). Defaults to today.",
+              "title": "End"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalyticsKeySummaryOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing or invalid X-API-Key."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The key can't read analytics (the public key, or a developer key without `analytics:read`), or this plan doesn't include this data."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "A query parameter is malformed (dates are YYYY-MM-DD)."
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Recommendation performance - totals",
+        "tags": [
+          "analytics"
+        ],
+        "x-required-key": "scope:analytics:read"
       }
     },
     "/clients/me": {
@@ -17663,6 +18581,10 @@
     {
       "description": "**Recommended for new integrations.** A Placement is a named, persistent recommendation configuration - *what* to recommend, *where*, in what context, with what fallback and filters - configured once (by hand or via the MCP admin tools) and called by `slug` from then on. `POST /placements/{slug}/recommend` is the runtime call (public key, same safety as `POST /getRec`); everything else (create/update/preview/...) needs the secret key or a developer key with `placements:read`/`placements:write`. Every strategy underneath is one of the engines already documented under **recommendations** - this is an orchestration layer, not a new one. `POST /getRec` and the strategy-specific endpoints remain available as the lower-level, per-call API.",
       "name": "placements"
+    },
+    {
+      "description": "Recommendation performance and plan usage, for an integration that holds the secret key or a developer key with the `analytics:read` scope (e.g. a CMS plugin's dashboard) - never the public key. The window is clamped to the plan (Free: 7 days, Pro: 90). Totals, the per-placement breakdown and the plan's usage are available on every plan; the daily trend with revenue and the top items need Pro.",
+      "name": "analytics"
     },
     {
       "description": "Frozen Pinecone-based vector endpoints, kept for existing integrations only. Use `content` recommendations instead.",

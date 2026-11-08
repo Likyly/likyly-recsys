@@ -151,7 +151,9 @@ def test_placement_is_a_free_string_never_an_enum_or_a_resource(spec):
     # RecommendationResponse's free-string `placement`, and the query param of the same name
     # on the legacy strategy-specific endpoints) is untouched and still never an enum, which
     # is what the rest of this test checks below.
-    exempt_prefixes = ("/placements", "/clients/me/placements")
+    # /analytics/placements is a read-only report grouped by that same attribution field (no
+    # new placement resource, no enum) - exempt for the same reason.
+    exempt_prefixes = ("/placements", "/clients/me/placements", "/analytics/placements")
     assert not any("placement" in path.lower() for path in spec["paths"] if not path.startswith(exempt_prefixes))
     for name in ("Event", "RecommendationRequest", "RecommendationResponse"):
         placement = spec["components"]["schemas"][name]["properties"]["placement"]

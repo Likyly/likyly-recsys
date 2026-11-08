@@ -32,7 +32,7 @@ from fastapi.security import APIKeyHeader
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, timedelta
 from typing import Optional, Annotated, Literal
 from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
 import json
@@ -83,8 +83,8 @@ from db import (
     regenerate_secret_key, regenerate_public_key, revoke_secret_key, revoke_public_key,
     set_client_active, delete_client, get_client_admin_row, rename_client, set_client_display_name,
     touch_client_usage, list_all_clients_with_usage, get_client_usage_by_day,
-    get_active_model_version, count_products_for_client, count_products_in_catalog,
-    count_users_in_catalog, count_trainings_today, count_data_sources, list_data_sources, delete_catalog,
+    get_active_model_version, count_products_in_catalog,
+    count_users_in_catalog, count_trainings_today, list_data_sources, delete_catalog,
     DEFAULT_ITEM_SORT,
     get_client_contact_email, create_upgrade_request, count_upgrade_requests_since,
     list_product_types_for_client, get_client_plan, set_client_plan,
@@ -114,6 +114,8 @@ from upgrade_requests import UPGRADE_REQUESTS_PER_DAY, notify_team, render_email
 from alerts import deleted_account_message, new_account_message, send_team_alert
 from welcome import send_welcome
 from placements import router as placements_router
+# The console routes below share the window clamping and usage numbers with /analytics/*.
+from analytics import router as analytics_router, resolve_analytics_window as _resolve_analytics_window, usage_summary as _usage_summary
 from scoped_auth import require_scope
 import placement_service
 import data_source_service
@@ -216,6 +218,16 @@ tags_metadata = [
             "engines already documented under **recommendations** - this is an orchestration "
             "layer, not a new one. `POST /getRec` and the strategy-specific endpoints remain "
             "available as the lower-level, per-call API."
+        ),
+    },
+    {
+        "name": "analytics",
+        "description": (
+            "Recommendation performance and plan usage, for an integration that holds the secret "
+            "key or a developer key with the `analytics:read` scope (e.g. a CMS plugin's "
+            "dashboard) - never the public key. The window is clamped to the plan (Free: 7 days, "
+            "Pro: 90). Totals, the per-placement breakdown and the plan's usage are available on "
+            "every plan; the daily trend with revenue and the top items need Pro."
         ),
     },
     {
@@ -568,6 +580,7 @@ app = FastAPI(title="LIKYLY Recommendations API",
               )
 app.include_router(data_sources_router)
 app.include_router(placements_router)
+app.include_router(analytics_router)
 
 
 def _errors(*codes: int) -> dict:
@@ -865,25 +878,6 @@ async def get_my_placement_health(
     except placement_service.NotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error))
 
-def _resolve_analytics_window(plan: str, start: Optional[date], end: Optional[date], default_days: int) -> tuple[datetime, datetime, date, date]:
-    """Turns a caller-chosen [start, end] (either may be omitted) into a concrete UTC datetime
-    range, clamped to this plan's analytics_window_days cap - never trust the client's
-    requested range beyond what the plan allows, same principle as every other limit in this
-    API. Returns (since, until, start_date, end_date); the last two are what the response
-    echoes back so the caller knows what was actually used."""
-    max_days = get_plan_limits(plan)["analytics_window_days"]
-    end_date = end or datetime.now(timezone.utc).date()
-    start_date = start or (end_date - timedelta(days=default_days - 1))
-    if end_date < start_date:
-        start_date, end_date = end_date, start_date
-    if max_days is not None:
-        earliest = end_date - timedelta(days=max_days - 1)
-        if start_date < earliest:
-            start_date = earliest
-    since = datetime.combine(start_date, datetime.min.time(), tzinfo=timezone.utc)
-    until = datetime.combine(end_date, datetime.max.time(), tzinfo=timezone.utc)
-    return since, until, start_date, end_date
-
 @app.get("/clients/me/analytics/summary", tags=["selfServiceClient"], response_model=AnalyticsSummaryOut, summary="Recommendation performance - totals", responses=_errors(401, 404))
 async def get_my_analytics_summary(
     start: Optional[date] = Query(None, description="Inclusive start date (YYYY-MM-DD). Defaults to 7 days before `end`."),
@@ -964,19 +958,6 @@ async def get_my_usage(supabase_user_id: str = Depends(get_current_supabase_user
     from /clients/me/models/status, which is scoped to one product_type."""
     client_id = await _resolve_my_client_id(supabase_user_id, x_workspace_id)
     return _usage_summary(client_id)
-
-def _usage_summary(client_id: int) -> dict:
-    plan = get_client_plan(client_id)
-    limits = get_plan_limits(plan)
-    return {
-        "plan": plan,
-        "product_count": count_products_for_client(client_id),
-        "product_limit": limits["product_limit"],
-        "index_count": len(list_product_types_for_client(client_id)),
-        "index_limit": limits["index_limit"],
-        "data_source_count": count_data_sources(client_id),
-        "data_source_limit": limits["data_source_limit"],
-    }
 
 @app.get("/clients/me/plans", tags=["selfServiceClient"], response_model=List[PlanLimits], summary="Compare the Free and Pro plans", responses=_errors(401))
 async def list_plans(supabase_user_id: str = Depends(get_current_supabase_user_id), x_workspace_id: WorkspaceIdHeader = None):

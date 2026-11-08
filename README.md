@@ -88,6 +88,7 @@ Vocabulary: **items** (your catalog), **users**, **events**, **recommendations**
 | `POST /clients/me` | Provision or fetch the caller's client (Supabase-authenticated) |
 | `GET /generateModel` | Trigger a training job for a client's catalog |
 | `GET /models/versions`, `GET /models/status` | Model version history and current production status |
+| `GET /analytics/{summary,placements,detail,items,plan}` | Recommendation performance and plan usage for an integration holding the secret key (or a developer key with `analytics:read`): totals, per-placement breakdown with attributed revenue and plan usage on every plan; daily trend and top items on Pro. Window clamped to the plan (Free 7 days, Pro 90) |
 
 The `/products*` routes and the `/users{Purchases,Ratings,PageViews}` exports were removed. What changed and how to migrate: [API_MIGRATION.md](API_MIGRATION.md). The committed OpenAPI document is [docs/openapi.json](docs/openapi.json) (regenerate with `scripts/export_openapi.py`).
 
