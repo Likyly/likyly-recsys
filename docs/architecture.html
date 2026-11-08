@@ -514,8 +514,8 @@
     <p class="subtitle">
       Un moteur de machine learning qui transforme catalogue et événements d'achat/vue en recommandations
       content-based (TF-IDF + embeddings sémantiques), collaboratives (ALS implicite) et hybrides — modèles
-      versionnés et suivis dans MLflow, servis en Postgres/pgvector via une API FastAPI, consommés par les
-      SDKs Python/JS/PHP. Diffusable en auto-hébergé (Docker, votre infra) ou en Cloud managé multi-tenant.
+      versionnés et suivis dans MLflow, servis en Postgres/pgvector via une API FastAPI, consommés par
+      les SDKs officiels (serveur, web et mobile), l'extension WordPress et le serveur MCP. Diffusable en auto-hébergé (Docker, votre infra) ou en Cloud managé multi-tenant.
     </p>
     <div class="chips">
       <span class="chip chip-python">Python 3.11</span>
@@ -739,16 +739,16 @@
             <div class="compat-category">
               <div class="compat-cat-label">Réponse JSON</div>
               <div class="compat-items">
-                <span class="compat-item">work_id, title, score</span>
+                <span class="compat-item">recommendation_id, strategy, item_id, title, score</span>
                 <span class="compat-item">explanation (reason + scores)</span>
               </div>
             </div>
             <div class="compat-category">
               <div class="compat-cat-label">Consommateurs</div>
               <div class="compat-items">
-                <span class="compat-item">SDK Python</span>
-                <span class="compat-item">SDK JS/TS</span>
-                <span class="compat-item">SDK PHP</span>
+                <span class="compat-item">SDK serveur (TS, Python, PHP, .NET, Java, Go, Ruby, Rust)</span>
+                <span class="compat-item">SDK web et mobile (React, Swift, Android)</span>
+                <span class="compat-item">Extension WordPress, serveur MCP</span>
               </div>
             </div>
             <div class="compat-category compat-universal">
@@ -790,8 +790,10 @@
         <thead><tr><th>Table / composant</th><th>Rôle</th><th>Écrit par</th></tr></thead>
         <tbody>
           <tr><td><code>clients</code></td><td class="dim">id, nom, hash de clé API, statut actif</td><td class="dim">create_client.py</td></tr>
-          <tr><td>Profil produit (title, description, genre_1, ...)</td><td class="dim">Contenu léger — prix/stock/images restent dans le système du client</td><td class="dim">PUT/DELETE /products/&lcub;id&rcub;/profile</td></tr>
-          <tr><td><code>interactions</code></td><td class="dim">Événements purchase/view, quantité, horodatage</td><td class="dim">POST /events/purchase, /events/view</td></tr>
+          <tr><td>Item (title, description, properties libres)</td><td class="dim">Contenu léger — prix/stock/images restent dans le système du client</td><td class="dim">PUT/DELETE /items/&lcub;item_id&rcub;, POST /items/import</td></tr>
+          <tr><td><code>id_map</code></td><td class="dim">Identifiants du client (chaînes : SKU, UUID, gid Shopify…) ↔ entiers internes denses du moteur (l'ALS est indexé par ces entiers)</td><td class="dim">écritures d'items, d'users et d'événements</td></tr>
+          <tr><td><code>interactions</code></td><td class="dim">Événements (impression, view, click, add_to_cart, remove_from_cart, purchase…), user et/ou session anonyme, recommendation_id, placement, properties, quantité, horodatage</td><td class="dim">POST /events/&lcub;event_type&rcub;, POST /events/batch</td></tr>
+          <tr><td><code>recommendations</code></td><td class="dim">Trace minimale de chaque appel de recommandation (ids uniquement) pour l'attribution : CTR, conversion, revenu par stratégie et par placement</td><td class="dim">POST /getRec et endpoints par stratégie</td></tr>
           <tr><td><code>product_embeddings</code> (pgvector)</td><td class="dim">Embedding sentence-transformers (384 dim, all-MiniLM-L12-v2) par produit</td><td class="dim">compute_and_store_product_embedding(), backfill_embeddings.py</td></tr>
           <tr><td><code>model_versions</code></td><td class="dim">Historique d'entraînement ALS : hyperparamètres, precision@10, version active</td><td class="dim">train_and_maybe_promote_model()</td></tr>
           <tr><td>migrate_csv_to_postgres.py</td><td class="dim">Bascule le jeu de données CSV historique (movies/books/shoes) vers Postgres</td><td class="dim">exécuté manuellement, une fois par migration</td></tr>
@@ -907,21 +909,23 @@
     <p class="block-desc">
       Toute requête s'authentifie via l'en-tête <code>X-API-Key</code>, résolu en <code>client_id</code> par
       <code>get_current_client_id()</code> — c'est ce qui garantit qu'aucune requête ne peut lire ou écrire
-      les données d'un autre client, même en cas de nom de catalogue identique. Trois SDKs officiels
-      partagent la même surface d'API.
+      les données d'un autre client, même en cas de nom de catalogue identique. Les clients officiels
+      vivent hors de ce dépôt, dans le monorepo <code>Likyly/sdks</code> (une version par paquet, publiée par
+      release-please après approbation) ; ils sont testés contre le même contrat <code>openapi.json</code>,
+      comparé chaque nuit à la production. Ce dépôt ne garde que l'assistant d'installation.
     </p>
     <div class="node-row">
-      <div class="node" style="--cat-color:#3776AB">
-        <h4>sdk/python — likyly-recsys-sdk</h4>
-        <p><code>RecsysClient</code> (sync) et <code>AsyncRecsysClient</code>, basés sur httpx, Python 3.9+.</p>
+      <div class="node" style="--cat-color:#3178C6">
+        <h4>SDK serveur — Likyly/sdks</h4>
+        <p>TypeScript <code>@likyly/sdk</code>, Python <code>likyly</code>, PHP <code>likyly/sdk</code>, .NET <code>Likyly</code>, Java <code>com.likyly:likyly-sdk</code>, Go <code>likyly-go</code>, Ruby et Rust <code>likyly</code>. Même surface : catalogue, événements, placements, recommandations.</p>
       </div>
-      <div class="node" style="--cat-color:#F7DF1E">
-        <h4>sdk/js — @likyly/recsys-sdk</h4>
-        <p>Zéro dépendance (fetch natif) — Node 18+, bundlers front, ou <code>&lt;script type="module"&gt;</code>. <code>trackView()</code> gère la liste de produits consultés en localStorage.</p>
+      <div class="node" style="--cat-color:#61DAFB">
+        <h4>Web et mobile — Likyly/sdks</h4>
+        <p>Composants React <code>@likyly/react</code>, Swift (<code>likyly-swift</code>, Swift Package Manager), Android <code>com.likyly:likyly-android</code>. Clé publique uniquement, identifiant anonyme gardé sur l'appareil.</p>
       </div>
-      <div class="node" style="--cat-color:#777BB4">
-        <h4>sdk/php — RecsysClient</h4>
-        <p>Client PHP pour les stacks Laravel/Symfony/WordPress existantes.</p>
+      <div class="node" style="--cat-color:#21759B">
+        <h4>Intégrations</h4>
+        <p>Extension WordPress / WooCommerce (<code>Likyly/likyly-wordpress</code>), package Laravel, serveur MCP <code>@likyly/mcp-server</code> pour les assistants IA, et l'assistant d'installation <code>sdk/wizard</code> (<code>npx @likyly/wizard</code>), seul client resté dans ce dépôt.</p>
       </div>
     </div>
   </section>
@@ -953,11 +957,19 @@
       </div>
       <div class="deploy-card">
         <h4>Routage Caddy (hôte)</h4>
-        <p>Le reverse proxy Caddy du droplet route <code>api.likyly.com</code> et <code>www.likyly.com/recsys-api/</code> vers le conteneur <code>recsys-api</code> sur le port 6061.</p>
+        <p>Le reverse proxy Caddy du droplet route <code>api.likyly.com</code> et <code>www.likyly.com/recsys-api/</code> vers la passerelle APISIX, qui transmet ensuite au conteneur <code>recsys-api</code> sur le port 6061.</p>
       </div>
       <div class="deploy-card">
         <h4>Séparation entraînement / service</h4>
         <p>Le réentraînement s'exécute en tâche d'arrière-plan dans le même process API (background_tasks) ; seul le fichier modèle versionné et sa ligne MLflow sont produits, le service continue de répondre pendant l'entraînement.</p>
+      </div>
+      <div class="deploy-card">
+        <h4>Passerelle API (APISIX)</h4>
+        <p>Déployée (config dans <code>gateway/</code>) : Apache APISIX (etcd + dashboard intégré, exposé uniquement en localhost via tunnel SSH) s'intercale entre Caddy et <code>recsys-api</code>, rate-limiting actif (20 req/s, burst 10), sans modifier l'authentification applicative par <code>X-API-Key</code>.</p>
+      </div>
+      <div class="deploy-card">
+        <h4>Outillage — Hoppscotch</h4>
+        <p>Client API auto-hébergé (<code>gateway/</code>, image <code>hoppscotch/hoppscotch</code> aio) pour tester <code>recsys-api</code> à la main, hors chemin de requête de production. Déployé ; en attente du DNS <code>hoppscotch.likyly.com</code> pour être accessible publiquement.</p>
       </div>
     </div>
   </section>
