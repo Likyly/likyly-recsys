@@ -90,7 +90,7 @@ resumes on its own. `LIKYLY_APP_URL` points the sign-in at another site (e.g.
 
 Testing against a local LIKYLY: `LIKYLY_API_URL` (e.g. `http://127.0.0.1:6061`) is used by the
 verify step and written as the MCP server's `LIKYLY_BASE_URL`, and `LIKYLY_MCP_SERVER` (path to a
-built `sdk/mcp/dist/index.js`) makes the MCP config run that file with `node` instead of the npm
+built `mcp/dist/index.js` from [Likyly/sdks](https://github.com/Likyly/sdks)) makes the MCP config run that file with `node` instead of the npm
 package.
 
 With `--yes`, in CI, or when the output is piped, the wizard prints plain lines instead of the

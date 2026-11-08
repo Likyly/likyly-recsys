@@ -4,7 +4,7 @@ the public HTTP surface a coding agent would actually call (data-sources + place
 events + the integration validator) - no direct DB manipulation except to seed the mocked
 connector response.
 
-"render" is exercised at the sdk/react controller-test level (test/controller.test.ts) and via
+"render" is exercised at the React SDK controller-test level (Likyly/sdks, react/test/controller.test.ts) and via
 the MCP smoke-test technique documented in docs/getting-started.md - this test proves the
 server-side half of the journey, which is what all of the above ultimately call into.
 """

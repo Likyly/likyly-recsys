@@ -1,17 +1,14 @@
-# Publishes an npm package with Trusted Publishing: no token is stored, npm checks that the run comes from
-# this workflow (set once per package on npmjs.com: Settings > Trusted Publisher > GitHub Actions,
+# Publishes @likyly/wizard (sdk/wizard) to npm with Trusted Publishing: no token is stored, npm checks that the
+# run comes from this workflow (set once on npmjs.com: Settings > Trusted Publisher > GitHub Actions,
 # Likyly / likyly-recsys / release-npm.yml).
 #
-# Release: set "version" in the package's package.json, commit, then push a tag <folder>-v<version>:
-#   js-v1.1.2      -> sdk/js      (@likyly/sdk)
-#   react-v0.2.3   -> sdk/react   (@likyly/react)
-#   wizard-v0.7.2  -> sdk/wizard  (@likyly/wizard)
-#   mcp-v0.4.2     -> sdk/mcp     (@likyly/mcp-server)
+# Release: set "version" in sdk/wizard/package.json, commit, then push a tag wizard-v<version> (e.g. wizard-v0.7.4).
+# The SDKs (@likyly/sdk, @likyly/react, @likyly/mcp-server...) are released from https://github.com/Likyly/sdks.
 name: release-npm
 
 on:
   push:
-    tags: ["js-v*", "react-v*", "wizard-v*", "mcp-v*"]
+    tags: ["wizard-v*"]
 
 permissions:
   contents: read
@@ -37,7 +34,6 @@ jobs:
           [ "$declared" = "$version" ] || { echo "tag $GITHUB_REF_NAME but $dir/package.json says $declared"; exit 1; }
           echo "dir=$dir" >> "$GITHUB_OUTPUT"
 
-      # sdk/react and sdk/mcp keep no lockfile in git
       - run: if [ -f package-lock.json ]; then npm ci; else npm install; fi
         working-directory: ${{ steps.pkg.outputs.dir }}
       - run: npm run build --if-present
