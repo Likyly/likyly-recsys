@@ -393,22 +393,73 @@ def _decode_supabase_jwt(authorization: Optional[str]) -> dict:
         raise HTTPException(status_code=401, detail="Invalid session token")
 
 
+def _supabase_admin_headers() -> Optional[dict]:
+    secret_key = os.environ.get("SUPABASE_SECRET_KEY", "").strip()
+    if not SUPABASE_URL or not secret_key:
+        return None
+    headers = {"apikey": secret_key}
+    if secret_key.startswith("eyJ"):  # legacy service_role JWT: also expected as the bearer
+        headers["Authorization"] = f"Bearer {secret_key}"
+    return headers
+
+
+# sub -> (checked at, has a verified second factor). Short-lived: enrolling or removing a factor
+# shows up within a minute, and a busy console doesn't ask Supabase on every call.
+_MFA_FACTOR_CACHE: dict[str, tuple[float, bool]] = {}
+_MFA_FACTOR_TTL = 60.0
+
+
+def _has_verified_mfa_factor(supabase_user_id: str) -> bool:
+    cached = _MFA_FACTOR_CACHE.get(supabase_user_id)
+    if cached and time.monotonic() - cached[0] < _MFA_FACTOR_TTL:
+        return cached[1]
+    headers = _supabase_admin_headers()
+    if headers is None:
+        # Local dev and tests only: production always has SUPABASE_SECRET_KEY (deploy.yml).
+        log_event("mfa_check_skipped", reason="no_supabase_secret_key")
+        return False
+    try:
+        response = httpx.get(f"{SUPABASE_URL}/auth/v1/admin/users/{supabase_user_id}", headers=headers, timeout=5)
+        response.raise_for_status()
+    except httpx.HTTPError as error:
+        # Fail closed: an account we can't check could be one whose second factor is being skipped.
+        sentry_sdk.capture_exception(error)
+        raise HTTPException(status_code=503, detail="Could not verify the session - try again in a moment")
+    factors = response.json().get("factors") or []
+    has_factor = any(f.get("status") == "verified" for f in factors)
+    _MFA_FACTOR_CACHE[supabase_user_id] = (time.monotonic(), has_factor)
+    return has_factor
+
+
+MFA_REQUIRED_DETAIL = "Two-step verification required: enter the code from your authenticator app"
+
+
+def _verified_session(authorization: Optional[str]) -> dict:
+    """The session JWT, checked like _decode_supabase_jwt, plus the second factor: right after a
+    correct password, an account with two-step verification only has an aal1 session until its
+    code is entered. That session must not open the console or the API - 403 until it's aal2."""
+    payload = _decode_supabase_jwt(authorization)
+    if payload.get("aal") != "aal2" and _has_verified_mfa_factor(payload["sub"]):
+        raise HTTPException(status_code=403, detail=MFA_REQUIRED_DETAIL)
+    return payload
+
+
 async def get_current_supabase_user_id(authorization: Optional[str] = Header(None)) -> str:
-    return _decode_supabase_jwt(authorization)["sub"]
+    return _verified_session(authorization)["sub"]
 
 
 async def get_current_supabase_identity(authorization: Optional[str] = Header(None)) -> tuple[str, Optional[str]]:
     """Same verification as get_current_supabase_user_id, also returning the account's
     email - Supabase includes it as a standard JWT claim, so this avoids a separate call
     to the Supabase Admin API just to show "whose account is this" in /admin/clients."""
-    payload = _decode_supabase_jwt(authorization)
+    payload = _verified_session(authorization)
     return payload["sub"], payload.get("email")
 
 
 async def get_current_supabase_profile(authorization: Optional[str] = Header(None)) -> tuple[str, Optional[str], Optional[str]]:
     """get_current_supabase_identity plus the account's language (user_metadata.locale, written by
     the website at sign-up) - for the emails the API sends itself."""
-    payload = _decode_supabase_jwt(authorization)
+    payload = _verified_session(authorization)
     locale = (payload.get("user_metadata") or {}).get("locale")
     return payload["sub"], payload.get("email"), locale if isinstance(locale, str) else None
 
@@ -418,7 +469,7 @@ async def get_current_admin_user_id(authorization: Optional[str] = Header(None))
     is_admin check - app_metadata (unlike user_metadata) can only be set via Supabase's
     Admin API or dashboard, never by the user themselves, so this can't be
     self-escalated by editing one's own profile."""
-    payload = _decode_supabase_jwt(authorization)
+    payload = _verified_session(authorization)
     if not payload.get("app_metadata", {}).get("is_admin"):
         raise HTTPException(status_code=403, detail="Admin access required")
     return payload["sub"]
@@ -1857,15 +1908,12 @@ async def _resolve_my_client_id(supabase_user_id: str, x_workspace_id: Optional[
 
 
 # The Supabase Admin API is the only way to delete an auth user - the account's own session
-# can't. SUPABASE_SECRET_KEY (an sb_secret_... key, or the legacy service_role JWT) is only
-# read by delete_supabase_auth_user; every other Supabase call here stays JWKS-only.
+# can't. SUPABASE_SECRET_KEY (an sb_secret_... key, or the legacy service_role JWT) is also
+# used to look up an account's second factors (_has_verified_mfa_factor).
 def delete_supabase_auth_user(supabase_user_id: str) -> None:
-    secret_key = os.environ.get("SUPABASE_SECRET_KEY", "").strip()
-    if not SUPABASE_URL or not secret_key:
+    headers = _supabase_admin_headers()
+    if headers is None:
         raise HTTPException(status_code=503, detail="Account deletion is not available right now - contact support@likyly.com")
-    headers = {"apikey": secret_key}
-    if secret_key.startswith("eyJ"):  # legacy service_role JWT: also expected as the bearer
-        headers["Authorization"] = f"Bearer {secret_key}"
     try:
         response = httpx.delete(f"{SUPABASE_URL}/auth/v1/admin/users/{supabase_user_id}", headers=headers, timeout=10)
     except httpx.HTTPError as error:

@@ -400,7 +400,7 @@ DELETER_ID = "supabase-user-deleting-account"
 
 @pytest.fixture
 def deleter(monkeypatch):
-    monkeypatch.setattr(app_module, "_decode_supabase_jwt", lambda authorization: {"sub": DELETER_ID, "email": "Leaving@Example.com"})
+    monkeypatch.setattr(app_module, "_decode_supabase_jwt", lambda authorization: {"sub": DELETER_ID, "email": "Leaving@Example.com", "aal": "aal2"})
     monkeypatch.setenv("SUPABASE_SECRET_KEY", "sb_secret_test")
     monkeypatch.setattr(app_module, "SUPABASE_URL", "https://project.supabase.test")
     calls = []
