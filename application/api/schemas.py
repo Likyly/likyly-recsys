@@ -1,5 +1,5 @@
 import json
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from enum import Enum
 from typing import Any, List, Literal, Optional
 
@@ -678,6 +678,190 @@ class ClientAdminView(BaseModel):
     public_key_rotated_at: Optional[datetime] = None
     total_requests: int
     plan: str
+    # Back-office extras (GET /admin/clients and /admin/clients/{id}).
+    display_name: Optional[str] = None
+    supabase_user_id: Optional[str] = None
+    requests_30d: int = 0
+    item_count: int = 0
+    catalog_count: int = 0
+    data_source_count: int = 0
+    placement_count: int = 0
+    integrations: List[str] = Field(default_factory=list, description="Agents seen (typescript, php, wordpress, wizard...), most recent first")
+
+
+class AdminDayCount(BaseModel):
+    date: date
+    requests: int
+
+
+class AdminWeekCount(BaseModel):
+    week: date
+    workspaces: int
+
+
+class AdminPlanCount(BaseModel):
+    plan: str
+    workspaces: int
+
+
+class AdminIntegrationCount(BaseModel):
+    agent: str
+    kind: str = Field(description="sdk, cms or tool")
+    workspaces: int
+    last_seen_at: Optional[datetime] = None
+
+
+class AdminDataSourceTypeCount(BaseModel):
+    type: str
+    sources: int
+
+
+class AdminWorkspaceBrief(BaseModel):
+    id: int
+    name: str
+    contact_email: Optional[str] = None
+    plan: str
+    requests: Optional[int] = None
+    created_at: Optional[datetime] = None
+    last_used_at: Optional[datetime] = None
+
+
+class AdminUpgradeRequest(BaseModel):
+    id: int
+    client_id: int
+    client_name: str
+    contact_email: Optional[str] = None
+    plan: str
+    payload: dict
+    created_at: datetime
+    emailed_at: Optional[datetime] = None
+    email_error: Optional[str] = None
+
+
+class AdminOverview(BaseModel):
+    accounts: int
+    workspaces: int
+    active_workspaces: int
+    new_workspaces_7d: int
+    new_workspaces_30d: int
+    used_workspaces_7d: int
+    used_workspaces_30d: int
+    stalled_workspaces: int = Field(description="Created more than 2 days ago, never called the API")
+    workspaces_with_catalog: int
+    items: int
+    events_30d: int
+    recommendations_30d: int
+    requests_today: int
+    requests_7d: int
+    requests_30d: int
+    upgrade_requests_30d: int
+    plans: List[AdminPlanCount]
+    requests_by_day: List[AdminDayCount]
+    signups_by_week: List[AdminWeekCount]
+    integrations: List[AdminIntegrationCount]
+    data_source_types: List[AdminDataSourceTypeCount]
+    top_workspaces_30d: List[AdminWorkspaceBrief]
+    latest_workspaces: List[AdminWorkspaceBrief]
+    latest_upgrade_requests: List[AdminUpgradeRequest]
+
+
+class AdminCatalog(BaseModel):
+    catalog: str
+    items: int
+    items_with_embedding: int
+    users: int
+    events: int
+    events_30d: int
+    last_item_update: Optional[datetime] = None
+    model_trained_at: Optional[datetime] = None
+
+
+class AdminEventCount(BaseModel):
+    event_type: str
+    events: int
+
+
+class AdminDataSource(BaseModel):
+    id: int
+    name: str
+    type: str
+    catalog: str
+    sync_mode: str
+    schedule: Optional[str] = None
+    status: str
+    last_sync_at: Optional[datetime] = None
+    last_success_at: Optional[datetime] = None
+    last_error: Optional[str] = None
+    created_at: datetime
+
+
+class AdminPlacement(BaseModel):
+    slug: str
+    name: str
+    context_type: str
+    catalog: Optional[str] = None
+    strategy: str
+    enabled: bool
+    updated_at: Optional[datetime] = None
+
+
+class AdminIntegration(BaseModel):
+    agent: str
+    kind: str = Field(description="sdk, cms or tool")
+    version: Optional[str] = None
+    platform: Optional[str] = None
+    user_agent: Optional[str] = None
+    first_seen_at: datetime
+    last_seen_at: datetime
+
+
+class AdminIntegrationRow(AdminIntegration):
+    client_id: int
+    client_name: str
+    contact_email: Optional[str] = None
+
+
+class AdminSiblingWorkspace(BaseModel):
+    id: int
+    name: str
+    plan: str
+    created_at: datetime
+
+
+class AdminClientInsights(BaseModel):
+    catalogs: List[AdminCatalog]
+    events_by_type_30d: List[AdminEventCount]
+    recommendations_served_30d: int
+    last_recommendation_at: Optional[datetime] = None
+    data_sources: List[AdminDataSource]
+    placements: List[AdminPlacement]
+    integrations: List[AdminIntegration]
+    developer_keys: int
+    upgrade_requests: List[AdminUpgradeRequest]
+    owner_supabase_user_id: Optional[str] = None
+    other_workspaces: List[AdminSiblingWorkspace]
+
+
+class AdminOwnedWorkspace(BaseModel):
+    id: int
+    name: str
+    plan: str
+    is_active: bool
+    last_used_at: Optional[datetime] = None
+    item_count: int
+
+
+class AdminUser(BaseModel):
+    id: str
+    email: Optional[str] = None
+    created_at: Optional[datetime] = None
+    last_sign_in_at: Optional[datetime] = None
+    email_confirmed: bool
+    providers: List[str]
+    is_admin: bool
+    mfa_enabled: bool
+    locale: Optional[str] = None
+    workspaces: List[AdminOwnedWorkspace]
 
 
 class DailyUsage(BaseModel):

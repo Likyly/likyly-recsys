@@ -30,6 +30,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import APIKeyHeader
 from fastapi.responses import HTMLResponse, JSONResponse, Response
+from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -39,6 +40,8 @@ import json
 import logging
 import time
 import uuid
+import asyncio
+import hashlib
 import httpx
 import jwt
 from jwt import PyJWKClient
@@ -52,7 +55,8 @@ import pandas as pd
 from schemas import (
     RecommendedProduct, VectorRecommendation, User, Message, CachePurged, GenerateModelJobStatus, ModelVersion, ModelStatus, ModelOverview,
     ClientSelf, AccountDeletion,
-    ClientAdminView, DailyUsage, ClientRename, ClientUsageSummary, WorkspaceRename, WorkspaceSummary, CatalogIndex,
+    ClientAdminView, AdminOverview, AdminClientInsights, AdminIntegrationRow, AdminUpgradeRequest, AdminUser,
+    DailyUsage, ClientRename, ClientUsageSummary, WorkspaceRename, WorkspaceSummary, CatalogIndex,
     EventType, EventTypeCreate, EventTypeUpdate, ImportSummary, Item, ItemUpsert, ItemImportRequest, ItemDeleteRequest, BatchResult, ErrorResponse,
     UserUpsert, UserImportRequest, Event, EventBatch, EventResult, EventBatchResult,
     RecommendationRequest, RecommendationResponse,
@@ -111,6 +115,8 @@ from recommender import (
 )
 from data_sources import router as data_sources_router
 from upgrade_requests import UPGRADE_REQUESTS_PER_DAY, notify_team, render_email
+import admin_queries  # noqa: E402
+from db import get_client_and_scopes_by_developer_key as _developer_key_client  # noqa: E402
 from alerts import deleted_account_message, new_account_message, send_team_alert
 from welcome import send_welcome
 from placements import router as placements_router
@@ -642,6 +648,7 @@ def _errors(*codes: int) -> dict:
         403: "The public key can't do this (secret key required), or a plan limit was reached.",
         404: "The referenced resource does not exist for this account.",
         422: "The request is malformed - `detail` lists the offending fields.",
+        503: "A service this call depends on is unavailable or not configured - retry later.",
     }
     responses: dict = {code: {"model": ErrorResponse, "description": docs[code]} for code in codes}
     responses[429] = {"description": "Rate limit exceeded at the API gateway - retry shortly."}
@@ -1439,6 +1446,74 @@ async def admin_client_models(client_id: int, admin_user_id: str = Depends(get_c
     if get_client_admin_row(client_id) is None:
         raise HTTPException(status_code=404, detail="Client not found")
     return [build_model_status(client_id, product_type) for product_type in list_product_types_for_client(client_id)]
+
+@app.get("/admin/overview", tags=["admin"], response_model=AdminOverview, summary="Platform overview", responses=_errors(401, 403))
+async def admin_overview(admin_user_id: str = Depends(get_current_admin_user_id)):
+    """The back-office home: accounts and workspaces, API traffic (30 days, by day), catalogs and
+    volumes, events and recommendations served, plans, integrations seen (SDK, CMS, tools),
+    connectors, most active and latest workspaces, latest Pro requests."""
+    return admin_queries.platform_overview()
+
+@app.get("/admin/clients/{client_id}/insights", tags=["admin"], response_model=AdminClientInsights, summary="Everything about one client", responses=_errors(401, 403, 404))
+async def admin_client_insights(client_id: int, admin_user_id: str = Depends(get_current_admin_user_id)):
+    """One workspace in depth: its catalogs (items, users, events, model), events by type and
+    recommendations served over 30 days, connectors and their last sync, placements, the SDK /
+    CMS / tools it calls the API with, developer keys, Pro requests and the owner's other workspaces."""
+    insights = admin_queries.client_insights(client_id)
+    if insights is None:
+        raise HTTPException(status_code=404, detail="Client not found")
+    return insights
+
+@app.get("/admin/integrations", tags=["admin"], response_model=List[AdminIntegrationRow], summary="Integrations seen", responses=_errors(401, 403))
+async def admin_integrations(admin_user_id: str = Depends(get_current_admin_user_id)):
+    """Every (workspace, SDK / CMS plugin / tool) pair that has called the API with a key, from its
+    User-Agent or X-Likyly-Client header - version, platform (WordPress 6.6, nextjs...), first and
+    last seen."""
+    return admin_queries.list_integrations()
+
+@app.get("/admin/upgrade-requests", tags=["admin"], response_model=List[AdminUpgradeRequest], summary="Pro plan requests", responses=_errors(401, 403))
+async def admin_upgrade_requests(admin_user_id: str = Depends(get_current_admin_user_id)):
+    """Every request for the Pro plan, newest first, with the form's answers and whether the team
+    email went out."""
+    return admin_queries.list_upgrade_requests()
+
+@app.get("/admin/users", tags=["admin"], response_model=List[AdminUser], summary="Accounts", responses=_errors(401, 403, 503))
+async def admin_users(admin_user_id: str = Depends(get_current_admin_user_id)):
+    """Every sign-in account (Supabase Auth), newest first: sign-in methods, confirmed e-mail,
+    two-step verification, admin flag, last sign-in - and the workspaces it owns."""
+    headers = _supabase_admin_headers()
+    if headers is None:
+        raise HTTPException(status_code=503, detail="Accounts are not available here (SUPABASE_SECRET_KEY not set)")
+    users: list[dict] = []
+    try:
+        for page in range(1, 51):  # 50 x 1000 accounts: far beyond today's needs, never an endless loop
+            response = httpx.get(
+                f"{SUPABASE_URL}/auth/v1/admin/users", params={"page": page, "per_page": 1000}, headers=headers, timeout=15,
+            )
+            response.raise_for_status()
+            batch = response.json().get("users") or []
+            users.extend(batch)
+            if len(batch) < 1000:
+                break
+    except httpx.HTTPError as error:
+        sentry_sdk.capture_exception(error)
+        raise HTTPException(status_code=503, detail="Could not list the accounts - try again in a moment")
+    owned = admin_queries.workspaces_by_owner()
+    out = []
+    for u in users:
+        app_meta = u.get("app_metadata") or {}
+        providers = app_meta.get("providers") or ([app_meta["provider"]] if app_meta.get("provider") else [])
+        locale = (u.get("user_metadata") or {}).get("locale")
+        out.append({
+            "id": u["id"], "email": u.get("email"), "created_at": u.get("created_at"),
+            "last_sign_in_at": u.get("last_sign_in_at"), "email_confirmed": bool(u.get("email_confirmed_at")),
+            "providers": providers, "is_admin": bool(app_meta.get("is_admin")),
+            "mfa_enabled": any(f.get("status") == "verified" for f in (u.get("factors") or [])),
+            "locale": locale if isinstance(locale, str) else None,
+            "workspaces": owned.get(u["id"], []),
+        })
+    out.sort(key=lambda row: row["created_at"] or "", reverse=True)
+    return out
 
 @app.post("/admin/clients/{client_id}/disable", tags=["admin"], response_model=Message, summary="Disable a client", responses=_errors(401, 403, 404))
 async def admin_disable_client(client_id: int, admin_user_id: str = Depends(get_current_admin_user_id)):
@@ -2380,6 +2455,47 @@ REQUEST_COUNT = Counter(
 REQUEST_LATENCY = Histogram(
     "recsys_api_request_duration_seconds", "Request latency in seconds", ["method", "path"],
 )
+
+
+# Which SDK / CMS plugin / tool each workspace uses, for the back-office (client_integrations).
+# Read from X-Likyly-Client (browsers can't set a User-Agent) or the User-Agent the SDKs send
+# ("likyly-wordpress/1.2 WordPress/6.6"). Written at most once per key, agent and version every
+# 10 minutes, off the response path - an integration record must never slow down an API call.
+_INTEGRATION_SEEN: dict[tuple[str, str, str], float] = {}
+_INTEGRATION_DEBOUNCE_SECONDS = 600.0
+_integration_tasks: set = set()
+
+
+def _record_integration_for_key(api_key: str, ident: dict) -> None:
+    try:
+        resolved = get_client_and_scope_by_api_key(api_key)
+        client_id = resolved[0] if resolved else None
+        if client_id is None:
+            developer = _developer_key_client(api_key)
+            client_id = developer[0] if developer else None
+        if client_id is not None:
+            admin_queries.record_integration(client_id, ident["agent"], ident["version"], ident["platform"], ident["user_agent"])
+    except Exception as error:  # noqa: BLE001 - monitoring only
+        log_event("integration_record_failed", error=type(error).__name__)
+
+
+@app.middleware("http")
+async def record_integration_middleware(request: Request, call_next):
+    response = await call_next(request)
+    api_key = request.headers.get("x-api-key")
+    if api_key and response.status_code < 400:
+        ident = admin_queries.parse_client_agent(request.headers.get("x-likyly-client")) \
+            or admin_queries.parse_client_agent(request.headers.get("user-agent"))
+        if ident:
+            marker = (hashlib.sha256(api_key.encode()).hexdigest()[:16], ident["agent"], ident["version"] or "")
+            now = time.monotonic()
+            last = _INTEGRATION_SEEN.get(marker)
+            if last is None or now - last > _INTEGRATION_DEBOUNCE_SECONDS:
+                _INTEGRATION_SEEN[marker] = now
+                task = asyncio.create_task(run_in_threadpool(_record_integration_for_key, api_key, ident))
+                _integration_tasks.add(task)
+                task.add_done_callback(_integration_tasks.discard)
+    return response
 
 
 @app.middleware("http")

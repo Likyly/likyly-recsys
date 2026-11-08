@@ -5,7 +5,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { CREDENTIALS_FILE, KEY_ENV } from "./mcp.mjs";
-import { API_URL } from "./verify.mjs";
+import { API_URL, wizardUserAgent } from "./verify.mjs";
 
 /** The developer key: exported LIKYLY_DEVELOPER_KEY first, else the project's credentials file. */
 export function readDeveloperKey(dir) {
@@ -30,7 +30,7 @@ export async function clearCache({ dir, placement }) {
   const path = placement ? `/placements/${encodeURIComponent(placement)}/cache/purge` : "/placements/cache/purge";
   let res;
   try {
-    res = await fetch(`${API_URL}${path}`, { method: "POST", headers: { "X-API-Key": key }, signal: AbortSignal.timeout(10000) });
+    res = await fetch(`${API_URL}${path}`, { method: "POST", headers: { "X-API-Key": key, "User-Agent": wizardUserAgent() }, signal: AbortSignal.timeout(10000) });
   } catch {
     return { ok: false, text: `Could not reach the LIKYLY API (${API_URL}).`, hint: "Check your connection and try again." };
   }

@@ -140,7 +140,7 @@ export async function verifyInstall(opts, project, { publicKey, devKey, editors 
   ]) {
     if (!key) continue;
     const [good, bad, name] = KEY_CHECK[kind];
-    const status = await checkKey(key, kind);
+    const status = await checkKey(key, kind, project?.id);
     results.push(status === "ok" ? ok(good) : status === "rejected" ? fail(bad) : warn(`Could not reach the LIKYLY API to check the ${name}`));
   }
   for (const editor of editors) {

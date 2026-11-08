@@ -287,6 +287,21 @@ class ApiUsageDailyModel(Base):
     request_count = Column(Integer, nullable=False, default=0)
 
 
+class ClientIntegrationModel(Base):
+    """Which SDK / CMS plugin / tool a workspace calls the API with - one row per (client, agent),
+    from the caller's User-Agent or X-Likyly-Client header ("likyly-wordpress/1.2 WordPress/6.6").
+    For the admin back-office only (see record_integration). Migration 0005."""
+    __tablename__ = "client_integrations"
+
+    client_id = Column(Integer, ForeignKey("clients.id"), primary_key=True)
+    agent = Column(String, primary_key=True)  # typescript, php, laravel, wordpress, wizard, mcp...
+    version = Column(String, nullable=True)
+    platform = Column(String, nullable=True)  # "WordPress 6.6", "nextjs"... when the caller says
+    user_agent = Column(String, nullable=True)
+    first_seen_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, server_default=text("now()"))
+    last_seen_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, server_default=text("now()"))
+
+
 class ProductModel(Base):
     __tablename__ = "products"
 
@@ -899,17 +914,32 @@ def touch_client_usage(client_id: int) -> None:
         session.commit()
 
 
+# Extra per-workspace figures for the back-office lists (correlated subqueries: a handful of
+# workspaces, and each one hits an index on client_id).
+_ADMIN_EXTRA_COLUMNS = """
+                c.display_name, c.supabase_user_id,
+                COALESCE((SELECT SUM(request_count) FROM api_usage_daily
+                          WHERE client_id = c.id AND date >= CURRENT_DATE - 30), 0) AS requests_30d,
+                (SELECT COUNT(*) FROM products WHERE client_id = c.id) AS item_count,
+                (SELECT COUNT(DISTINCT product_type) FROM products WHERE client_id = c.id) AS catalog_count,
+                (SELECT COUNT(*) FROM data_sources WHERE client_id = c.id) AS data_source_count,
+                (SELECT COUNT(*) FROM placements WHERE client_id = c.id) AS placement_count,
+                COALESCE((SELECT array_agg(agent ORDER BY last_seen_at DESC) FROM client_integrations
+                          WHERE client_id = c.id), ARRAY[]::varchar[]) AS integrations"""
+
+
 def list_all_clients_with_usage() -> list[dict]:
     """Admin-only view: every client, when created, when last used, and total request
     volume (sum across api_usage_daily) - the whole point of tracking any of this."""
     with SessionLocal() as session:
-        rows = session.execute(text("""
+        rows = session.execute(text(f"""
             SELECT
                 c.id, c.name, c.contact_email, c.is_active, c.created_at, c.last_used_at, c.plan,
                 c.supabase_user_id IS NOT NULL AS is_self_service,
                 c.secret_key_hash IS NOT NULL AS has_secret_key, c.secret_key_rotated_at,
                 c.public_key_hash IS NOT NULL AS has_public_key, c.public_key_rotated_at,
-                COALESCE(SUM(u.request_count), 0) AS total_requests
+                COALESCE(SUM(u.request_count), 0) AS total_requests,
+                {_ADMIN_EXTRA_COLUMNS}
             FROM clients c
             LEFT JOIN api_usage_daily u ON u.client_id = c.id
             GROUP BY c.id
@@ -923,13 +953,14 @@ def get_client_admin_row(client_id: int) -> Optional[dict]:
     used by the admin detail panel and by the admin regenerate/rename endpoints, which
     need the freshly-updated row without re-fetching the whole client list."""
     with SessionLocal() as session:
-        row = session.execute(text("""
+        row = session.execute(text(f"""
             SELECT
                 c.id, c.name, c.contact_email, c.is_active, c.created_at, c.last_used_at, c.plan,
                 c.supabase_user_id IS NOT NULL AS is_self_service,
                 c.secret_key_hash IS NOT NULL AS has_secret_key, c.secret_key_rotated_at,
                 c.public_key_hash IS NOT NULL AS has_public_key, c.public_key_rotated_at,
-                COALESCE((SELECT SUM(request_count) FROM api_usage_daily WHERE client_id = c.id), 0) AS total_requests
+                COALESCE((SELECT SUM(request_count) FROM api_usage_daily WHERE client_id = c.id), 0) AS total_requests,
+                {_ADMIN_EXTRA_COLUMNS}
             FROM clients c
             WHERE c.id = :client_id
         """), {"client_id": client_id}).mappings().first()
@@ -1141,6 +1172,8 @@ def delete_client(client_id: int) -> bool:
         session.query(RecommendationModel).filter_by(client_id=client_id).delete()
         session.query(DeveloperKeyModel).filter_by(client_id=client_id).delete()
         session.query(PlacementModel).filter_by(client_id=client_id).delete()
+        session.query(ClientIntegrationModel).filter_by(client_id=client_id).delete()
+        session.query(UpgradeRequestModel).filter_by(client_id=client_id).delete()
         source_ids = [
             row.id for row in session.query(DataSourceModel.id).filter_by(client_id=client_id).all()
         ]

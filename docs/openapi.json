@@ -20,6 +20,1047 @@
         "title": "AccountDeletion",
         "type": "object"
       },
+      "AdminCatalog": {
+        "properties": {
+          "catalog": {
+            "title": "Catalog",
+            "type": "string"
+          },
+          "events": {
+            "title": "Events",
+            "type": "integer"
+          },
+          "events_30d": {
+            "title": "Events 30D",
+            "type": "integer"
+          },
+          "items": {
+            "title": "Items",
+            "type": "integer"
+          },
+          "items_with_embedding": {
+            "title": "Items With Embedding",
+            "type": "integer"
+          },
+          "last_item_update": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Item Update"
+          },
+          "model_trained_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Trained At"
+          },
+          "users": {
+            "title": "Users",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "catalog",
+          "items",
+          "items_with_embedding",
+          "users",
+          "events",
+          "events_30d"
+        ],
+        "title": "AdminCatalog",
+        "type": "object"
+      },
+      "AdminClientInsights": {
+        "properties": {
+          "catalogs": {
+            "items": {
+              "$ref": "#/components/schemas/AdminCatalog"
+            },
+            "title": "Catalogs",
+            "type": "array"
+          },
+          "data_sources": {
+            "items": {
+              "$ref": "#/components/schemas/AdminDataSource"
+            },
+            "title": "Data Sources",
+            "type": "array"
+          },
+          "developer_keys": {
+            "title": "Developer Keys",
+            "type": "integer"
+          },
+          "events_by_type_30d": {
+            "items": {
+              "$ref": "#/components/schemas/AdminEventCount"
+            },
+            "title": "Events By Type 30D",
+            "type": "array"
+          },
+          "integrations": {
+            "items": {
+              "$ref": "#/components/schemas/AdminIntegration"
+            },
+            "title": "Integrations",
+            "type": "array"
+          },
+          "last_recommendation_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Recommendation At"
+          },
+          "other_workspaces": {
+            "items": {
+              "$ref": "#/components/schemas/AdminSiblingWorkspace"
+            },
+            "title": "Other Workspaces",
+            "type": "array"
+          },
+          "owner_supabase_user_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner Supabase User Id"
+          },
+          "placements": {
+            "items": {
+              "$ref": "#/components/schemas/AdminPlacement"
+            },
+            "title": "Placements",
+            "type": "array"
+          },
+          "recommendations_served_30d": {
+            "title": "Recommendations Served 30D",
+            "type": "integer"
+          },
+          "upgrade_requests": {
+            "items": {
+              "$ref": "#/components/schemas/AdminUpgradeRequest"
+            },
+            "title": "Upgrade Requests",
+            "type": "array"
+          }
+        },
+        "required": [
+          "catalogs",
+          "events_by_type_30d",
+          "recommendations_served_30d",
+          "data_sources",
+          "placements",
+          "integrations",
+          "developer_keys",
+          "upgrade_requests",
+          "other_workspaces"
+        ],
+        "title": "AdminClientInsights",
+        "type": "object"
+      },
+      "AdminDataSource": {
+        "properties": {
+          "catalog": {
+            "title": "Catalog",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error"
+          },
+          "last_success_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Success At"
+          },
+          "last_sync_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Sync At"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "schedule": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Schedule"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "sync_mode": {
+            "title": "Sync Mode",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "type",
+          "catalog",
+          "sync_mode",
+          "status",
+          "created_at"
+        ],
+        "title": "AdminDataSource",
+        "type": "object"
+      },
+      "AdminDataSourceTypeCount": {
+        "properties": {
+          "sources": {
+            "title": "Sources",
+            "type": "integer"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "sources"
+        ],
+        "title": "AdminDataSourceTypeCount",
+        "type": "object"
+      },
+      "AdminDayCount": {
+        "properties": {
+          "date": {
+            "format": "date",
+            "title": "Date",
+            "type": "string"
+          },
+          "requests": {
+            "title": "Requests",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "date",
+          "requests"
+        ],
+        "title": "AdminDayCount",
+        "type": "object"
+      },
+      "AdminEventCount": {
+        "properties": {
+          "event_type": {
+            "title": "Event Type",
+            "type": "string"
+          },
+          "events": {
+            "title": "Events",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "event_type",
+          "events"
+        ],
+        "title": "AdminEventCount",
+        "type": "object"
+      },
+      "AdminIntegration": {
+        "properties": {
+          "agent": {
+            "title": "Agent",
+            "type": "string"
+          },
+          "first_seen_at": {
+            "format": "date-time",
+            "title": "First Seen At",
+            "type": "string"
+          },
+          "kind": {
+            "description": "sdk, cms or tool",
+            "title": "Kind",
+            "type": "string"
+          },
+          "last_seen_at": {
+            "format": "date-time",
+            "title": "Last Seen At",
+            "type": "string"
+          },
+          "platform": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Platform"
+          },
+          "user_agent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Agent"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          }
+        },
+        "required": [
+          "agent",
+          "kind",
+          "first_seen_at",
+          "last_seen_at"
+        ],
+        "title": "AdminIntegration",
+        "type": "object"
+      },
+      "AdminIntegrationCount": {
+        "properties": {
+          "agent": {
+            "title": "Agent",
+            "type": "string"
+          },
+          "kind": {
+            "description": "sdk, cms or tool",
+            "title": "Kind",
+            "type": "string"
+          },
+          "last_seen_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Seen At"
+          },
+          "workspaces": {
+            "title": "Workspaces",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "agent",
+          "kind",
+          "workspaces"
+        ],
+        "title": "AdminIntegrationCount",
+        "type": "object"
+      },
+      "AdminIntegrationRow": {
+        "properties": {
+          "agent": {
+            "title": "Agent",
+            "type": "string"
+          },
+          "client_id": {
+            "title": "Client Id",
+            "type": "integer"
+          },
+          "client_name": {
+            "title": "Client Name",
+            "type": "string"
+          },
+          "contact_email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contact Email"
+          },
+          "first_seen_at": {
+            "format": "date-time",
+            "title": "First Seen At",
+            "type": "string"
+          },
+          "kind": {
+            "description": "sdk, cms or tool",
+            "title": "Kind",
+            "type": "string"
+          },
+          "last_seen_at": {
+            "format": "date-time",
+            "title": "Last Seen At",
+            "type": "string"
+          },
+          "platform": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Platform"
+          },
+          "user_agent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Agent"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          }
+        },
+        "required": [
+          "agent",
+          "kind",
+          "first_seen_at",
+          "last_seen_at",
+          "client_id",
+          "client_name"
+        ],
+        "title": "AdminIntegrationRow",
+        "type": "object"
+      },
+      "AdminOverview": {
+        "properties": {
+          "accounts": {
+            "title": "Accounts",
+            "type": "integer"
+          },
+          "active_workspaces": {
+            "title": "Active Workspaces",
+            "type": "integer"
+          },
+          "data_source_types": {
+            "items": {
+              "$ref": "#/components/schemas/AdminDataSourceTypeCount"
+            },
+            "title": "Data Source Types",
+            "type": "array"
+          },
+          "events_30d": {
+            "title": "Events 30D",
+            "type": "integer"
+          },
+          "integrations": {
+            "items": {
+              "$ref": "#/components/schemas/AdminIntegrationCount"
+            },
+            "title": "Integrations",
+            "type": "array"
+          },
+          "items": {
+            "title": "Items",
+            "type": "integer"
+          },
+          "latest_upgrade_requests": {
+            "items": {
+              "$ref": "#/components/schemas/AdminUpgradeRequest"
+            },
+            "title": "Latest Upgrade Requests",
+            "type": "array"
+          },
+          "latest_workspaces": {
+            "items": {
+              "$ref": "#/components/schemas/AdminWorkspaceBrief"
+            },
+            "title": "Latest Workspaces",
+            "type": "array"
+          },
+          "new_workspaces_30d": {
+            "title": "New Workspaces 30D",
+            "type": "integer"
+          },
+          "new_workspaces_7d": {
+            "title": "New Workspaces 7D",
+            "type": "integer"
+          },
+          "plans": {
+            "items": {
+              "$ref": "#/components/schemas/AdminPlanCount"
+            },
+            "title": "Plans",
+            "type": "array"
+          },
+          "recommendations_30d": {
+            "title": "Recommendations 30D",
+            "type": "integer"
+          },
+          "requests_30d": {
+            "title": "Requests 30D",
+            "type": "integer"
+          },
+          "requests_7d": {
+            "title": "Requests 7D",
+            "type": "integer"
+          },
+          "requests_by_day": {
+            "items": {
+              "$ref": "#/components/schemas/AdminDayCount"
+            },
+            "title": "Requests By Day",
+            "type": "array"
+          },
+          "requests_today": {
+            "title": "Requests Today",
+            "type": "integer"
+          },
+          "signups_by_week": {
+            "items": {
+              "$ref": "#/components/schemas/AdminWeekCount"
+            },
+            "title": "Signups By Week",
+            "type": "array"
+          },
+          "stalled_workspaces": {
+            "description": "Created more than 2 days ago, never called the API",
+            "title": "Stalled Workspaces",
+            "type": "integer"
+          },
+          "top_workspaces_30d": {
+            "items": {
+              "$ref": "#/components/schemas/AdminWorkspaceBrief"
+            },
+            "title": "Top Workspaces 30D",
+            "type": "array"
+          },
+          "upgrade_requests_30d": {
+            "title": "Upgrade Requests 30D",
+            "type": "integer"
+          },
+          "used_workspaces_30d": {
+            "title": "Used Workspaces 30D",
+            "type": "integer"
+          },
+          "used_workspaces_7d": {
+            "title": "Used Workspaces 7D",
+            "type": "integer"
+          },
+          "workspaces": {
+            "title": "Workspaces",
+            "type": "integer"
+          },
+          "workspaces_with_catalog": {
+            "title": "Workspaces With Catalog",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "accounts",
+          "workspaces",
+          "active_workspaces",
+          "new_workspaces_7d",
+          "new_workspaces_30d",
+          "used_workspaces_7d",
+          "used_workspaces_30d",
+          "stalled_workspaces",
+          "workspaces_with_catalog",
+          "items",
+          "events_30d",
+          "recommendations_30d",
+          "requests_today",
+          "requests_7d",
+          "requests_30d",
+          "upgrade_requests_30d",
+          "plans",
+          "requests_by_day",
+          "signups_by_week",
+          "integrations",
+          "data_source_types",
+          "top_workspaces_30d",
+          "latest_workspaces",
+          "latest_upgrade_requests"
+        ],
+        "title": "AdminOverview",
+        "type": "object"
+      },
+      "AdminOwnedWorkspace": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "is_active": {
+            "title": "Is Active",
+            "type": "boolean"
+          },
+          "item_count": {
+            "title": "Item Count",
+            "type": "integer"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used At"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "plan": {
+            "title": "Plan",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "plan",
+          "is_active",
+          "item_count"
+        ],
+        "title": "AdminOwnedWorkspace",
+        "type": "object"
+      },
+      "AdminPlacement": {
+        "properties": {
+          "catalog": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Catalog"
+          },
+          "context_type": {
+            "title": "Context Type",
+            "type": "string"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "strategy": {
+            "title": "Strategy",
+            "type": "string"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "required": [
+          "slug",
+          "name",
+          "context_type",
+          "strategy",
+          "enabled"
+        ],
+        "title": "AdminPlacement",
+        "type": "object"
+      },
+      "AdminPlanCount": {
+        "properties": {
+          "plan": {
+            "title": "Plan",
+            "type": "string"
+          },
+          "workspaces": {
+            "title": "Workspaces",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "plan",
+          "workspaces"
+        ],
+        "title": "AdminPlanCount",
+        "type": "object"
+      },
+      "AdminSiblingWorkspace": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "plan": {
+            "title": "Plan",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "plan",
+          "created_at"
+        ],
+        "title": "AdminSiblingWorkspace",
+        "type": "object"
+      },
+      "AdminUpgradeRequest": {
+        "properties": {
+          "client_id": {
+            "title": "Client Id",
+            "type": "integer"
+          },
+          "client_name": {
+            "title": "Client Name",
+            "type": "string"
+          },
+          "contact_email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contact Email"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "email_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email Error"
+          },
+          "emailed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Emailed At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "payload": {
+            "title": "Payload",
+            "type": "object"
+          },
+          "plan": {
+            "title": "Plan",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "client_id",
+          "client_name",
+          "plan",
+          "payload",
+          "created_at"
+        ],
+        "title": "AdminUpgradeRequest",
+        "type": "object"
+      },
+      "AdminUser": {
+        "properties": {
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "email_confirmed": {
+            "title": "Email Confirmed",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "is_admin": {
+            "title": "Is Admin",
+            "type": "boolean"
+          },
+          "last_sign_in_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Sign In At"
+          },
+          "locale": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Locale"
+          },
+          "mfa_enabled": {
+            "title": "Mfa Enabled",
+            "type": "boolean"
+          },
+          "providers": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Providers",
+            "type": "array"
+          },
+          "workspaces": {
+            "items": {
+              "$ref": "#/components/schemas/AdminOwnedWorkspace"
+            },
+            "title": "Workspaces",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "email_confirmed",
+          "providers",
+          "is_admin",
+          "mfa_enabled",
+          "workspaces"
+        ],
+        "title": "AdminUser",
+        "type": "object"
+      },
+      "AdminWeekCount": {
+        "properties": {
+          "week": {
+            "format": "date",
+            "title": "Week",
+            "type": "string"
+          },
+          "workspaces": {
+            "title": "Workspaces",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "week",
+          "workspaces"
+        ],
+        "title": "AdminWeekCount",
+        "type": "object"
+      },
+      "AdminWorkspaceBrief": {
+        "properties": {
+          "contact_email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contact Email"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used At"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "plan": {
+            "title": "Plan",
+            "type": "string"
+          },
+          "requests": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requests"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "plan"
+        ],
+        "title": "AdminWorkspaceBrief",
+        "type": "object"
+      },
       "AnalyticsDetailOut": {
         "description": "Pro-only - the depth Free's summary doesn't include.",
         "properties": {
@@ -869,6 +1910,11 @@
       },
       "ClientAdminView": {
         "properties": {
+          "catalog_count": {
+            "default": 0,
+            "title": "Catalog Count",
+            "type": "integer"
+          },
           "contact_email": {
             "anyOf": [
               {
@@ -885,6 +1931,22 @@
             "title": "Created At",
             "type": "string"
           },
+          "data_source_count": {
+            "default": 0,
+            "title": "Data Source Count",
+            "type": "integer"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
           "has_public_key": {
             "title": "Has Public Key",
             "type": "boolean"
@@ -897,6 +1959,14 @@
             "title": "Id",
             "type": "integer"
           },
+          "integrations": {
+            "description": "Agents seen (typescript, php, wordpress, wizard...), most recent first",
+            "items": {
+              "type": "string"
+            },
+            "title": "Integrations",
+            "type": "array"
+          },
           "is_active": {
             "title": "Is Active",
             "type": "boolean"
@@ -904,6 +1974,11 @@
           "is_self_service": {
             "title": "Is Self Service",
             "type": "boolean"
+          },
+          "item_count": {
+            "default": 0,
+            "title": "Item Count",
+            "type": "integer"
           },
           "last_used_at": {
             "anyOf": [
@@ -921,6 +1996,11 @@
             "title": "Name",
             "type": "string"
           },
+          "placement_count": {
+            "default": 0,
+            "title": "Placement Count",
+            "type": "integer"
+          },
           "plan": {
             "title": "Plan",
             "type": "string"
@@ -937,6 +2017,11 @@
             ],
             "title": "Public Key Rotated At"
           },
+          "requests_30d": {
+            "default": 0,
+            "title": "Requests 30D",
+            "type": "integer"
+          },
           "secret_key_rotated_at": {
             "anyOf": [
               {
@@ -948,6 +2033,17 @@
               }
             ],
             "title": "Secret Key Rotated At"
+          },
+          "supabase_user_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Supabase User Id"
           },
           "total_requests": {
             "title": "Total Requests",
@@ -6796,6 +7892,103 @@
         ]
       }
     },
+    "/admin/clients/{client_id}/insights": {
+      "get": {
+        "description": "One workspace in depth: its catalogs (items, users, events, model), events by type and\nrecommendations served over 30 days, connectors and their last sync, placements, the SDK /\nCMS / tools it calls the API with, developer keys, Pro requests and the owner's other workspaces.",
+        "operationId": "admin_client_insights",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "client_id",
+            "required": true,
+            "schema": {
+              "title": "Client Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminClientInsights"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing, invalid or revoked `X-API-Key`."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The public key can't do this (secret key required), or a plan limit was reached."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The referenced resource does not exist for this account."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "description": "Rate limit exceeded at the API gateway - retry shortly."
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Everything about one client",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
     "/admin/clients/{client_id}/models": {
       "get": {
         "description": "One entry per catalog (product_type) this client has pushed products for - the\nactive model's training date and whether it came from a manual call or an automatic\nretrain, plus today's quota usage. Reuses build_model_status (see the self-service\n/clients/me/models/status route for the customer-facing equivalent).",
@@ -7361,6 +8554,340 @@
           }
         ],
         "summary": "Client daily usage",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/integrations": {
+      "get": {
+        "description": "Every (workspace, SDK / CMS plugin / tool) pair that has called the API with a key, from its\nUser-Agent or X-Likyly-Client header - version, platform (WordPress 6.6, nextjs...), first and\nlast seen.",
+        "operationId": "admin_integrations",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AdminIntegrationRow"
+                  },
+                  "title": "Response Admin Integrations",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing, invalid or revoked `X-API-Key`."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The public key can't do this (secret key required), or a plan limit was reached."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "description": "Rate limit exceeded at the API gateway - retry shortly."
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Integrations seen",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/overview": {
+      "get": {
+        "description": "The back-office home: accounts and workspaces, API traffic (30 days, by day), catalogs and\nvolumes, events and recommendations served, plans, integrations seen (SDK, CMS, tools),\nconnectors, most active and latest workspaces, latest Pro requests.",
+        "operationId": "admin_overview",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminOverview"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing, invalid or revoked `X-API-Key`."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The public key can't do this (secret key required), or a plan limit was reached."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "description": "Rate limit exceeded at the API gateway - retry shortly."
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Platform overview",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/upgrade-requests": {
+      "get": {
+        "description": "Every request for the Pro plan, newest first, with the form's answers and whether the team\nemail went out.",
+        "operationId": "admin_upgrade_requests",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AdminUpgradeRequest"
+                  },
+                  "title": "Response Admin Upgrade Requests",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing, invalid or revoked `X-API-Key`."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The public key can't do this (secret key required), or a plan limit was reached."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "description": "Rate limit exceeded at the API gateway - retry shortly."
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Pro plan requests",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/users": {
+      "get": {
+        "description": "Every sign-in account (Supabase Auth), newest first: sign-in methods, confirmed e-mail,\ntwo-step verification, admin flag, last sign-in - and the workspaces it owns.",
+        "operationId": "admin_users",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AdminUser"
+                  },
+                  "title": "Response Admin Users",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing, invalid or revoked `X-API-Key`."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The public key can't do this (secret key required), or a plan limit was reached."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "description": "Rate limit exceeded at the API gateway - retry shortly."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "A service this call depends on is unavailable or not configured - retry later."
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Accounts",
         "tags": [
           "admin"
         ]
