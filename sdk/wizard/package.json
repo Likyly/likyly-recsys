@@ -1,6 +1,6 @@
 {
   "name": "@likyly/wizard",
-  "version": "0.7.2",
+  "version": "0.7.3",
   "description": "Add LIKYLY product recommendations to your project in one command: detects your framework, installs the SDK, writes your key and connects your AI coding assistant.",
   "keywords": [
     "likyly",

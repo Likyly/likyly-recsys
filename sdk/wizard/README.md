@@ -15,8 +15,9 @@ An interactive terminal UI (built with [Ink](https://github.com/vadimdemedes/ink
 2. **Review the plan**: every command it will run and every file it will write, before anything
    happens. Nothing existing is overwritten. In a git repository it offers to work on a new
    branch, `likyly/setup` (your uncommitted work comes along, untouched), and it never commits.
-3. **Install the SDK** (`@likyly/sdk`, plus `@likyly/react` for React frameworks), with the
-   package manager's output streamed live. Bare `pip`, Maven/Gradle and WordPress are shown, not run.
+3. **Install the SDK** (`@likyly/sdk`, plus `@likyly/react` for React frameworks; on Laravel the
+   [`likyly/laravel`](https://packagist.org/packages/likyly/laravel) package, then it tells you to
+   run `php artisan likyly:install`), with the package manager's output streamed live. Bare `pip`, Maven/Gradle and WordPress are shown, not run.
 4. **Connect your LIKYLY account**: opens likyly.com, where you sign in or create an account
    (email, GitHub or Google); the public key comes back to the wizard on its own (a form POST to
    a one-time server on `127.0.0.1`, guarded by a random `state`). You can also paste a key or

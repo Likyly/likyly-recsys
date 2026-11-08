@@ -160,7 +160,20 @@ function detectPhp(dir) {
   if (!composer) return null;
   const req = { ...composer.require, ...composer["require-dev"] };
   const base = { language: "php", sdkDocs: "php", packages: ["likyly/sdk"], install: { cmd: ["composer", "require", "likyly/sdk"], run: true }, starter: null };
-  if (req["laravel/framework"]) return { ...base, id: "laravel", label: "Laravel", envFile: ".env", envVar: "LIKYLY_KEY" };
+  // Laravel gets its own package (likyly/laravel, on top of likyly/sdk): Blade component, catalog sync
+  // from Eloquent, events. `php artisan likyly:install` then wires the product model and the secret key.
+  if (req["laravel/framework"]) {
+    return {
+      ...base,
+      id: "laravel",
+      label: "Laravel",
+      packages: ["likyly/laravel"],
+      install: { cmd: ["composer", "require", "likyly/laravel"], run: true },
+      next: "php artisan likyly:install",
+      envFile: ".env",
+      envVar: "LIKYLY_KEY",
+    };
+  }
   if (req["drupal/core"] || req["drupal/core-recommended"]) return { ...base, id: "drupal", label: "Drupal", envFile: ".env", envVar: "LIKYLY_KEY" };
   if (req["symfony/framework-bundle"]) return { ...base, id: "symfony", label: "Symfony", envFile: ".env.local", envVar: "LIKYLY_KEY" };
   return { ...base, id: "php", label: "PHP", envFile: ".env", envVar: "LIKYLY_KEY" };

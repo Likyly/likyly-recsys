@@ -47,7 +47,7 @@ export async function installSdk(opts, project, onLine) {
     output.push(l);
     onLine?.(l);
   });
-  if (success) return [ok(`Installed ${project.packages.join(" + ")}`)];
+  if (success) return [ok(`Installed ${project.packages.join(" + ")}`), ...(project.next ? [info("Then run:", project.next)] : [])];
   // The live log is gone once the step ends: keep the package manager's own reason.
   const reason = output.find((l) => /error code|ERR!|ERESOLVE|E404|ENOTFOUND|error:/i.test(l));
   return [fail("Install failed. Run it again:", line), ...(reason ? [warn(reason.replace(/^npm error\s*/i, "").trim().slice(0, 140))] : [])];

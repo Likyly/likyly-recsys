@@ -49,7 +49,9 @@ test("detects PHP, Python, Ruby, Go and WordPress stacks", () => {
   // Laravel ships a package.json for Vite: still Laravel, with the PHP SDK.
   const laravel = detectProject(project({ "composer.json": { require: { "laravel/framework": "^13" } }, ...pkg({ vite: "8", "laravel-vite-plugin": "3" }) }));
   assert.equal(laravel.id, "laravel");
-  assert.deepEqual(laravel.packages, ["likyly/sdk"]);
+  assert.deepEqual(laravel.packages, ["likyly/laravel"]);
+  assert.deepEqual(laravel.install.cmd, ["composer", "require", "likyly/laravel"]);
+  assert.equal(laravel.next, "php artisan likyly:install");
   assert.equal(detectProject(project({ "composer.json": { require: { "symfony/framework-bundle": "^8" } }, ...pkg({ "@symfony/webpack-encore": "5" }) })).id, "symfony");
   assert.equal(detectProject(project({ "composer.json": { require: { "drupal/core-recommended": "^11" } } })).label, "Drupal");
   // A plain composer.json next to a JS framework stays a JS project.
