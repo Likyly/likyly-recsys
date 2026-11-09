@@ -6,6 +6,8 @@ Install LIKYLY in a project with one command:
 npx @likyly/wizard
 ```
 
+<img src="https://raw.githubusercontent.com/Likyly/likyly-recsys/main/sdk/wizard/docs/screenshots/plan.png" alt="The wizard has detected a Next.js project and shows its plan: the npm install it will run, the key it will write to .env.local, the starter file, and where to make the changes (a new likyly/setup branch is recommended)" width="760">
+
 An interactive terminal UI (built with [Ink](https://github.com/vadimdemedes/ink)) walks you through five steps:
 
 1. **Detect your project**: the framework from the project's own files (`package.json`,
@@ -67,6 +69,20 @@ can take them out. Your LIKYLY account (catalog, placements, keys) is not touche
 The developer key comes back from the browser sign-in too and is stored in
 `.likyly/credentials.env` (that folder ignores itself in git, file readable by you only); the
 MCP server reads it there, so nothing needs exporting.
+
+## What it looks like
+
+**Connect your account**: the browser opens likyly.com; once you are signed in, the keys come back to the terminal on their own.
+
+<img src="https://raw.githubusercontent.com/Likyly/likyly-recsys/main/sdk/wizard/docs/screenshots/signin.png" alt="Step 4 of 6, Connect your LIKYLY account: the wizard waits for the browser sign-in, with keys to open the link again, copy it, paste a key instead or skip" width="760">
+
+**Connect your AI assistant**: the public key, the starter file and the developer key are in place; pick the assistants to connect.
+
+<img src="https://raw.githubusercontent.com/Likyly/likyly-recsys/main/sdk/wizard/docs/screenshots/assistants.png" alt="Step 5 of 6: keys received from likyly.com and written (.env.local, .likyly/credentials.env), then a checklist of Claude Code, Cursor and VS Code to connect to the LIKYLY MCP server" width="760">
+
+**Done**: everything checked, every changed file listed on its own branch, and one choice left: hand over to your assistant.
+
+<img src="https://raw.githubusercontent.com/Likyly/likyly-recsys/main/sdk/wizard/docs/screenshots/done.png" alt="Verify the installation, all good: SDK installed, stack compatible, keys accepted, Claude Code connected; the files changed on branch likyly/setup, nothing committed; then the prompt for the assistant and the choice Launch Claude Code now" width="760">
 
 ## Commands
 
