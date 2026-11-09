@@ -2,3 +2,12 @@
 pytest==9.1.1
 ruff==0.16.8
 mypy==2.3.1
+
+# Local only, never shipped in the API image: the Solara demo website (app.py,
+# application/website/), notebooks and the DVC data pipeline.
+solara
+matplotlib
+plotly
+wordcloud
+jupyterlab
+dvc

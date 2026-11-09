@@ -5,7 +5,6 @@ import re
 from pathlib import Path
 
 import pytest
-from fastapi.routing import APIRoute
 
 ROOT = Path(__file__).resolve().parents[1]
 HTTP_METHODS = {"get", "put", "post", "delete", "patch"}
@@ -36,8 +35,8 @@ def test_the_existing_api_was_modified_not_paralleled(spec):
 
 
 def test_every_operation_has_summary_description_tag_and_documented_errors(api, spec):
-    for route in api.app.routes:
-        if isinstance(route, APIRoute) and route.include_in_schema:
+    for route in api.iter_api_routes(api.app.routes):
+        if route.include_in_schema:
             assert route.summary, f"{route.methods} {route.path} has no explicit summary"
     for path, method, operation in operations(spec):
         where = f"{method.upper()} {path}"

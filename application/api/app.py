@@ -2597,20 +2597,32 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
     )
 
 
+def iter_api_routes(routes):
+    """Every APIRoute of the app, those of the included routers too. FastAPI keeps each
+    include_router() as a single entry in app.routes (it no longer copies the router's routes
+    in), so walking app.routes alone misses /data-sources*, /placements* and /analytics*.
+    Their routers are included without a prefix or dependencies of their own, so the original
+    route's path and dependency tree are exactly what is served."""
+    from fastapi.routing import APIRoute
+
+    for route in routes:
+        included = getattr(route, "original_router", None)
+        if included is not None:
+            yield from iter_api_routes(included.routes)
+        elif isinstance(route, APIRoute):
+            yield route
+
+
 def _required_key_by_operation() -> dict[tuple[str, str], str]:
     """(path, method) -> "secret" | "public", read off each route's actual auth dependency -
     so the OpenAPI states what the code enforces instead of what a docstring claims."""
-    from fastapi.routing import APIRoute
-
     def dependency_calls(dependant):
         for sub in dependant.dependencies:
             yield sub.call
             yield from dependency_calls(sub)
 
     required: dict[tuple[str, str], str] = {}
-    for route in app.routes:
-        if not isinstance(route, APIRoute):
-            continue
+    for route in iter_api_routes(app.routes):
         calls = set(dependency_calls(route.dependant))
         if get_current_client_id in calls:
             level = "secret"

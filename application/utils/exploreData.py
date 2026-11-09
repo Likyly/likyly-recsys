@@ -211,7 +211,7 @@ def get_data_similarities(data):
     data.insert(4, 'genre_improved', data['genre_improved_multi'])
 
     # Clean HTML of bag of words
-    data[data.columns[1:6]] = data[data.columns[1:6]].applymap(cleanHTML)
+    data[data.columns[1:6]] = data[data.columns[1:6]].map(cleanHTML)
 
     # Create a bag of words composed with different features
     data['bag_of_words'] = (

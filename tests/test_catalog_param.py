@@ -73,10 +73,9 @@ def test_an_invalid_catalog_name_is_still_rejected(http):
 
 def test_account_routes_authenticated_by_jwt_keep_the_parameter_required(http, api):
     """/clients/me/* are not API-key routes: no key to resolve a catalog from."""
-    from fastapi.routing import APIRoute
-    for route in api.app.routes:
-        if isinstance(route, APIRoute) and route.path.startswith("/clients/me") and any(p.name == "data_product_type" for p in route.dependant.query_params):
-            assert next(p for p in route.dependant.query_params if p.name == "data_product_type").required, route.path
+    for route in api.iter_api_routes(api.app.routes):
+        if route.path.startswith("/clients/me") and any(p.name == "data_product_type" for p in route.dependant.query_params):
+            assert next(p for p in route.dependant.query_params if p.name == "data_product_type").field_info.is_required(), route.path
 
 
 def test_openapi_documents_the_parameter_as_optional(http):

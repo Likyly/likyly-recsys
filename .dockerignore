@@ -1,9 +1,9 @@
 venv
+.venv
 data/old
 .dvc/cache
 .dvc/tmp
 
-requirements.txt
 
 __pycache__
 *.pyc
