@@ -40,9 +40,10 @@ Recommendations combine:
 - **Hybrid**: content-based and collaborative blended by a tunable `alpha`.
 - **Session-based**: recommendations from a list of recently viewed product IDs, no `user_id` or login required.
 
-Models retrain automatically once a client's catalog accumulates enough new interactions since the last training
-run (gated by the same promotion logic as a manual retrain, and by free-tier daily limits), or on demand via the
-`/generateModel` endpoint.
+Models are trained automatically once a client's catalog accumulates enough interactions from identified visitors
+since the last training run (gated by the same promotion logic as a manual retrain, and by free-tier daily limits) -
+that is also how a catalog gets its first model. Once one exists, it can be retrained on demand via the
+`/generateModel` endpoint (`409` before that).
 
 Legacy Pinecone-based vector endpoints are kept working for existing integrations but are frozen - superseded by
 the pgvector integration above.
@@ -86,7 +87,7 @@ Vocabulary: **items** (your catalog), **users**, **events**, **recommendations**
 | `POST /events/{event_type}`, `POST /events/batch` | Track `impression`, `view`, `click`, `add_to_cart`, `remove_from_cart`, `purchase` or any type of your own - for users and anonymous sessions |
 | `GET /getRec/{popular,content,collaborative,hybrid,session,sessionForUser}/...` | One endpoint per strategy, for expert use (`alpha` lives here) |
 | `POST /clients/me` | Provision or fetch the caller's client (Supabase-authenticated) |
-| `GET /generateModel` | Trigger a training job for a client's catalog |
+| `GET /generateModel` | Retrain a catalog's existing model (`409` while it has none) |
 | `GET /models/versions`, `GET /models/status` | Model version history and current production status |
 | `GET /analytics/{summary,placements,detail,items,plan}` | Recommendation performance and plan usage for an integration holding the secret key (or a developer key with `analytics:read`): totals, per-placement breakdown with attributed revenue and plan usage on every plan; daily trend and top items on Pro. Window clamped to the plan (Free 7 days, Pro 90) |
 

@@ -864,7 +864,6 @@
             "type": "integer"
           },
           "payload": {
-            "additionalProperties": true,
             "title": "Payload",
             "type": "object"
           },
@@ -1767,7 +1766,7 @@
       "Body_import_my_interactions": {
         "properties": {
           "file": {
-            "contentMediaType": "application/octet-stream",
+            "format": "binary",
             "title": "File",
             "type": "string"
           }
@@ -1781,7 +1780,7 @@
       "Body_import_my_products": {
         "properties": {
           "file": {
-            "contentMediaType": "application/octet-stream",
+            "format": "binary",
             "title": "File",
             "type": "string"
           }
@@ -1795,7 +1794,7 @@
       "Body_import_my_users": {
         "properties": {
           "file": {
-            "contentMediaType": "application/octet-stream",
+            "format": "binary",
             "title": "File",
             "type": "string"
           }
@@ -1809,7 +1808,7 @@
       "Body_upload_data_source_file": {
         "properties": {
           "file": {
-            "contentMediaType": "application/octet-stream",
+            "format": "binary",
             "title": "File",
             "type": "string"
           }
@@ -2322,7 +2321,6 @@
           "detail": {
             "anyOf": [
               {
-                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -2369,7 +2367,6 @@
       "DataSource": {
         "properties": {
           "config": {
-            "additionalProperties": true,
             "title": "Config",
             "type": "object"
           },
@@ -2381,7 +2378,6 @@
           "field_mapping": {
             "anyOf": [
               {
-                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -2488,7 +2484,6 @@
       "DataSourceCreate": {
         "properties": {
           "config": {
-            "additionalProperties": true,
             "description": "Non-secret settings - shape depends on `type` (see docs/data-sources.md).",
             "title": "Config",
             "type": "object"
@@ -2496,7 +2491,6 @@
           "credentials": {
             "anyOf": [
               {
-                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -2509,7 +2503,6 @@
           "field_mapping": {
             "anyOf": [
               {
-                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -2580,7 +2573,6 @@
       "DataSourceCreated": {
         "properties": {
           "config": {
-            "additionalProperties": true,
             "title": "Config",
             "type": "object"
           },
@@ -2592,7 +2584,6 @@
           "field_mapping": {
             "anyOf": [
               {
-                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -2713,7 +2704,6 @@
           "config": {
             "anyOf": [
               {
-                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -2725,7 +2715,6 @@
           "credentials": {
             "anyOf": [
               {
-                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -3070,7 +3059,6 @@
             "title": "Placement"
           },
           "properties": {
-            "additionalProperties": true,
             "description": "Free-form JSON stored with the event and never interpreted: price, currency, order_id, revenue, any tenant-specific field.",
             "examples": [
               {
@@ -3319,7 +3307,6 @@
             "title": "Placement"
           },
           "properties": {
-            "additionalProperties": true,
             "description": "Free-form JSON stored with the event and never interpreted: price, currency, order_id, revenue, any tenant-specific field.",
             "examples": [
               {
@@ -3729,7 +3716,6 @@
           },
           "normalized_sample": {
             "items": {
-              "additionalProperties": true,
               "type": "object"
             },
             "title": "Normalized Sample",
@@ -3746,7 +3732,6 @@
       "FieldMappingIn": {
         "properties": {
           "mapping": {
-            "additionalProperties": true,
             "description": "external_id/title required; description, category, price, image, url, stock, updated_at optional; attributes is itself {name: path}. Each value is a field name or a dotted/bracket path (e.g. 'variants[0].price').",
             "examples": [
               {
@@ -3968,7 +3953,6 @@
             "type": "string"
           },
           "properties": {
-            "additionalProperties": true,
             "title": "Properties",
             "type": "object"
           },
@@ -4088,7 +4072,6 @@
             "title": "Price"
           },
           "properties": {
-            "additionalProperties": true,
             "description": "Free-form attributes. Keys the engine understands when present: `category` (or `genre`), `author`, `year`, `url`, `price`. Anything else is kept untouched.",
             "examples": [
               {
@@ -4243,7 +4226,6 @@
             "title": "Price"
           },
           "properties": {
-            "additionalProperties": true,
             "description": "Free-form attributes. Keys the engine understands when present: `category` (or `genre`), `author`, `year`, `url`, `price`. Anything else is kept untouched.",
             "examples": [
               {
@@ -4405,6 +4387,11 @@
             "title": "Auto Retrain Skipped Today",
             "type": "boolean"
           },
+          "auto_retrain_threshold": {
+            "default": 50,
+            "title": "Auto Retrain Threshold",
+            "type": "integer"
+          },
           "auto_retrains_today": {
             "title": "Auto Retrains Today",
             "type": "integer"
@@ -4426,6 +4413,11 @@
           },
           "manual_trainings_today": {
             "title": "Manual Trainings Today",
+            "type": "integer"
+          },
+          "new_interactions_since_training": {
+            "default": 0,
+            "title": "New Interactions Since Training",
             "type": "integer"
           }
         },
@@ -4623,7 +4615,6 @@
             "type": "string"
           },
           "tracking_configuration": {
-            "additionalProperties": true,
             "title": "Tracking Configuration",
             "type": "object"
           },
@@ -4773,7 +4764,6 @@
             "title": "Current Item Id"
           },
           "custom_context": {
-            "additionalProperties": true,
             "title": "Custom Context",
             "type": "object"
           },
@@ -4964,7 +4954,6 @@
             "type": "string"
           },
           "tracking_configuration": {
-            "additionalProperties": true,
             "description": "Reserved for a future placement-level tracking override.",
             "title": "Tracking Configuration",
             "type": "object"
@@ -5536,7 +5525,6 @@
           "tracking_configuration": {
             "anyOf": [
               {
-                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -5672,14 +5660,12 @@
           },
           "sample": {
             "items": {
-              "additionalProperties": true,
               "type": "object"
             },
             "title": "Sample",
             "type": "array"
           },
           "suggested_mapping": {
-            "additionalProperties": true,
             "title": "Suggested Mapping",
             "type": "object"
           }
@@ -5705,7 +5691,6 @@
           },
           "items": {
             "items": {
-              "additionalProperties": true,
               "type": "object"
             },
             "maxItems": 1000,
@@ -6220,7 +6205,6 @@
             "type": "string"
           },
           "properties": {
-            "additionalProperties": true,
             "title": "Properties",
             "type": "object"
           },
@@ -6316,7 +6300,6 @@
             "title": "Price"
           },
           "properties": {
-            "additionalProperties": true,
             "title": "Properties",
             "type": "object"
           },
@@ -6940,7 +6923,6 @@
         ],
         "properties": {
           "properties": {
-            "additionalProperties": true,
             "title": "Properties",
             "type": "object"
           },
@@ -7031,7 +7013,6 @@
       "UserImportEntry": {
         "properties": {
           "properties": {
-            "additionalProperties": true,
             "examples": [
               {
                 "age": 34,
@@ -7169,7 +7150,6 @@
         "description": "Body of PUT /users/{user_id} - a schema-free profile. Users are optional enrichment:\nevents with a user_id work without one ever being created.",
         "properties": {
           "properties": {
-            "additionalProperties": true,
             "examples": [
               {
                 "age": 34,
@@ -7251,13 +7231,6 @@
       },
       "ValidationError": {
         "properties": {
-          "ctx": {
-            "title": "Context",
-            "type": "object"
-          },
-          "input": {
-            "title": "Input"
-          },
           "loc": {
             "items": {
               "anyOf": [
@@ -11650,6 +11623,16 @@
             },
             "description": "The referenced resource does not exist for this account."
           },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not possible in the current state - `detail` says what is missing (e.g. no model to retrain yet)."
+          },
           "422": {
             "content": {
               "application/json": {
@@ -11669,7 +11652,7 @@
             "bearerAuth": []
           }
         ],
-        "summary": "Train my model",
+        "summary": "Retrain my model",
         "tags": [
           "selfServiceClient"
         ]
@@ -16075,7 +16058,7 @@
     },
     "/generateModel": {
       "get": {
-        "description": "Starts a collaborative-model training run as a background job and returns its `job_id` immediately; poll `/generateModel/status/{job_id}`. Subject to the plan's daily manual-training quota (`429` when exhausted). The new model is only promoted to production if its precision@k is at least the current one's. Secret key only.",
+        "description": "Starts a collaborative-model training run as a background job and returns its `job_id` immediately; poll `/generateModel/status/{job_id}`. Only retrains an existing model: `409` while the catalog has none - the first one is trained automatically once enough interactions from identified visitors have arrived. Subject to the plan's daily manual-training quota (`429` when exhausted). The new model is only promoted to production if its precision@k is at least the current one's. Secret key only.",
         "operationId": "generate_model",
         "parameters": [
           {
@@ -16134,6 +16117,16 @@
             },
             "description": "The public key can't do this (secret key required), or a plan limit was reached."
           },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not possible in the current state - `detail` says what is missing (e.g. no model to retrain yet)."
+          },
           "422": {
             "content": {
               "application/json": {
@@ -16153,7 +16146,7 @@
             "APIKeyHeader": []
           }
         ],
-        "summary": "Train the model (background job)",
+        "summary": "Retrain the model (background job)",
         "tags": [
           "models"
         ],
@@ -16939,8 +16932,8 @@
             "schema": {
               "default": 0.5,
               "description": "Weight of the collaborative signal against content similarity (0 = pure content, 1 = pure collaborative). An expert knob: `POST /getRec` picks a sensible blend for you.",
-              "maximum": 1,
-              "minimum": 0,
+              "maximum": 1.0,
+              "minimum": 0.0,
               "title": "Alpha",
               "type": "number"
             }
@@ -17294,7 +17287,6 @@
                   "type": "null"
                 }
               ],
-              "deprecated": true,
               "description": "Deprecated alias of `viewed_item_ids`.",
               "title": "Viewed Work Ids"
             }
@@ -19661,7 +19653,6 @@
                   "type": "null"
                 }
               ],
-              "deprecated": true,
               "description": "Deprecated: use GET /users/{user_id}.",
               "title": "User Id"
             }
@@ -19681,7 +19672,6 @@
                   "type": "null"
                 }
               ],
-              "deprecated": true,
               "description": "Deprecated alias of `limit`.",
               "title": "Count"
             }

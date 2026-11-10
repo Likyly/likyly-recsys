@@ -35,6 +35,7 @@ def test_collaborative_failure_is_generic(http, seeded, api, monkeypatch):
 
 def test_failed_training_job_status_is_generic(http, seeded, api, monkeypatch):
     monkeypatch.setattr(api, "train_and_maybe_promote_model", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("could not connect to server at /srv/secret.sock password=hunter2")))
+    monkeypatch.setattr(api, "model_available", lambda *a, **k: True)
     job = http.get("/generateModel", params=Q, headers=seeded.secret).json()
     status = http.get(f"/generateModel/status/{job['job_id']}", headers=seeded.secret).json()
     assert status["status"] == "failed" and "hunter2" not in json.dumps(status) and not PATH_LIKE.search(json.dumps(status))

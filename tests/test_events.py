@@ -265,3 +265,14 @@ class TestAutoRetrain:
         status = http.get("/models/status", params=Q, headers=seeded.secret).json()
         assert status["new_interactions_since_training"] == 1
         assert status["auto_retrain_threshold"] > 0
+
+    def test_manual_training_is_refused_until_a_first_model_exists(self, http, seeded, api, monkeypatch):
+        """The first model comes from the automatic threshold; a manual run only retrains -
+        same rule as the dashboard, whose button stays greyed out until then."""
+        started = []
+        monkeypatch.setattr(api, "run_generate_model_job", lambda *a, **k: started.append(a))
+        response = http.get("/generateModel", params=Q, headers=seeded.secret)
+        assert response.status_code == 409 and "trained automatically" in response.json()["detail"]
+        assert started == []
+        monkeypatch.setattr(api, "model_available", lambda *a, **k: True)
+        assert http.get("/generateModel", params=Q, headers=seeded.secret).status_code == 200

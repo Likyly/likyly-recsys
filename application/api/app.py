@@ -110,8 +110,8 @@ from ingestion import (
     upsert_item, upsert_items_batch, upsert_user_profile, upsert_users_batch,
 )
 from recommender import (
-    present_records, rec_collaborative, rec_content, rec_hybrid, rec_popular, rec_session,
-    recommend_auto,
+    model_available, present_records, rec_collaborative, rec_content, rec_hybrid, rec_popular,
+    rec_session, recommend_auto,
 )
 from data_sources import router as data_sources_router
 from upgrade_requests import UPGRADE_REQUESTS_PER_DAY, notify_team, render_email
@@ -647,6 +647,7 @@ def _errors(*codes: int) -> dict:
         401: "Missing, invalid or revoked `X-API-Key`.",
         403: "The public key can't do this (secret key required), or a plan limit was reached.",
         404: "The referenced resource does not exist for this account.",
+        409: "Not possible in the current state - `detail` says what is missing (e.g. no model to retrain yet).",
         422: "The request is malformed - `detail` lists the offending fields.",
         503: "A service this call depends on is unavailable or not configured - retry later.",
     }
@@ -1918,7 +1919,21 @@ def trigger_manual_training(client_id: int, product_type: str, background_tasks:
     check and job bookkeeping, only how client_id was resolved differs. The daily manual
     training count is a single account-wide counter regardless of which surface
     triggered it - otherwise a customer could double their free-tier allowance by using
-    both surfaces."""
+    both surfaces.
+
+    A manual run only RE-trains: the first model of a catalog comes from the automatic
+    retrain, once AUTO_RETRAIN_INTERACTION_THRESHOLD identified interactions have arrived -
+    so it is never fitted on a handful of events, and the dashboard (whose button is greyed
+    out until then) and the API follow the same rule."""
+    if not model_available(client_id, product_type):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"No model yet for '{product_type}': the first one is trained automatically once "
+                f"{AUTO_RETRAIN_INTERACTION_THRESHOLD} interactions from identified visitors (events "
+                "with a user_id) have arrived. Manual training is available after that, to retrain it."
+            ),
+        )
     manual_limit = get_plan_limits(get_client_plan(client_id))["manual_training_daily_limit"]
     if manual_limit is not None and count_trainings_today(client_id, product_type, MANUAL) >= manual_limit:
         raise HTTPException(
@@ -2045,9 +2060,9 @@ async def delete_my_account(payload: AccountDeletion, background_tasks: Backgrou
     return {"message": "Account permanently deleted"}
 
 
-@app.get("/generateModel", tags=["models"], response_model=GenerateModelJobStatus, summary="Train the model (background job)", responses=_errors(401, 403, 422))
+@app.get("/generateModel", tags=["models"], response_model=GenerateModelJobStatus, summary="Retrain the model (background job)", responses=_errors(401, 403, 409, 422))
 async def generate_model(data_product_type: Catalog, background_tasks: BackgroundTasks, client_id: int = Depends(get_current_client_id)):
-    """Starts a collaborative-model training run as a background job and returns its `job_id` immediately; poll `/generateModel/status/{job_id}`. Subject to the plan's daily manual-training quota (`429` when exhausted). The new model is only promoted to production if its precision@k is at least the current one's. Secret key only."""
+    """Starts a collaborative-model training run as a background job and returns its `job_id` immediately; poll `/generateModel/status/{job_id}`. Only retrains an existing model: `409` while the catalog has none - the first one is trained automatically once enough interactions from identified visitors have arrived. Subject to the plan's daily manual-training quota (`429` when exhausted). The new model is only promoted to production if its precision@k is at least the current one's. Secret key only."""
     return trigger_manual_training(client_id, data_product_type, background_tasks)
 
 @app.get("/generateModel/status/{job_id}", tags=["models"], response_model=GenerateModelJobStatus, summary="Training job status", responses=_errors(401, 403, 404))
@@ -2087,7 +2102,7 @@ async def get_model_overview(
         "performance": recommendation_performance_by_strategy(client_id, data_product_type, since),
     }
 
-@app.post("/clients/me/generateModel", tags=["selfServiceClient"], response_model=GenerateModelJobStatus, summary="Train my model", responses=_errors(401, 404, 422))
+@app.post("/clients/me/generateModel", tags=["selfServiceClient"], response_model=GenerateModelJobStatus, summary="Retrain my model", responses=_errors(401, 404, 409, 422))
 async def generate_my_model(
     data_product_type: ProductType, background_tasks: BackgroundTasks,
     supabase_user_id: str = Depends(get_current_supabase_user_id), x_workspace_id: WorkspaceIdHeader = None,
