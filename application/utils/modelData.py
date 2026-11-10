@@ -12,6 +12,7 @@ import torch
 import numpy as np
 import pandas as pd
 import re
+import shutil
 import subprocess
 import time
 import json
@@ -85,7 +86,12 @@ def compute_and_store_product_embedding(client_id, product_type, work_id, title,
 
 
 def dvc_push(file_path=None):
-
+    """Best-effort copy of a model artifact to the DVC remote - a backup, never part of
+    serving. It must never fail a training run: the production image doesn't ship DVC
+    (dev-only dependency since 2026-11-09), and an uncaught FileNotFoundError here used to
+    abort train_and_maybe_promote_model right before the new version was promoted."""
+    if shutil.which('dvc') is None:
+        return
     try:
         if file_path:
             # Add and Push a specific file
@@ -96,7 +102,7 @@ def dvc_push(file_path=None):
             subprocess.run(['dvc', 'add'], check=True)
             subprocess.run(['dvc', 'push'], check=True)
         print("DVC push successful.")
-    except subprocess.CalledProcessError as e:
+    except (subprocess.CalledProcessError, OSError) as e:
         print(f"An error occurred while pushing with DVC: {e}", file=sys.stderr)
 
 
@@ -265,7 +271,11 @@ def _log_training_run_to_mlflow(
     to the Production stage, with the previous Production version auto-archived. This is
     purely a visibility layer: serving (load_model) never depends on MLflow, so a
     logging failure here (server down, network hiccup) must never block or fail the
-    actual training/promotion decision already made and persisted in Postgres above."""
+    actual training/promotion decision already made and persisted in Postgres above.
+    Skipped when MLFLOW_TRACKING_URI isn't set (production today): no server to reach, so no
+    connection retries slowing every training run down."""
+    if not os.environ.get("MLFLOW_TRACKING_URI"):
+        return
     try:
         registered_name = f"client_{client_id}_{product_type}"
         mlflow.set_experiment(registered_name)

@@ -370,3 +370,19 @@ def test_the_stored_trace_is_enough_to_compute_ctr_conversion_and_attributed_rev
     assert float(by_placement["homepage"]["revenue"]) == 120.5
     assert by_placement["product_page"]["strategy"] == "content" and by_placement["product_page"]["impressions"] == 2
     assert by_placement["product_page"]["clicks"] == 0
+
+
+def test_training_promotes_without_dvc_or_mlflow(http, seeded, tmp_path, monkeypatch):
+    """Production as it runs: no `dvc` binary in the image, no MLflow server configured.
+    Neither is part of serving, so neither may stop a new version from going live (a
+    missing `dvc` used to raise FileNotFoundError right before promotion)."""
+    import shutil
+    monkeypatch.setattr(shutil, "which", lambda *a, **k: None)
+    monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
+    monkeypatch.setattr(modelData, "_versioned_model_path", lambda t, c, v: str(tmp_path / f"{t}_{c}_v{v}.npz"))
+    for u in range(6):
+        track(http, seeded, "purchase", {"user_id": f"u{u}", "item_id": ["SKU-NIKE-001", "SKU-VANS-004"][u % 2]})
+        track(http, seeded, "purchase", {"user_id": f"u{u}", "item_id": "SKU-ASICS-003"})
+    result = modelData.train_and_maybe_promote_model(Q["data_product_type"], client_id=seeded.client_id)
+    assert result["promoted"]
+    assert db.get_active_model_version(seeded.client_id, Q["data_product_type"])["id"] == result["version_id"]
