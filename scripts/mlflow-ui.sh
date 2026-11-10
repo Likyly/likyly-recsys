@@ -18,6 +18,11 @@ IMAGE="ghcr.io/mlflow/mlflow:v3.18.0"   # same version as mlflow-skinny in requi
 echo "MLflow UI -> http://localhost:${PORT}  (Ctrl-C to stop it)"
 exec ssh -t -L "${PORT}:127.0.0.1:5999" "$HOST" "
   docker rm -f mlflow-ui >/dev/null 2>&1 || true
+  # The image is public, but the droplet's stored ghcr.io login (deploy token) makes ghcr
+  # answer 'denied' for it: pull it anonymously, with an empty Docker config.
+  if ! docker image inspect ${IMAGE} >/dev/null 2>&1; then
+    d=\$(mktemp -d); DOCKER_CONFIG=\$d docker pull -q ${IMAGE}; rm -rf \$d
+  fi
   docker run --rm --name mlflow-ui -p 127.0.0.1:5999:5000 \
     -e MLFLOW_SERVER_ENABLE_JOB_EXECUTION=false \
     -v licenses_recsys_model_data:/srv/model \
