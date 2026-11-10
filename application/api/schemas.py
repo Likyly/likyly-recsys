@@ -359,6 +359,11 @@ class ModelStatus(BaseModel):
     auto_retrain_daily_limit: Optional[int] = None
     auto_retrain_skipped_today: bool = False
     auto_retrain_skip_reason: Optional[str] = None
+    # Signal-carrying interactions (identified visitor, positive-weight event) received since
+    # the live version was trained - or ever, with no model yet - and how many trigger an
+    # automatic retrain: lets the dashboard say when the next model will come.
+    new_interactions_since_training: int = 0
+    auto_retrain_threshold: int = 50
 
 
 class StrategyPerformance(BaseModel):

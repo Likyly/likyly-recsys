@@ -1969,10 +1969,15 @@ def build_model_status(client_id: int, product_type: str) -> dict:
     limits = get_plan_limits(get_client_plan(client_id))
     skip = _auto_retrain_skips.get((client_id, product_type))
     skip_today = skip is not None and skip["skipped_at"].date() == utcnow().date()
+    active = get_active_model_version(client_id, product_type)
 
     return {
         "data_product_type": product_type,
-        "active_version": get_active_model_version(client_id, product_type),
+        "active_version": active,
+        "new_interactions_since_training": count_interactions_since(
+            client_id, product_type, active["trained_at"] if active else None,
+        ),
+        "auto_retrain_threshold": AUTO_RETRAIN_INTERACTION_THRESHOLD,
         "manual_trainings_today": count_trainings_today(client_id, product_type, MANUAL),
         "manual_training_daily_limit": limits["manual_training_daily_limit"],
         "auto_retrains_today": count_trainings_today(client_id, product_type, AUTO),

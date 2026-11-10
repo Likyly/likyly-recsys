@@ -255,3 +255,13 @@ class TestAutoRetrain:
             track(http, seeded, "purchase", {"user_id": f"u{i}", "item_id": "SKU-NIKE-001"})
         assert len(trained) >= 1
         assert not any(j["client_id"] == seeded.client_id and j["status"] == "failed" for j in api.GENERATE_MODEL_JOBS.values())
+
+    def test_model_status_counts_interactions_toward_the_next_retrain(self, http, seeded):
+        """The dashboard shows "x / threshold" before the next automatic retrain: identified,
+        signal-carrying events count, impressions and anonymous ones don't."""
+        track(http, seeded, "impression", {"user_id": "u", "item_id": "SKU-NIKE-001"})
+        track(http, seeded, "view", {"session_id": "s", "item_id": "SKU-NIKE-001"})
+        track(http, seeded, "view", {"user_id": "u", "item_id": "SKU-NIKE-001"})
+        status = http.get("/models/status", params=Q, headers=seeded.secret).json()
+        assert status["new_interactions_since_training"] == 1
+        assert status["auto_retrain_threshold"] > 0
