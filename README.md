@@ -69,7 +69,7 @@ the pgvector integration above.
   database.
 - **sentence-transformers** - semantic embeddings for content-based recommendations.
 - **implicit** - ALS-based collaborative filtering.
-- **MLflow** - experiment tracking for model training runs.
+- **MLflow** - experiment tracking for model training runs. In production every run is recorded in a SQLite file on the model volume (`/srv/model/mlflow/`), with no MLflow server running; `scripts/mlflow-ui.sh` opens the UI on http://localhost:5000 through an SSH tunnel, for as long as it runs.
 - **Supabase** - authentication for self-service client provisioning.
 - **Pinecone** - legacy vector index, frozen, kept working for existing integrations only.
 - **Prometheus / Sentry** - metrics and error tracking.

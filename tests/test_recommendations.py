@@ -386,3 +386,26 @@ def test_training_promotes_without_dvc_or_mlflow(http, seeded, tmp_path, monkeyp
     result = modelData.train_and_maybe_promote_model(Q["data_product_type"], client_id=seeded.client_id)
     assert result["promoted"]
     assert db.get_active_model_version(seeded.client_id, Q["data_product_type"])["id"] == result["version_id"]
+
+
+def test_training_is_recorded_in_a_sqlite_mlflow_store(http, seeded, tmp_path, monkeypatch):
+    """Production records MLflow runs in a SQLite file on the model volume (no server):
+    the run, its model file under MLFLOW_ARTIFACT_ROOT (never ./mlruns inside the
+    container) and the "production" alias on the promoted version."""
+    from mlflow.tracking import MlflowClient
+    import shutil
+    monkeypatch.setattr(shutil, "which", lambda *a, **k: None)
+    monkeypatch.setenv("MLFLOW_TRACKING_URI", f"sqlite:///{tmp_path}/mlflow.db")
+    monkeypatch.setenv("MLFLOW_ARTIFACT_ROOT", str(tmp_path / "artifacts"))
+    monkeypatch.setattr(modelData, "_versioned_model_path", lambda t, c, v: str(tmp_path / f"{t}_{c}_v{v}.npz"))
+    for u in range(6):
+        track(http, seeded, "purchase", {"user_id": f"u{u}", "item_id": ["SKU-NIKE-001", "SKU-VANS-004"][u % 2]})
+        track(http, seeded, "purchase", {"user_id": f"u{u}", "item_id": "SKU-ASICS-003"})
+    result = modelData.train_and_maybe_promote_model(Q["data_product_type"], client_id=seeded.client_id)
+
+    name = f"client_{seeded.client_id}_{Q['data_product_type']}"
+    client = MlflowClient(tracking_uri=f"sqlite:///{tmp_path}/mlflow.db")
+    (run,) = client.search_runs([client.get_experiment_by_name(name).experiment_id])
+    assert run.data.tags["promoted"] == "True" and run.data.params["version_id"] == str(result["version_id"])
+    assert list((tmp_path / "artifacts" / name).rglob("*.npz"))
+    assert client.get_model_version_by_alias(name, "production").run_id == run.info.run_id

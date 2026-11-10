@@ -35,7 +35,9 @@ from mlflow.tracking import MlflowClient
 # which stay the actual source of truth for serving (load_model never depends on MLflow).
 # A logging failure here (server down, network hiccup) must never block a real training
 # run - see the try/except around _log_training_run_to_mlflow below.
-mlflow.set_tracking_uri(os.environ.get("MLFLOW_TRACKING_URI", "http://127.0.0.1:5555"))
+# Production: MLFLOW_TRACKING_URI=sqlite:////srv/model/mlflow/mlflow.db and
+# MLFLOW_ARTIFACT_ROOT=/srv/model/mlflow/artifacts - a file on the model volume, no MLflow
+# server running (the droplet has no RAM for one); scripts/mlflow-ui.sh opens the UI on demand.
 
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
@@ -274,10 +276,23 @@ def _log_training_run_to_mlflow(
     actual training/promotion decision already made and persisted in Postgres above.
     Skipped when MLFLOW_TRACKING_URI isn't set (production today): no server to reach, so no
     connection retries slowing every training run down."""
-    if not os.environ.get("MLFLOW_TRACKING_URI"):
+    tracking_uri = os.environ.get("MLFLOW_TRACKING_URI")
+    if not tracking_uri:
         return
     try:
+        if tracking_uri.startswith("sqlite:///"):
+            # SQLite creates the file, not its folder (first run on a fresh volume).
+            os.makedirs(os.path.dirname(tracking_uri[len("sqlite:///"):]) or ".", exist_ok=True)
+        mlflow.set_tracking_uri(tracking_uri)
         registered_name = f"client_{client_id}_{product_type}"
+        if mlflow.get_experiment_by_name(registered_name) is None:
+            # Without an explicit location MLflow would store artifacts under ./mlruns,
+            # inside the container - lost on the next deploy.
+            artifact_root = os.environ.get("MLFLOW_ARTIFACT_ROOT")
+            mlflow.create_experiment(
+                registered_name,
+                artifact_location=f"{artifact_root.rstrip('/')}/{registered_name}" if artifact_root else None,
+            )
         mlflow.set_experiment(registered_name)
 
         with mlflow.start_run(run_name=f"v{version_id}") as run:

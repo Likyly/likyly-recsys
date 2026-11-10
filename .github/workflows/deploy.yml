@@ -152,6 +152,10 @@ jobs:
           SENTRY_DSN=${{ secrets.SENTRY_DSN }}
           SENTRY_ENVIRONMENT=production
           TEAM_ALERT_WEBHOOK_URL=${{ secrets.TEAM_ALERT_WEBHOOK_URL }}
+          # MLflow history in a SQLite file on the model volume - no server (no RAM for one on
+          # this droplet); scripts/mlflow-ui.sh opens the UI on demand through an SSH tunnel.
+          MLFLOW_TRACKING_URI=sqlite:////srv/model/mlflow/mlflow.db
+          MLFLOW_ARTIFACT_ROOT=/srv/model/mlflow/artifacts
           ENV
 
       - name: Pull and restart recsys-api (remote)
