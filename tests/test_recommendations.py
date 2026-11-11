@@ -409,3 +409,18 @@ def test_training_is_recorded_in_a_sqlite_mlflow_store(http, seeded, tmp_path, m
     assert run.data.tags["promoted"] == "True" and run.data.params["version_id"] == str(result["version_id"])
     assert list((tmp_path / "artifacts" / name).rglob("*.npz"))
     assert client.get_model_version_by_alias(name, "production").run_id == run.info.run_id
+
+    # Identifiable at a glance: who made it, for which client and catalogue, on what data.
+    assert run.info.user_id == "likyly"
+    assert run.data.tags["source"] == "likyly" and run.data.tags["catalogue"] == Q["data_product_type"]
+    assert run.data.tags["client_id"] == str(seeded.client_id)
+    assert int(run.data.tags["catalogue_produits"]) > 0
+    # Real counts, not the matrix size (max id + 1): 6 visitors on 3 products.
+    assert run.data.metrics["num_users"] == 6 and run.data.metrics["num_items"] == 3
+    (dataset_input,) = run.inputs.dataset_inputs
+    assert dataset_input.dataset.name == f"interactions client {seeded.client_id} · {Q['data_product_type']}"
+    model = client.get_registered_model(name)
+    assert model.tags["source"] == "likyly" and Q["data_product_type"] in model.description
+    version = client.get_model_version_by_alias(name, "production")
+    assert version.tags["promue"] == "oui" and "Precision@10" in version.description
+    assert db.get_active_model_version(seeded.client_id, Q["data_product_type"])["num_users"] == 6

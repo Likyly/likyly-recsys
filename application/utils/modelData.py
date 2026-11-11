@@ -6,7 +6,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 from pinecone import Pinecone, ServerlessSpec
 from sentence_transformers import SentenceTransformer
 from dotenv import load_dotenv
-from datetime import datetime
+from datetime import datetime, timezone
 from scipy.sparse import csr_matrix
 import torch
 import numpy as np
@@ -26,9 +26,12 @@ from db import (
     get_active_model_version, promote_model_version,
     update_product_embedding, find_similar_by_embedding,
     fetch_all_interactions, get_client_event_type_weights, EVENT_TIER_WEIGHTS, DEFAULT_EVENT_TIER,
+    get_client_self_by_id, count_products_in_catalog,
 )
 
 import mlflow
+import mlflow.data
+from mlflow.data.code_dataset_source import CodeDatasetSource
 from mlflow.tracking import MlflowClient
 
 # MLflow is a visibility/governance layer on top of the model_versions table + .npz files,
@@ -229,11 +232,14 @@ def train_and_maybe_promote_model(
         or (candidate_precision is not None and candidate_precision >= active["precision_at_k"])
     )
 
+    # The matrix is sized by the largest ids (max id + 1), not by how many visitors and
+    # products it holds: count the rows and columns that actually carry an interaction.
+    num_users, num_items = matrix_population(interactions)
     version_id = record_model_version(
         client_id=client_id, product_type=product_type, file_path="pending",
         factors=factors, regularization=regularization, iterations=iterations,
         precision_at_k=candidate_precision,
-        num_users=interactions.shape[0], num_items=interactions.shape[1],
+        num_users=num_users, num_items=num_items,
         num_interactions=int(interactions.nnz),
         triggered_by=triggered_by,
     )
@@ -250,9 +256,9 @@ def train_and_maybe_promote_model(
     _log_training_run_to_mlflow(
         client_id=client_id, product_type=product_type, version_id=version_id, file_path=file_path,
         factors=factors, regularization=regularization, iterations=iterations,
-        precision_at_k=candidate_precision, num_users=interactions.shape[0],
-        num_items=interactions.shape[1], num_interactions=int(interactions.nnz),
-        promoted=is_improvement,
+        precision_at_k=candidate_precision, num_users=num_users,
+        num_items=num_items, num_interactions=int(interactions.nnz),
+        promoted=is_improvement, triggered_by=triggered_by, interactions=interactions,
     )
 
     return {
@@ -263,19 +269,55 @@ def train_and_maybe_promote_model(
     }
 
 
+def matrix_population(interactions_matrix):
+    """(visitors, products) that carry at least one interaction in this user x item matrix."""
+    if interactions_matrix.nnz == 0:
+        return 0, 0
+    users = int((np.diff(interactions_matrix.tocsr().indptr) > 0).sum())
+    items = int(np.unique(interactions_matrix.tocsr().indices).size)
+    return users, items
+
+
+MLFLOW_AUTHOR = "likyly"  # shown as "Created by"/"User" instead of the container's "root"
+
+
+def _catalog_context(client_id, product_type):
+    """Who and what a model belongs to, for its MLflow description. Best effort: a
+    lookup failure only leaves those fields out."""
+    try:
+        client = get_client_self_by_id(client_id) or {}
+        client_name = client.get("display_name") or client.get("name")
+    except Exception:
+        client_name = None
+    try:
+        catalog_items = count_products_in_catalog(client_id, product_type)
+    except Exception:
+        catalog_items = None
+    return client_name, catalog_items
+
+
+def _fmt_fr_number(n):
+    return f"{n:,}".replace(",", "\u202f") if n is not None else "?"
+
+
 def _log_training_run_to_mlflow(
     client_id, product_type, version_id, file_path,
     factors, regularization, iterations, precision_at_k,
     num_users, num_items, num_interactions, promoted,
+    triggered_by=MANUAL, trained_at=None, interactions=None,
+    client_name=None, catalog_items=None,
 ):
-    """Logs this training run to MLflow for visual/historical inspection - params,
-    metrics, the model artifact, and (if promoted) a Model Registry version transitioned
-    to the Production stage, with the previous Production version auto-archived. This is
-    purely a visibility layer: serving (load_model) never depends on MLflow, so a
-    logging failure here (server down, network hiccup) must never block or fail the
-    actual training/promotion decision already made and persisted in Postgres above.
-    Skipped when MLFLOW_TRACKING_URI isn't set (production today): no server to reach, so no
-    connection retries slowing every training run down."""
+    """Logs this training run to MLflow for visual/historical inspection: params, metrics,
+    the dataset it learned from, the model artifact, a Model Registry version and (if
+    promoted) the "production" alias - each with a description and tags saying which
+    LIKYLY client and catalogue it is, so a model is identifiable at a glance.
+
+    Purely a visibility layer: serving (load_model) never depends on MLflow, so a logging
+    failure must never block or fail the training/promotion decision already persisted in
+    Postgres. Skipped when MLFLOW_TRACKING_URI isn't set.
+
+    trained_at (a datetime) dates the run, for backfilling a version trained earlier;
+    client_name/catalog_items are looked up when not given."""
     tracking_uri = os.environ.get("MLFLOW_TRACKING_URI")
     if not tracking_uri:
         return
@@ -284,7 +326,49 @@ def _log_training_run_to_mlflow(
             # SQLite creates the file, not its folder (first run on a fresh volume).
             os.makedirs(os.path.dirname(tracking_uri[len("sqlite:///"):]) or ".", exist_ok=True)
         mlflow.set_tracking_uri(tracking_uri)
+        if client_name is None and catalog_items is None:
+            client_name, catalog_items = _catalog_context(client_id, product_type)
+        client_label = client_name or f"client {client_id}"
+        trained_at = trained_at or datetime.utcnow()
+        trained_label = trained_at.strftime("%d/%m/%Y %H:%M UTC")
+        trigger_label = "automatique" if triggered_by == "auto" else "manuel"
+        precision_label = f"{precision_at_k * 100:.1f} %" if precision_at_k is not None else "non mesurée"
+
+        # Same tags on the registered model, the version and the run: filterable everywhere
+        # (e.g. tags.catalogue = 'movies' in the runs search box).
+        identity_tags = {
+            "source": "likyly", "service": "recsys-api",
+            "client_id": str(client_id), "client": client_label,
+            "catalogue": product_type, "methode": "collaboratif (ALS, implicit)",
+        }
+        if catalog_items is not None:
+            identity_tags["catalogue_produits"] = str(catalog_items)
+
         registered_name = f"client_{client_id}_{product_type}"
+        model_description = (
+            f"Modèle de recommandation LIKYLY du catalogue « {product_type} » "
+            f"(nom choisi par le client) du client « {client_label} » (id {client_id}).\n\n"
+            "Méthode collaborative : filtrage collaboratif ALS (bibliothèque implicit), appris "
+            "sur les interactions des visiteurs identifiés (user_id). Entraîné par recsys-api, "
+            "automatiquement tous les 50 nouvelles interactions identifiées ou à la demande.\n\n"
+            "La version servie est décidée par LIKYLY (table model_versions dans Postgres, "
+            "promotion si la precision@10 est au moins égale à la version en place) : l'alias "
+            "« production » ici en est le reflet, le déplacer ne change pas le modèle servi."
+        )
+        version_description = (
+            f"v{version_id} · entraînement {trigger_label} du {trained_label}\n"
+            f"Appris sur {_fmt_fr_number(num_interactions)} couples visiteur × produit "
+            f"({_fmt_fr_number(num_users)} visiteurs, {_fmt_fr_number(num_items)} produits"
+            + (f" sur {_fmt_fr_number(catalog_items)} au catalogue" if catalog_items is not None else "")
+            + f").\nPrecision@10 : {precision_label}. "
+            + ("Mise en production." if promoted else "Non promue : moins précise que la version en place.")
+        )
+        version_tags = {
+            **identity_tags, "version": str(version_id), "declencheur": trigger_label,
+            "entraine_le": trained_at.strftime("%Y-%m-%d %H:%M UTC"),
+            "promue": "oui" if promoted else "non",
+        }
+
         if mlflow.get_experiment_by_name(registered_name) is None:
             # Without an explicit location MLflow would store artifacts under ./mlruns,
             # inside the container - lost on the next deploy.
@@ -293,43 +377,82 @@ def _log_training_run_to_mlflow(
                 registered_name,
                 artifact_location=f"{artifact_root.rstrip('/')}/{registered_name}" if artifact_root else None,
             )
-        mlflow.set_experiment(registered_name)
+        experiment = mlflow.get_experiment_by_name(registered_name)
+        client = MlflowClient()
+        client.set_experiment_tag(experiment.experiment_id, "mlflow.note.content", model_description)
+        for key, value in identity_tags.items():
+            client.set_experiment_tag(experiment.experiment_id, key, value)
 
-        with mlflow.start_run(run_name=f"v{version_id}") as run:
+        # A run created through the client can carry its real start time (backfills).
+        run = client.create_run(
+            experiment.experiment_id,
+            start_time=int(trained_at.replace(tzinfo=trained_at.tzinfo or timezone.utc).timestamp() * 1000),
+            run_name=f"v{version_id}",
+            tags={**version_tags, "mlflow.user": MLFLOW_AUTHOR, "mlflow.note.content": version_description,
+                  "promoted": str(promoted)},
+        )
+        run_id = run.info.run_id
+        with mlflow.start_run(run_id=run_id):
             mlflow.log_params({
                 "factors": factors, "regularization": regularization, "iterations": iterations,
-                "version_id": version_id,
+                "version_id": version_id, "k": 10,
             })
             metrics = {"num_users": num_users, "num_items": num_items, "num_interactions": num_interactions}
+            if catalog_items is not None:
+                metrics["catalog_items"] = catalog_items
             if precision_at_k is not None:
                 metrics["precision_at_k"] = precision_at_k
             mlflow.log_metrics(metrics)
-            mlflow.set_tag("promoted", str(promoted))
+            if interactions is not None:
+                _log_training_dataset(interactions, client_id, product_type)
             mlflow.log_artifact(file_path)
 
-            client = MlflowClient()
-            try:
-                client.create_registered_model(registered_name)
-            except Exception:
-                pass  # already exists, fine
+        try:
+            client.create_registered_model(registered_name, tags=identity_tags, description=model_description)
+        except Exception:
+            # Already exists: keep its description and tags current (client renamed,
+            # catalogue grown).
+            client.update_registered_model(registered_name, description=model_description)
+            for key, value in identity_tags.items():
+                client.set_registered_model_tag(registered_name, key, value)
 
-            # await_creation_for=0: skip MLflow's post-creation polling loop, which hits a
-            # broken query against this Postgres/psycopg setup (integer/varchar comparison
-            # error) - the version is already created synchronously by the call above this
-            # wait step, so there's nothing to actually wait for.
-            model_version = client.create_model_version(
-                name=registered_name,
-                source=f"{run.info.artifact_uri}/{os.path.basename(file_path)}",
-                run_id=run.info.run_id,
-                await_creation_for=0,
-            )
-            if promoted:
-                # Aliases (not the deprecated stage-transition API) are MLflow's current
-                # recommended way to mark "the one in production" - reassigning the alias
-                # is a single atomic pointer move, no separate archive step needed.
-                client.set_registered_model_alias(registered_name, "production", model_version.version)
+        # await_creation_for=0: skip MLflow's post-creation polling loop, which hits a
+        # broken query against this Postgres/psycopg setup (integer/varchar comparison
+        # error) - the version is already created synchronously by the call above this
+        # wait step, so there's nothing to actually wait for.
+        model_version = client.create_model_version(
+            name=registered_name,
+            source=f"{run.info.artifact_uri}/{os.path.basename(file_path)}",
+            run_id=run_id,
+            tags=version_tags,
+            description=version_description,
+            await_creation_for=0,
+        )
+        if promoted:
+            # Aliases (not the deprecated stage-transition API) are MLflow's current
+            # recommended way to mark "the one in production" - reassigning the alias
+            # is a single atomic pointer move, no separate archive step needed.
+            client.set_registered_model_alias(registered_name, "production", model_version.version)
     except Exception as error:
         print(f"MLflow logging skipped (non-fatal): {error}")
+
+
+def _log_training_dataset(interactions, client_id, product_type):
+    """Records what the model learned from in the run's Datasets panel: one row per
+    visitor x product pair with its summed event weight (the ALS confidence). MLflow keeps
+    the schema, row count and a fingerprint, not the data itself."""
+    coo = interactions.tocoo()
+    df = pd.DataFrame({"user_id": coo.row, "work_id": coo.col, "weight": coo.data})
+    dataset = mlflow.data.from_pandas(
+        df,
+        name=f"interactions client {client_id} · {product_type}",
+        # MLflow has no resolver for a postgresql:// URI: describe the origin in tags instead.
+        source=CodeDatasetSource(tags={
+            "table": "interactions (Postgres LIKYLY), visiteurs identifiés",
+            "filtre": f"client_id={client_id}, product_type={product_type}",
+        }),
+    )
+    mlflow.log_input(dataset, context="training")
 
 
 def predict_items_from_user(model, data, user_id, count: int = 3, exclude_work_ids=None, user_items_row=None):
