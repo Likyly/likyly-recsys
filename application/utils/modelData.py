@@ -497,11 +497,12 @@ def _log_training_run_to_mlflow(
             )
         experiment = mlflow.get_experiment_by_name(registered_name)
         client = MlflowClient()
+        tuning_experiment_id = _ensure_tuning_experiment(client, registered_name, client_id, product_type, client_label)
         client.set_experiment_tag(
             experiment.experiment_id, "mlflow.note.content",
-            model_description + _chart_views_markdown(experiment.experiment_id),
+            model_description + _chart_views_markdown(experiment.experiment_id, tuning_experiment_id),
         )
-        _ensure_chart_views(client, experiment.experiment_id)
+        _ensure_chart_views(client, experiment.experiment_id, tuning_experiment_id)
         for key, value in identity_tags.items():
             client.set_experiment_tag(experiment.experiment_id, key, value)
 
@@ -538,7 +539,7 @@ def _log_training_run_to_mlflow(
             mlflow.log_artifact(file_path)
 
         if tuning_trials:
-            _log_tuning_trials(client, experiment.experiment_id, run_id, version_id, tuning_trials,
+            _log_tuning_trials(client, tuning_experiment_id, run_id, version_id, tuning_trials,
                                chosen={"factors": factors, "regularization": regularization, "iterations": iterations})
 
         try:
@@ -575,9 +576,37 @@ def _fr_percent(value):
     return f"{value * 100:.1f} %".replace(".", ",")
 
 
+def _ensure_tuning_experiment(client, registered_name, client_id, product_type, client_label):
+    """The catalogue's settings trials live in their own experiment, "<model> · réglages",
+    one flat run per trial: nested under the version's run, MLflow would fold them away and
+    leave them out of its charts."""
+    name = f"{registered_name} · réglages"
+    experiment = client.get_experiment_by_name(name)
+    if experiment is None:
+        artifact_root = os.environ.get("MLFLOW_ARTIFACT_ROOT")
+        experiment_id = client.create_experiment(
+            name,
+            artifact_location=(
+                f"{artifact_root.rstrip('/')}/client_{client_id}/{product_type}/reglages" if artifact_root else None
+            ),
+        )
+    else:
+        experiment_id = experiment.experiment_id
+    client.set_experiment_tag(experiment_id, "mlflow.note.content", (
+        f"Réglages ALS essayés à chaque entraînement du catalogue « {product_type} » du client "
+        f"« {client_label} » (id {client_id}). Un run = un réglage (tags.type = \"essai\"), noté par sa "
+        "precision@10 moyenne sur 2 découpages 80/20 ; le tag « version » dit pour quel entraînement, "
+        "« retenu = oui » marque le réglage choisi."
+        f"\n\n**Graphique** : [réglages → precision@10]({chart_view_route(experiment_id, CHART_VIEW_TUNING)})"
+    ))
+    for key, value in {"source": "likyly", "client_id": str(client_id), "catalogue": product_type}.items():
+        client.set_experiment_tag(experiment_id, key, value)
+    return experiment_id
+
+
 def _log_tuning_trials(client, experiment_id, parent_run_id, version_id, trials, chosen):
-    """One child run per setting tried, nested under the version's run: what the
-    "réglages" chart view plots (precision against factors / regularization / iterations)."""
+    """One run per setting tried, in the catalogue's "réglages" experiment: what its chart
+    view plots (precision against factors / regularization / iterations)."""
     from mlflow.entities import Metric, Param
     now = int(time.time() * 1000)
     for trial in trials:
@@ -585,7 +614,7 @@ def _log_tuning_trials(client, experiment_id, parent_run_id, version_id, trials,
         child = client.create_run(
             experiment_id,
             run_name=f"v{version_id} · f{settings['factors']} r{settings['regularization']} it{settings['iterations']}",
-            tags={"mlflow.parentRunId": parent_run_id, "mlflow.user": MLFLOW_AUTHOR, "source": "likyly",
+            tags={"run_version": parent_run_id, "mlflow.user": MLFLOW_AUTHOR, "source": "likyly",
                   "type": "essai", "version": str(version_id),
                   "retenu": "oui" if settings == chosen else "non"},
         )
@@ -645,9 +674,9 @@ def _chart_view_state(view):
     }
 
 
-def _ensure_chart_views(client, experiment_id):
-    for view in (CHART_VIEW_VERSIONS, CHART_VIEW_TUNING):
-        client.set_experiment_tag(experiment_id, f"mlflow.sharedViewState.{view}",
+def _ensure_chart_views(client, experiment_id, tuning_experiment_id):
+    for view, target in ((CHART_VIEW_VERSIONS, experiment_id), (CHART_VIEW_TUNING, tuning_experiment_id)):
+        client.set_experiment_tag(target, f"mlflow.sharedViewState.{view}",
                                   json.dumps(_chart_view_state(view), ensure_ascii=False))
 
 
@@ -655,11 +684,11 @@ def chart_view_route(experiment_id, view):
     return f"#/experiments/{experiment_id}/runs?viewStateShareKey={view}&compareRunsMode=CHART"
 
 
-def _chart_views_markdown(experiment_id):
+def _chart_views_markdown(experiment_id, tuning_experiment_id):
     return (
         "\n\n**Graphiques** : "
         f"[versions du modèle]({chart_view_route(experiment_id, CHART_VIEW_VERSIONS)}) · "
-        f"[recherche des réglages]({chart_view_route(experiment_id, CHART_VIEW_TUNING)})"
+        f"[recherche des réglages]({chart_view_route(tuning_experiment_id, CHART_VIEW_TUNING)})"
     )
 
 

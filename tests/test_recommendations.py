@@ -494,16 +494,18 @@ def test_training_is_recorded_in_a_sqlite_mlflow_store(http, seeded, tmp_path, m
     assert run.data.params["factors"] in ("2", "4") and "choisis parmi 2 essais" in version.description
     trials = json.loads(open(client.download_artifacts(run.info.run_id, "reglages_essais.json", str(tmp_path))).read())
     assert len(trials) == 2 and trials[0]["precision_at_k"] >= trials[1]["precision_at_k"]
-    # Each trial is a child run of the version, for the settings charts.
-    children = client.search_runs([experiment.experiment_id], 'tags.type = "essai"')
-    assert len(children) == 2 and {c.data.tags["mlflow.parentRunId"] for c in children} == {run.info.run_id}
+    # Each trial is a flat run of the catalogue's "réglages" experiment, for the settings charts.
+    tuning = client.get_experiment_by_name(f"{name} · réglages")
+    children = client.search_runs([tuning.experiment_id], 'tags.type = "essai"')
+    assert len(children) == 2 and {c.data.tags["run_version"] for c in children} == {run.info.run_id}
+    assert not client.search_runs([experiment.experiment_id], 'tags.type = "essai"')
     assert sum(c.data.tags["retenu"] == "oui" for c in children) == 1
     assert all({"factors", "regularization", "iterations"} <= set(c.data.params) for c in children)
     # The version's report card against the popular-products baseline.
     for key in ("ndcg_at_k", "popularity_precision_at_k", "popularity_ndcg_at_k"):
         assert key in run.data.metrics
     # Ready-made chart views, opened from the experiment description.
-    for view in ("versions", "reglages"):
-        state = json.loads(experiment.tags[f"mlflow.sharedViewState.{view}"])
+    for view, target in (("versions", experiment), ("reglages", tuning)):
+        state = json.loads(target.tags[f"mlflow.sharedViewState.{view}"])
         assert state["compareRunCharts"] and state["runsHiddenMode"] == "SHOW_ALL"
         assert f"viewStateShareKey={view}" in experiment.tags["mlflow.note.content"]
