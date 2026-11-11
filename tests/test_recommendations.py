@@ -398,6 +398,21 @@ def test_als_settings_are_searched_and_the_best_one_wins():
     assert best == {k: v for k, v in max(trials, key=lambda t: t["precision_at_k"]).items() if k != "precision_at_k"}
 
 
+def test_the_popularity_baseline_recommends_popular_unseen_products():
+    import numpy as np
+    from scipy.sparse import csr_matrix
+    # Product 2 is the most popular, then 0, then 1; product 3 never seen.
+    train = csr_matrix(np.array([[1, 0, 1, 0], [1, 0, 1, 0], [0, 1, 1, 0]], dtype=np.float32))
+    ids, _ = modelData.PopularityBaseline(train).recommend(np.array([0, 2]), train[[0, 2]], N=2)
+    assert ids.tolist() == [[1, 3], [0, 3]]
+
+
+def test_a_tuned_model_beats_the_popularity_baseline_on_structured_data():
+    scores = modelData.evaluate_against_baseline(_taste_matrix(), factors=8, regularization=1.0, iterations=15)
+    assert scores["precision_at_k"] > scores["popularity_precision_at_k"]
+    assert 0 < scores["ndcg_at_k"] <= 1
+
+
 def test_too_little_data_falls_back_to_the_default_settings():
     from scipy.sparse import csr_matrix
     import numpy as np
@@ -454,7 +469,8 @@ def test_training_is_recorded_in_a_sqlite_mlflow_store(http, seeded, tmp_path, m
 
     name = f"client_{seeded.client_id}_{Q['data_product_type']}"
     client = MlflowClient(tracking_uri=f"sqlite:///{tmp_path}/mlflow.db")
-    (run,) = client.search_runs([client.get_experiment_by_name(name).experiment_id])
+    experiment = client.get_experiment_by_name(name)
+    (run,) = client.search_runs([experiment.experiment_id], 'tags.type = "version"')
     assert run.data.tags["promoted"] == "True" and run.data.params["version_id"] == str(result["version_id"])
     assert list((tmp_path / "artifacts" / f"client_{seeded.client_id}" / Q["data_product_type"]).rglob("*.npz"))
     assert client.get_model_version_by_alias(name, "production").run_id == run.info.run_id
@@ -478,3 +494,16 @@ def test_training_is_recorded_in_a_sqlite_mlflow_store(http, seeded, tmp_path, m
     assert run.data.params["factors"] in ("2", "4") and "choisis parmi 2 essais" in version.description
     trials = json.loads(open(client.download_artifacts(run.info.run_id, "reglages_essais.json", str(tmp_path))).read())
     assert len(trials) == 2 and trials[0]["precision_at_k"] >= trials[1]["precision_at_k"]
+    # Each trial is a child run of the version, for the settings charts.
+    children = client.search_runs([experiment.experiment_id], 'tags.type = "essai"')
+    assert len(children) == 2 and {c.data.tags["mlflow.parentRunId"] for c in children} == {run.info.run_id}
+    assert sum(c.data.tags["retenu"] == "oui" for c in children) == 1
+    assert all({"factors", "regularization", "iterations"} <= set(c.data.params) for c in children)
+    # The version's report card against the popular-products baseline.
+    for key in ("ndcg_at_k", "popularity_precision_at_k", "popularity_ndcg_at_k"):
+        assert key in run.data.metrics
+    # Ready-made chart views, opened from the experiment description.
+    for view in ("versions", "reglages"):
+        state = json.loads(experiment.tags[f"mlflow.sharedViewState.{view}"])
+        assert state["compareRunCharts"] and state["runsHiddenMode"] == "SHOW_ALL"
+        assert f"viewStateShareKey={view}" in experiment.tags["mlflow.note.content"]

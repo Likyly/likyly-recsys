@@ -1,5 +1,5 @@
 from implicit.cpu.als import AlternatingLeastSquares
-from implicit.evaluation import train_test_split as als_train_test_split, precision_at_k
+from implicit.evaluation import train_test_split as als_train_test_split, precision_at_k, ndcg_at_k
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
@@ -222,6 +222,51 @@ def load_model(data_work_type, client_id=DEMO_CLIENT_ID):
     return AlternatingLeastSquares.load(absolute_path_model)
 
 
+class PopularityBaseline:
+    """The naive recommender a model has to beat: every visitor gets the products most
+    interacted with (in the training part) that they haven't interacted with yet. Same
+    recommend() interface as an implicit model, so implicit's metrics score it alike."""
+
+    def __init__(self, train):
+        counts = np.asarray((train > 0).sum(axis=0)).ravel()
+        self._order = np.argsort(-counts, kind="stable").astype(np.int32)
+
+    def recommend(self, userid, user_items, N=10, filter_already_liked_items=True, **kwargs):
+        rows = []
+        for i in range(len(np.atleast_1d(userid))):
+            seen = set(user_items[i].indices) if filter_already_liked_items else set()
+            # Seen products pad the end (never a hit: they're in train, not test), so every
+            # row has the same length even for a visitor who has seen almost everything.
+            unseen = [item for item in self._order if item not in seen]
+            rows.append((unseen + [item for item in self._order if item in seen])[:N])
+        ids = np.array(rows, dtype=np.int32)
+        return ids, np.ones(ids.shape, dtype=np.float32)
+
+
+def evaluate_against_baseline(interactions_matrix, factors, regularization, iterations, k=10,
+                              split_seed=ALS_CONTROL_SPLIT):
+    """The version's report card, on the control split: its precision@k (same figure as
+    evaluate_model) and ndcg@k (rewards hits ranked higher), and the same two for the
+    popular-products baseline."""
+    train, test = als_train_test_split(interactions_matrix, train_percentage=0.8, random_state=split_seed)
+    model = AlternatingLeastSquares(
+        factors=factors, regularization=regularization, iterations=iterations, random_state=split_seed
+    )
+    model.fit(train)
+    baseline = PopularityBaseline(train)
+
+    def score(metric, recommender):
+        value = metric(recommender, train, test, K=k, show_progress=False)
+        return float(value) if value is not None and np.isfinite(value) else None
+
+    return {
+        "precision_at_k": score(precision_at_k, model),
+        "ndcg_at_k": score(ndcg_at_k, model),
+        "popularity_precision_at_k": score(precision_at_k, baseline),
+        "popularity_ndcg_at_k": score(ndcg_at_k, baseline),
+    }
+
+
 def tune_als(interactions_matrix, k=10, grid=None, splits=ALS_TUNING_SPLITS, time_budget_s=ALS_TUNING_TIME_BUDGET_S):
     """Tries every setting of the grid and returns (best settings, trials). Each trial is
     the mean precision@k over `splits`. Returns the fallback constants and no trials when
@@ -270,9 +315,10 @@ def train_and_maybe_promote_model(
         regularization = best["regularization"] if regularization is None else regularization
         iterations = best["iterations"] if iterations is None else iterations
 
-    _, candidate_precision = evaluate_model(
+    control_scores = evaluate_against_baseline(
         interactions, factors=factors, regularization=regularization, iterations=iterations, k=k,
     )
+    candidate_precision = control_scores["precision_at_k"]
 
     # The held-out split above is only for an honest precision@k figure - the artifact we
     # actually serve is trained on 100% of the available data.
@@ -312,7 +358,7 @@ def train_and_maybe_promote_model(
         precision_at_k=candidate_precision, num_users=num_users,
         num_items=num_items, num_interactions=int(interactions.nnz),
         promoted=is_improvement, triggered_by=triggered_by, interactions=interactions,
-        tuning_trials=tuning_trials,
+        tuning_trials=tuning_trials, control_scores=control_scores,
     )
 
     return {
@@ -359,7 +405,7 @@ def _log_training_run_to_mlflow(
     factors, regularization, iterations, precision_at_k,
     num_users, num_items, num_interactions, promoted,
     triggered_by=MANUAL, trained_at=None, interactions=None,
-    client_name=None, catalog_items=None, tuning_trials=None,
+    client_name=None, catalog_items=None, tuning_trials=None, control_scores=None,
 ):
     """Logs this training run to MLflow for visual/historical inspection: params, metrics,
     the dataset it learned from, the model artifact, a Model Registry version and (if
@@ -386,7 +432,18 @@ def _log_training_run_to_mlflow(
         trained_at = trained_at or datetime.utcnow()
         trained_label = trained_at.strftime("%d/%m/%Y %H:%M UTC")
         trigger_label = "automatique" if triggered_by == "auto" else "manuel"
-        precision_label = f"{precision_at_k * 100:.1f} %".replace(".", ",") if precision_at_k is not None else "non mesurée"
+        precision_label = _fr_percent(precision_at_k) if precision_at_k is not None else "non mesurée"
+        control_scores = control_scores or {}
+        popularity = control_scores.get("popularity_precision_at_k")
+        lift = precision_at_k / popularity if precision_at_k is not None and popularity else None
+        if popularity is None:
+            baseline_line = ""
+        elif lift is not None:
+            lift_label = f"{lift:.1f}".replace(".", ",")
+            baseline_line = (f"\nRéférence « produits populaires » : {_fr_percent(popularity)}, "
+                             f"le modèle fait {lift_label}× mieux.")
+        else:
+            baseline_line = f"\nRéférence « produits populaires » : {_fr_percent(popularity)}."
 
         # Same tags on the registered model, the version and the run: filterable everywhere
         # (e.g. tags.catalogue = 'movies' in the runs search box).
@@ -416,6 +473,7 @@ def _log_training_run_to_mlflow(
             + (f" sur {_fmt_fr_number(catalog_items)} au catalogue" if catalog_items is not None else "")
             + f").\nPrecision@10 : {precision_label}. "
             + ("Mise en production." if promoted else "Non promue : moins précise que la version en place.")
+            + baseline_line
             + f"\nRéglages : factors={factors}, regularization={regularization}, iterations={iterations}"
             + (f", choisis parmi {len(tuning_trials)} essais sur ce catalogue." if tuning_trials else ", fixés.")
         )
@@ -439,7 +497,11 @@ def _log_training_run_to_mlflow(
             )
         experiment = mlflow.get_experiment_by_name(registered_name)
         client = MlflowClient()
-        client.set_experiment_tag(experiment.experiment_id, "mlflow.note.content", model_description)
+        client.set_experiment_tag(
+            experiment.experiment_id, "mlflow.note.content",
+            model_description + _chart_views_markdown(experiment.experiment_id),
+        )
+        _ensure_chart_views(client, experiment.experiment_id)
         for key, value in identity_tags.items():
             client.set_experiment_tag(experiment.experiment_id, key, value)
 
@@ -449,7 +511,7 @@ def _log_training_run_to_mlflow(
             start_time=int(trained_at.replace(tzinfo=trained_at.tzinfo or timezone.utc).timestamp() * 1000),
             run_name=f"v{version_id}",
             tags={**version_tags, "mlflow.user": MLFLOW_AUTHOR, "mlflow.note.content": version_description,
-                  "promoted": str(promoted)},
+                  "promoted": str(promoted), "type": "version"},
         )
         run_id = run.info.run_id
         with mlflow.start_run(run_id=run_id):
@@ -462,6 +524,10 @@ def _log_training_run_to_mlflow(
                 metrics["catalog_items"] = catalog_items
             if precision_at_k is not None:
                 metrics["precision_at_k"] = precision_at_k
+            metrics.update({key: value for key, value in control_scores.items()
+                            if key != "precision_at_k" and value is not None})
+            if lift is not None:
+                metrics["lift_vs_popularity"] = lift
             mlflow.log_metrics(metrics)
             if tuning_trials:
                 # Every setting tried, best first: open reglages_essais.json in the run's artifacts.
@@ -470,6 +536,10 @@ def _log_training_run_to_mlflow(
             if interactions is not None:
                 _log_training_dataset(interactions, client_id, product_type)
             mlflow.log_artifact(file_path)
+
+        if tuning_trials:
+            _log_tuning_trials(client, experiment.experiment_id, run_id, version_id, tuning_trials,
+                               chosen={"factors": factors, "regularization": regularization, "iterations": iterations})
 
         try:
             client.create_registered_model(registered_name, tags=identity_tags, description=model_description)
@@ -499,6 +569,98 @@ def _log_training_run_to_mlflow(
             client.set_registered_model_alias(registered_name, "production", model_version.version)
     except Exception as error:
         print(f"MLflow logging skipped (non-fatal): {error}")
+
+
+def _fr_percent(value):
+    return f"{value * 100:.1f} %".replace(".", ",")
+
+
+def _log_tuning_trials(client, experiment_id, parent_run_id, version_id, trials, chosen):
+    """One child run per setting tried, nested under the version's run: what the
+    "réglages" chart view plots (precision against factors / regularization / iterations)."""
+    from mlflow.entities import Metric, Param
+    now = int(time.time() * 1000)
+    for trial in trials:
+        settings = {key: trial[key] for key in ("factors", "regularization", "iterations")}
+        child = client.create_run(
+            experiment_id,
+            run_name=f"v{version_id} · f{settings['factors']} r{settings['regularization']} it{settings['iterations']}",
+            tags={"mlflow.parentRunId": parent_run_id, "mlflow.user": MLFLOW_AUTHOR, "source": "likyly",
+                  "type": "essai", "version": str(version_id),
+                  "retenu": "oui" if settings == chosen else "non"},
+        )
+        client.log_batch(
+            child.info.run_id,
+            metrics=[Metric("precision_at_k", trial["precision_at_k"], now, 0)],
+            params=[Param(key, str(value)) for key, value in settings.items()],
+        )
+        client.set_terminated(child.info.run_id)
+
+
+# Ready-made chart views of a catalogue's experiment, stored as experiment tags the MLflow UI
+# opens with ?viewStateShareKey=<key> (its "share view" feature): the versions over time, and
+# the settings search of every training.
+CHART_VIEW_VERSIONS = "versions"
+CHART_VIEW_TUNING = "reglages"
+
+
+def _chart(chart_type, section, name, **fields):
+    return {"uuid": f"{section}-{name}", "type": chart_type, "metricSectionId": section, "deleted": False,
+            "isGenerated": False, "displayName": name, "runsCountToCompare": 100, **fields}
+
+
+def _chart_view_state(view):
+    section = f"likyly-{view}"
+    if view == CHART_VIEW_VERSIONS:
+        title, search = "Versions du modèle", 'tags.type = "version"'
+        charts = [
+            _chart("BAR", section, "Precision@10 par version", metricKey="precision_at_k"),
+            _chart("BAR", section, "Gain sur « produits populaires » (×)", metricKey="lift_vs_popularity"),
+            _chart("SCATTER", section, "Precision@10 selon la quantité de données",
+                   xaxis={"key": "num_interactions", "type": "METRIC"}, yaxis={"key": "precision_at_k", "type": "METRIC"}),
+            _chart("BAR", section, "NDCG@10 par version", metricKey="ndcg_at_k"),
+            _chart("DIFFERENCE", section, "Écarts entre versions", chartName="Écarts entre versions",
+                   compareGroups=["Model metrics", "Parameters"], showChangeFromBaseline=True,
+                   showDifferencesOnly=False, baselineColumnUuid=""),
+        ]
+    else:
+        title, search = "Recherche des réglages", 'tags.type = "essai"'
+        charts = [
+            _chart("PARALLEL", section, "Réglages → precision@10",
+                   selectedParams=["factors", "regularization", "iterations"],
+                   selectedMetrics=["precision_at_k"], showAllRuns=True),
+            _chart("SCATTER", section, "Precision@10 selon factors",
+                   xaxis={"key": "factors", "type": "PARAM"}, yaxis={"key": "precision_at_k", "type": "METRIC"}),
+            _chart("SCATTER", section, "Precision@10 selon regularization",
+                   xaxis={"key": "regularization", "type": "PARAM"}, yaxis={"key": "precision_at_k", "type": "METRIC"}),
+            _chart("SCATTER", section, "Precision@10 selon iterations",
+                   xaxis={"key": "iterations", "type": "PARAM"}, yaxis={"key": "precision_at_k", "type": "METRIC"}),
+        ]
+    return {
+        "searchFilter": search, "orderByKey": "attributes.start_time", "orderByAsc": True,
+        "compareRunCharts": charts,
+        "compareRunSections": [{"uuid": section, "name": title, "display": True, "isReordered": True,
+                                "deleted": False, "isGenerated": False}],
+        "isAccordionReordered": True, "runsHiddenMode": "SHOW_ALL", "hideEmptyCharts": False,
+    }
+
+
+def _ensure_chart_views(client, experiment_id):
+    for view in (CHART_VIEW_VERSIONS, CHART_VIEW_TUNING):
+        client.set_experiment_tag(experiment_id, f"mlflow.sharedViewState.{view}",
+                                  json.dumps(_chart_view_state(view), ensure_ascii=False))
+
+
+def chart_view_route(experiment_id, view):
+    return f"#/experiments/{experiment_id}/runs?viewStateShareKey={view}&compareRunsMode=CHART"
+
+
+def _chart_views_markdown(experiment_id):
+    return (
+        "\n\n**Graphiques** : "
+        f"[versions du modèle]({chart_view_route(experiment_id, CHART_VIEW_VERSIONS)}) · "
+        f"[recherche des réglages]({chart_view_route(experiment_id, CHART_VIEW_TUNING)})"
+    )
 
 
 def _log_training_dataset(interactions, client_id, product_type):
