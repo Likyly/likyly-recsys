@@ -385,7 +385,8 @@ def _taste_matrix(users=80, items=60, seed=0):
         own = rng.choice(np.arange(group * 15, group * 15 + 15), 8, replace=False)
         other = rng.choice(items, 2, replace=False)
         for i in set(own) | set(other):
-            rows.append(u); cols.append(int(i))
+            rows.append(u)
+            cols.append(int(i))
     return csr_matrix((np.ones(len(rows), dtype=np.float32), (rows, cols)), shape=(users, items))
 
 
