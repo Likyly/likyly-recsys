@@ -332,7 +332,7 @@ def _log_training_run_to_mlflow(
         trained_at = trained_at or datetime.utcnow()
         trained_label = trained_at.strftime("%d/%m/%Y %H:%M UTC")
         trigger_label = "automatique" if triggered_by == "auto" else "manuel"
-        precision_label = f"{precision_at_k * 100:.1f} %" if precision_at_k is not None else "non mesurée"
+        precision_label = f"{precision_at_k * 100:.1f} %".replace(".", ",") if precision_at_k is not None else "non mesurée"
 
         # Same tags on the registered model, the version and the run: filterable everywhere
         # (e.g. tags.catalogue = 'movies' in the runs search box).
