@@ -1,3 +1,4 @@
+import os
 """Recommendations: automatic strategy selection, recommendation_id, placement, string ids,
 attribution trace, legacy strategy endpoints."""
 import random
@@ -372,6 +373,11 @@ def test_the_stored_trace_is_enough_to_compute_ctr_conversion_and_attributed_rev
     assert by_placement["product_page"]["clicks"] == 0
 
 
+def test_model_files_are_stored_per_client_then_catalogue():
+    path = modelData._versioned_model_path("movies", 7, 3)
+    assert path.endswith(os.path.join("model", "client_7", "movies", "v3.npz"))
+
+
 def test_training_promotes_without_dvc_or_mlflow(http, seeded, tmp_path, monkeypatch):
     """Production as it runs: no `dvc` binary in the image, no MLflow server configured.
     Neither is part of serving, so neither may stop a new version from going live (a
@@ -407,7 +413,7 @@ def test_training_is_recorded_in_a_sqlite_mlflow_store(http, seeded, tmp_path, m
     client = MlflowClient(tracking_uri=f"sqlite:///{tmp_path}/mlflow.db")
     (run,) = client.search_runs([client.get_experiment_by_name(name).experiment_id])
     assert run.data.tags["promoted"] == "True" and run.data.params["version_id"] == str(result["version_id"])
-    assert list((tmp_path / "artifacts" / name).rglob("*.npz"))
+    assert list((tmp_path / "artifacts" / f"client_{seeded.client_id}" / Q["data_product_type"]).rglob("*.npz"))
     assert client.get_model_version_by_alias(name, "production").run_id == run.info.run_id
 
     # Identifiable at a glance: who made it, for which client and catalogue, on what data.

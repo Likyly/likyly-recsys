@@ -177,11 +177,11 @@ def _model_path(data_work_type, client_id):
 
 
 def _versioned_model_path(data_work_type, client_id, version_id):
-    # Namespaced by client (so two clients can't collide) and suffixed by version id (so
-    # a new training run never overwrites a previous artifact still referenced by the
-    # model_versions table - a rollback needs the old file to still exist on disk).
+    # model/client_<id>/<catalogue>/v<version>.npz: one folder per client, one per catalogue
+    # inside it, one file per version (a new training run never overwrites a previous
+    # artifact still referenced by the model_versions table - a rollback needs it on disk).
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    relative_path_model = f"../../model/client_{client_id}/{data_work_type}_users_rating_model_v{version_id}.npz"
+    relative_path_model = f"../../model/client_{client_id}/{data_work_type}/v{version_id}.npz"
     return os.path.abspath(os.path.join(current_dir, relative_path_model))
 
 
@@ -373,9 +373,12 @@ def _log_training_run_to_mlflow(
             # Without an explicit location MLflow would store artifacts under ./mlruns,
             # inside the container - lost on the next deploy.
             artifact_root = os.environ.get("MLFLOW_ARTIFACT_ROOT")
+            # Same layout as the served files: artifacts/client_<id>/<catalogue>/<run id>/.
             mlflow.create_experiment(
                 registered_name,
-                artifact_location=f"{artifact_root.rstrip('/')}/{registered_name}" if artifact_root else None,
+                artifact_location=(
+                    f"{artifact_root.rstrip('/')}/client_{client_id}/{product_type}" if artifact_root else None
+                ),
             )
         experiment = mlflow.get_experiment_by_name(registered_name)
         client = MlflowClient()
