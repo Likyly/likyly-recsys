@@ -36,7 +36,9 @@ Recommendations combine:
   (sentence-transformers), computed at ingestion time and stored directly in Postgres - no separate vector
   database to run.
 - **Collaborative filtering**: implicit ALS, with model versioning, promotion gating (a newly trained model only
-  goes live if it beats the current production version) and MLflow experiment tracking.
+  goes live if it beats the current production version) and MLflow experiment tracking. Each training searches
+  its ALS settings (factors, regularization, iterations - 24 combinations, held-out precision@10) on that
+  catalogue's own data; catalogues with under 100 visitor x product pairs use the fallback settings.
 - **Hybrid**: content-based and collaborative blended by a tunable `alpha`.
 - **Session-based**: recommendations from a list of recently viewed product IDs, no `user_id` or login required.
 

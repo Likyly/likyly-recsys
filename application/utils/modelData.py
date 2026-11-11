@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import time
 import json
+import itertools
 
 import sys
 import os
@@ -47,9 +48,27 @@ timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 # Confidence weighting for implicit feedback: each of a tenant's registered event types
 # (purchase, view, or any custom type - see EVENT_TIER_WEIGHTS/get_client_event_type_weights
 # in db.py) has its own weight, applied per-row in build_user_item_matrix below.
-ALS_FACTORS = 64
-ALS_REGULARIZATION = 0.01
-ALS_ITERATIONS = 20
+#
+# ALS settings are searched at every training (tune_als below), per client and catalogue:
+# the right model size depends on how much data a catalogue has (150 visitors overfit a
+# 64-factor model; a large shop needs more). These constants are only the fallback, used
+# when there is too little data to compare settings - the winner on the LIKYLY demo
+# movies catalogue (see the "client_1_movies · réglages" MLflow experiment).
+ALS_FACTORS = 8
+ALS_REGULARIZATION = 10.0
+ALS_ITERATIONS = 30
+
+# Settings tried at each training: 4 x 3 x 2 = 24, each scored on ALS_TUNING_SPLITS
+# held-out splits (~0.1 s per fit on the demo catalogue). alpha isn't searched: higher
+# values never helped there. Splits differ from the control split (seed 42) that gives
+# the version's reported precision, so the reported figure isn't flattered by the choice.
+ALS_TUNING_GRID = {"factors": [8, 16, 32, 64], "regularization": [0.1, 1.0, 10.0], "iterations": [15, 30]}
+ALS_TUNING_SPLITS = (7, 123)
+ALS_CONTROL_SPLIT = 42
+# A large catalogue stops searching after this long and keeps the best setting so far.
+ALS_TUNING_TIME_BUDGET_S = 120
+# Below this many visitor x product pairs a 20 % held-out split is too thin to rank settings.
+ALS_TUNING_MIN_PAIRS = 100
 
 # How much weight the semantic embedding signal gets versus TF-IDF when blending content
 # scores in get_rec_content - see app.py. Equal weight by default: TF-IDF stays valuable
@@ -156,12 +175,14 @@ def create_model(interactions_matrix, factors=ALS_FACTORS, regularization=ALS_RE
     return model
 
 
-def evaluate_model(interactions_matrix, factors=ALS_FACTORS, regularization=ALS_REGULARIZATION, iterations=ALS_ITERATIONS, k=10):
-    """Held-out precision@k - the implicit-feedback analog of the RMSE evaluation the
-    previous explicit Spotlight model used, since RMSE doesn't apply to ranking models."""
-    train, test = als_train_test_split(interactions_matrix, train_percentage=0.8, random_state=42)
+def evaluate_model(interactions_matrix, factors=ALS_FACTORS, regularization=ALS_REGULARIZATION, iterations=ALS_ITERATIONS, k=10,
+                   split_seed=ALS_CONTROL_SPLIT):
+    """Held-out precision@k: 20 % of the visitor x product pairs are hidden, a model is
+    trained on the other 80 %, and precision@k counts how many of each visitor's top-k
+    are hidden pairs (divided by min(k, hidden pairs of that visitor))."""
+    train, test = als_train_test_split(interactions_matrix, train_percentage=0.8, random_state=split_seed)
     model = AlternatingLeastSquares(
-        factors=factors, regularization=regularization, iterations=iterations, random_state=42
+        factors=factors, regularization=regularization, iterations=iterations, random_state=split_seed
     )
     model.fit(train)
     precision = precision_at_k(model, train, test, K=k, show_progress=False)
@@ -201,12 +222,35 @@ def load_model(data_work_type, client_id=DEMO_CLIENT_ID):
     return AlternatingLeastSquares.load(absolute_path_model)
 
 
+def tune_als(interactions_matrix, k=10, grid=None, splits=ALS_TUNING_SPLITS, time_budget_s=ALS_TUNING_TIME_BUDGET_S):
+    """Tries every setting of the grid and returns (best settings, trials). Each trial is
+    the mean precision@k over `splits`. Returns the fallback constants and no trials when
+    the catalogue has too few pairs to tell settings apart."""
+    fallback = {"factors": ALS_FACTORS, "regularization": ALS_REGULARIZATION, "iterations": ALS_ITERATIONS}
+    if interactions_matrix.nnz < ALS_TUNING_MIN_PAIRS:
+        return fallback, []
+    grid = grid or ALS_TUNING_GRID
+    keys = list(grid)
+    combos = [dict(zip(keys, values)) for values in itertools.product(*(grid[key] for key in keys))]
+    trials, started = [], time.monotonic()
+    for settings in combos:
+        if trials and time.monotonic() - started > time_budget_s:
+            break
+        scores = []
+        for seed in splits:
+            _, score = evaluate_model(interactions_matrix, k=k, split_seed=seed, **settings)
+            scores.append(float(score) if score is not None and np.isfinite(score) else 0.0)
+        trials.append({**settings, "precision_at_k": float(np.mean(scores))})
+    best = max(trials, key=lambda t: t["precision_at_k"])
+    return {key: best[key] for key in keys}, trials
+
+
 def train_and_maybe_promote_model(
     product_type,
     client_id=DEMO_CLIENT_ID,
-    factors=ALS_FACTORS,
-    regularization=ALS_REGULARIZATION,
-    iterations=ALS_ITERATIONS,
+    factors=None,
+    regularization=None,
+    iterations=None,
     k=10,
     triggered_by=MANUAL,
 ):
@@ -216,6 +260,15 @@ def train_and_maybe_promote_model(
     degrades production. Every run is recorded regardless of outcome, so a rejected
     candidate stays visible in the version history instead of disappearing."""
     interactions = build_user_item_matrix(product_type, client_id=client_id)
+
+    # Settings left out are searched on this catalogue's own data (tune_als); passing all
+    # three trains with exactly those.
+    tuning_trials = []
+    if factors is None or regularization is None or iterations is None:
+        best, tuning_trials = tune_als(interactions, k=k)
+        factors = best["factors"] if factors is None else factors
+        regularization = best["regularization"] if regularization is None else regularization
+        iterations = best["iterations"] if iterations is None else iterations
 
     _, candidate_precision = evaluate_model(
         interactions, factors=factors, regularization=regularization, iterations=iterations, k=k,
@@ -259,6 +312,7 @@ def train_and_maybe_promote_model(
         precision_at_k=candidate_precision, num_users=num_users,
         num_items=num_items, num_interactions=int(interactions.nnz),
         promoted=is_improvement, triggered_by=triggered_by, interactions=interactions,
+        tuning_trials=tuning_trials,
     )
 
     return {
@@ -305,7 +359,7 @@ def _log_training_run_to_mlflow(
     factors, regularization, iterations, precision_at_k,
     num_users, num_items, num_interactions, promoted,
     triggered_by=MANUAL, trained_at=None, interactions=None,
-    client_name=None, catalog_items=None,
+    client_name=None, catalog_items=None, tuning_trials=None,
 ):
     """Logs this training run to MLflow for visual/historical inspection: params, metrics,
     the dataset it learned from, the model artifact, a Model Registry version and (if
@@ -362,11 +416,14 @@ def _log_training_run_to_mlflow(
             + (f" sur {_fmt_fr_number(catalog_items)} au catalogue" if catalog_items is not None else "")
             + f").\nPrecision@10 : {precision_label}. "
             + ("Mise en production." if promoted else "Non promue : moins précise que la version en place.")
+            + f"\nRéglages : factors={factors}, regularization={regularization}, iterations={iterations}"
+            + (f", choisis parmi {len(tuning_trials)} essais sur ce catalogue." if tuning_trials else ", fixés.")
         )
         version_tags = {
             **identity_tags, "version": str(version_id), "declencheur": trigger_label,
             "entraine_le": trained_at.strftime("%Y-%m-%d %H:%M UTC"),
             "promue": "oui" if promoted else "non",
+            "reglages": f"auto ({len(tuning_trials)} essais)" if tuning_trials else "fixes",
         }
 
         if mlflow.get_experiment_by_name(registered_name) is None:
@@ -406,6 +463,10 @@ def _log_training_run_to_mlflow(
             if precision_at_k is not None:
                 metrics["precision_at_k"] = precision_at_k
             mlflow.log_metrics(metrics)
+            if tuning_trials:
+                # Every setting tried, best first: open reglages_essais.json in the run's artifacts.
+                mlflow.log_dict(sorted(tuning_trials, key=lambda t: -t["precision_at_k"]), "reglages_essais.json")
+                mlflow.log_metric("tuning_trials", len(tuning_trials))
             if interactions is not None:
                 _log_training_dataset(interactions, client_id, product_type)
             mlflow.log_artifact(file_path)

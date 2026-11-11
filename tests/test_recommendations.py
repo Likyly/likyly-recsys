@@ -1,3 +1,4 @@
+import json
 import os
 """Recommendations: automatic strategy selection, recommendation_id, placement, string ids,
 attribution trace, legacy strategy endpoints."""
@@ -373,6 +374,44 @@ def test_the_stored_trace_is_enough_to_compute_ctr_conversion_and_attributed_rev
     assert by_placement["product_page"]["clicks"] == 0
 
 
+def _taste_matrix(users=80, items=60, seed=0):
+    """Visitors in 4 taste groups, each mostly interacting with its own 15 products."""
+    import numpy as np
+    from scipy.sparse import csr_matrix
+    rng = np.random.default_rng(seed)
+    rows, cols = [], []
+    for u in range(users):
+        group = u % 4
+        own = rng.choice(np.arange(group * 15, group * 15 + 15), 8, replace=False)
+        other = rng.choice(items, 2, replace=False)
+        for i in set(own) | set(other):
+            rows.append(u); cols.append(int(i))
+    return csr_matrix((np.ones(len(rows), dtype=np.float32), (rows, cols)), shape=(users, items))
+
+
+def test_als_settings_are_searched_and_the_best_one_wins():
+    matrix = _taste_matrix()
+    grid = {"factors": [4, 64], "regularization": [0.01, 10.0], "iterations": [15]}
+    best, trials = modelData.tune_als(matrix, grid=grid)
+    assert len(trials) == 4
+    assert best == {k: v for k, v in max(trials, key=lambda t: t["precision_at_k"]).items() if k != "precision_at_k"}
+
+
+def test_too_little_data_falls_back_to_the_default_settings():
+    from scipy.sparse import csr_matrix
+    import numpy as np
+    tiny = csr_matrix((np.ones(5, dtype=np.float32), ([0, 1, 2, 3, 4], [0, 1, 2, 0, 1])), shape=(5, 3))
+    best, trials = modelData.tune_als(tiny)
+    assert trials == [] and best == {"factors": modelData.ALS_FACTORS,
+                                     "regularization": modelData.ALS_REGULARIZATION,
+                                     "iterations": modelData.ALS_ITERATIONS}
+
+
+def test_the_search_stops_at_its_time_budget():
+    _, trials = modelData.tune_als(_taste_matrix(), time_budget_s=0)
+    assert len(trials) == 1  # always at least one setting, then the budget is spent
+
+
 def test_model_files_are_stored_per_client_then_catalogue():
     path = modelData._versioned_model_path("movies", 7, 3)
     assert path.endswith(os.path.join("model", "client_7", "movies", "v3.npz"))
@@ -404,6 +443,9 @@ def test_training_is_recorded_in_a_sqlite_mlflow_store(http, seeded, tmp_path, m
     monkeypatch.setenv("MLFLOW_TRACKING_URI", f"sqlite:///{tmp_path}/mlflow.db")
     monkeypatch.setenv("MLFLOW_ARTIFACT_ROOT", str(tmp_path / "artifacts"))
     monkeypatch.setattr(modelData, "_versioned_model_path", lambda t, c, v: str(tmp_path / f"{t}_{c}_v{v}.npz"))
+    # Search even on this tiny catalogue, over 2 settings, to see the trials recorded.
+    monkeypatch.setattr(modelData, "ALS_TUNING_MIN_PAIRS", 0)
+    monkeypatch.setattr(modelData, "ALS_TUNING_GRID", {"factors": [2, 4], "regularization": [1.0], "iterations": [5]})
     for u in range(6):
         track(http, seeded, "purchase", {"user_id": f"u{u}", "item_id": ["SKU-NIKE-001", "SKU-VANS-004"][u % 2]})
         track(http, seeded, "purchase", {"user_id": f"u{u}", "item_id": "SKU-ASICS-003"})
@@ -430,3 +472,8 @@ def test_training_is_recorded_in_a_sqlite_mlflow_store(http, seeded, tmp_path, m
     version = client.get_model_version_by_alias(name, "production")
     assert version.tags["promue"] == "oui" and "Precision@10" in version.description
     assert db.get_active_model_version(seeded.client_id, Q["data_product_type"])["num_users"] == 6
+    # The settings search: chosen values on the version, every trial in an artifact.
+    assert run.data.tags["reglages"] == "auto (2 essais)" and run.data.metrics["tuning_trials"] == 2
+    assert run.data.params["factors"] in ("2", "4") and "choisis parmi 2 essais" in version.description
+    trials = json.loads(open(client.download_artifacts(run.info.run_id, "reglages_essais.json", str(tmp_path))).read())
+    assert len(trials) == 2 and trials[0]["precision_at_k"] >= trials[1]["precision_at_k"]
