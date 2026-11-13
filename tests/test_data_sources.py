@@ -475,3 +475,16 @@ def test_manage_my_data_source_via_supabase_session(http, api):
         assert webhook["id"] not in remaining
     finally:
         api.app.dependency_overrides.pop(api.get_current_supabase_user_id, None)
+
+
+def test_credentials_without_an_encryption_key_are_a_clear_503_not_a_crash(http, tenant, monkeypatch):
+    # Production ran without LIKYLY_DATA_SOURCE_ENCRYPTION_KEY: every source with credentials
+    # (Shopify, REST API keys) failed with a bare 500 and coding assistants kept retrying.
+    monkeypatch.delenv("LIKYLY_DATA_SOURCE_ENCRYPTION_KEY")
+    response = http.post("/data-sources", headers=tenant.secret, json={
+        "name": "shop", "type": "shopify", "product_type": "shop",
+        "config": {"shop_domain": "x.myshopify.com"}, "credentials": {"client_id": "a", "client_secret": "b"},
+    })
+    assert response.status_code == 503
+    assert "cannot store data source credentials" in response.json()["detail"]
+    assert "shop" not in [d["name"] for d in http.get("/data-sources", headers=tenant.secret).json()], "nothing saved"

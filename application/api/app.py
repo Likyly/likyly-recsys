@@ -78,6 +78,7 @@ sys.path.insert(0, absolute_path_utils)
 
 from exploreData import *
 from modelData import *
+import crypto  # data source credentials: EncryptionNotConfigured is answered as a 503 below
 from db import (
     init_db,
     get_client_and_scope_by_api_key, ensure_client_id, DEMO_CLIENT_ID, PURCHASE, VIEW,
@@ -2597,6 +2598,27 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     return JSONResponse(
         {"detail": jsonable_encoder(exc.errors()), "request_id": _current_request_id(request)},
         status_code=422,
+    )
+
+
+@app.exception_handler(crypto.EncryptionNotConfigured)
+async def encryption_not_configured_handler(request: Request, exc: Exception):
+    """The server cannot store credentials safely (no or wrong LIKYLY_DATA_SOURCE_ENCRYPTION_KEY):
+    a server configuration problem, not a client error and not a crash - say so plainly instead
+    of a bare 500, so a coding assistant stops and reports it instead of retrying."""
+    request_id = _current_request_id(request)
+    get_logger().error(
+        "encryption_not_configured",
+        extra={"fields": {"event": "encryption_not_configured", "path": request.url.path}},
+    )
+    return JSONResponse(
+        {
+            "detail": "LIKYLY cannot store data source credentials right now (server configuration). "
+            "Nothing was saved; this is on LIKYLY's side - quote this request_id to support.",
+            "request_id": request_id,
+        },
+        status_code=503,
+        headers={"X-Request-ID": request_id} if request_id else None,
     )
 
 
