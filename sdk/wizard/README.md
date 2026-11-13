@@ -98,6 +98,11 @@ theme editor (*Add section → LIKYLY recommendations*) or let your assistant pu
 `shopify theme push`. The catalog comes from the `shopify` source (a Dev Dashboard app's client
 id and secret, or a `shpat_` token).
 
+In a Shopify **app** project (`shopify.app.toml`), the wizard installs and writes nothing but the
+assistant's config: an app calls LIKYLY from its server with the secret key and shows
+recommendations through a theme app extension (that is what
+[LIKYLY for Shopify](https://github.com/Likyly/likyly-shopify) does).
+
 ## What it looks like
 
 **Connect your account**: the browser opens likyly.com; once you are signed in, the keys come back to the terminal on their own.

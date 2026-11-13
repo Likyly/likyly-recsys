@@ -35,6 +35,7 @@ export async function installSdk(opts, project, onLine) {
     case "plugin":
       return [warn("WordPress: install the LIKYLY plugin, then paste your two keys in the LIKYLY menu of your admin.", WP_PLUGIN_URL)];
     case "none":
+      if (project.notes) return project.notes.map((n) => info(n));
       return project.next ? [info("Nothing to install. Then run:", project.next)] : [];
     case "manual":
       return [warn("Run it yourself:", line)];
@@ -55,6 +56,7 @@ export async function installSdk(opts, project, onLine) {
 
 /** Write the public key to the env file the framework exposes to the browser. */
 export function applyKey(opts, project, key) {
+  if (project.id === "shopify-app") return [info("The public key goes in the app's own settings (the merchant pastes it in the app's admin)")];
   if (project.keyFile) {
     if (!key) return [warn(`Add it later: put your public key (pk_...) alone in ${project.keyFile}`)];
     const res = writeKeyFile(opts.dir, project.keyFile, key, { dryRun: opts.dryRun });

@@ -531,3 +531,17 @@ test("installed assistants: a command on the PATH or a macOS app", () => {
   assert.ok(!found.includes("claude-code"));
   assert.deepEqual(installedEditors({ home, platform: "linux", commandExists: () => false }), [], "apps only count on macOS");
 });
+
+
+test("a Shopify app project is recognised and left untouched: no SDK, no provider, no key file", () => {
+  const dir = project({ "shopify.app.toml": 'name = "x"\n', ...pkg({ react: "19", "react-router": "7", "@react-router/dev": "7" }), "app/": "" });
+  assert.equal(detectProject(dir).id, "shopify-app");
+  const res = runCli(["--yes", "--public-key", "pk_test", "--editor", "claude-code", "--dir", dir], dir);
+  assert.equal(res.status, 0, res.stdout + res.stderr);
+  assert.match(res.stdout, /Shopify app/);
+  assert.match(res.stdout, /theme app extension/);
+  assert.deepEqual(JSON.parse(readFileSync(join(dir, "package.json"), "utf8")), { dependencies: { react: "19", "react-router": "7", "@react-router/dev": "7" } });
+  assert.equal(existsSync(join(dir, "app/components/likyly-provider.tsx")), false);
+  assert.equal(existsSync(join(dir, ".env")), false);
+  assert.ok(existsSync(join(dir, ".mcp.json")), "the assistant is still connected");
+});

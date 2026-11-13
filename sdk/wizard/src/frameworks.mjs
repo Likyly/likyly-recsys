@@ -251,10 +251,34 @@ function detectShopify(dir) {
   };
 }
 
+/**
+ * A Shopify app (shopify.app.toml, Shopify CLI's app template). Its storefront goes through a
+ * theme app extension and its server holds the secret key: the browser SDK and React provider
+ * the JS rules would add have no place here, so nothing is installed or written.
+ */
+function detectShopifyApp(dir) {
+  if (!has(dir, "shopify.app.toml")) return null;
+  return {
+    id: "shopify-app",
+    label: "Shopify app",
+    language: "javascript",
+    sdkDocs: "typescript",
+    packages: [],
+    install: null,
+    envFile: null,
+    envVar: null,
+    starter: null,
+    notes: [
+      "A Shopify app: nothing to install here. Call LIKYLY from the app's server with the secret key (npm install @likyly/sdk), and show recommendations through a theme app extension.",
+      "To add LIKYLY to a store's theme instead, run the wizard in the theme (shopify theme pull).",
+    ],
+  };
+}
+
 /** Detect the project in `dir`. Returns `null` when nothing recognisable is found. */
 export function detectProject(dir) {
-  // A Shopify theme first: theme tooling may add a package.json, it is still a theme.
-  const shopify = detectShopify(dir);
+  // A Shopify theme or app first: their tooling adds a package.json, they are still Shopify.
+  const shopify = detectShopify(dir) ?? detectShopifyApp(dir);
   if (shopify) return shopify;
   // WordPress next: a WP install often ships a package.json for its theme tooling.
   const wp = has(dir, "wp-config.php", "wp-config-sample.php", "wp-content") ? detectPhp(dir) : null;
