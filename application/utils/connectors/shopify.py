@@ -5,8 +5,16 @@ header (`page_info`), which is what the REST Admin API has used since the legacy
 page/since_id pagination was deprecated - so this always uses the current pagination style,
 not the deprecated one.
 
-config: {"shop_domain": "my-shop.myshopify.com", "api_version": "2024-10", "page_size": 100}
-credentials: {"access_token": "shpat_..."}
+config: {"shop_domain": "my-shop.myshopify.com", "api_version": "2026-10", "page_size": 100}
+credentials: {"access_token": "shpat_..."}, or {"client_id": "...", "client_secret": "..."}
+
+Two kinds of apps give access to a store's Admin API:
+- a legacy custom app made in the store admin (no new ones since 2026-01-01): a `shpat_`
+  token that never expires -> `access_token`;
+- an app made in Shopify's Dev Dashboard, installed on a store of the same organization: no
+  token to copy, only a client id and secret, exchanged for a token valid 24 h (client
+  credentials grant) -> `client_id` + `client_secret`. The connector asks for a token on first
+  use and asks again when Shopify rejects the current one, so a source keeps syncing for days.
 
 Incremental sync uses `updated_at_min` seeded from the last run's checkpoint - true
 push-based incremental (via Shopify's products/update, products/delete webhooks pointing at
@@ -24,6 +32,9 @@ from .base import Connector, ConnectionTestResult, ConnectorError, NormalizedIte
 from .field_mapping import apply_mapping, detected_fields, suggest_mapping
 
 _TIMEOUT = 20
+# Shopify supports each API version about 12 months; an older one is answered with the
+# oldest version still supported.
+DEFAULT_API_VERSION = "2026-10"
 _MAX_PAGES = 500
 
 # Sane defaults for Shopify's product shape - the tenant's own field_mapping (from
@@ -47,11 +58,42 @@ class ShopifyConnector(Connector):
 
     def _base_url(self) -> str:
         domain = self.config.get("shop_domain", "")
-        version = self.config.get("api_version", "2024-10")
+        version = self.config.get("api_version", DEFAULT_API_VERSION)
         return f"https://{domain}/admin/api/{version}/products.json"
 
+    def _uses_client_credentials(self) -> bool:
+        return not self.credentials.get("access_token") and bool(self.credentials.get("client_id"))
+
+    @network_retry
+    def _request_token(self) -> requests.Response:
+        return requests.post(
+            f"https://{self.config.get('shop_domain', '')}/admin/oauth/access_token",
+            data={"grant_type": "client_credentials", "client_id": self.credentials.get("client_id", ""), "client_secret": self.credentials.get("client_secret", "")},
+            timeout=_TIMEOUT,
+        )
+
+    def _fetch_token(self) -> str:
+        try:
+            response = self._request_token()
+        except requests.RequestException as error:
+            raise ConnectorError(f"Request to Shopify failed after retries: {error}") from error
+        token = response.json().get("access_token") if response.ok else None
+        if not token:
+            raise ConnectorError(
+                f"Shopify refused the client id and secret ({response.status_code}): the app must be "
+                "installed on this store, and the store must belong to the app's organization"
+            )
+        return token
+
+    def _token(self) -> str:
+        if not self._uses_client_credentials():
+            return self.credentials.get("access_token", "")
+        if not getattr(self, "_cached_token", None):
+            self._cached_token = self._fetch_token()
+        return self._cached_token
+
     def _headers(self) -> dict[str, str]:
-        return {"X-Shopify-Access-Token": self.credentials.get("access_token", "")}
+        return {"X-Shopify-Access-Token": self._token()}
 
     @network_retry
     def _request(self, url: str, params: Optional[dict[str, Any]]) -> requests.Response:
@@ -60,6 +102,10 @@ class ShopifyConnector(Connector):
     def _get(self, url: str, params: Optional[dict[str, Any]] = None) -> requests.Response:
         try:
             response = self._request(url, params)
+            if response.status_code == 401 and self._uses_client_credentials():
+                # The 24 h token expired during a long sync, or between two syncs: ask again once.
+                self._cached_token = None
+                response = self._request(url, params)
         except requests.RequestException as error:
             raise ConnectorError(f"Request to Shopify failed after retries: {error}") from error
         if response.status_code == 401:

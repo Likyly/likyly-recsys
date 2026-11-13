@@ -75,7 +75,7 @@ the sync engine, the API routes, or the MCP tools needs to change.
 | `csv_url` | `{"url", "format": "csv"}` | `{"header": "...", "value": "..."}` (optional) | full only |
 | `json_url` | `{"url", "format": "json", "items_path": "..."}` | same as `csv_url` | full only |
 | `rest_api` | `{"base_url", "items_path", "pagination": {...}, "auth": {...}, "updated_since_param"}` | `{"token"}` or `{"username","password"}` | full + incremental |
-| `shopify` | `{"shop_domain", "api_version", "page_size"}` | `{"access_token"}` | full + incremental |
+| `shopify` | `{"shop_domain", "api_version", "page_size"}` | `{"access_token"}` (legacy custom app) or `{"client_id", "client_secret"}` (Dev Dashboard app: 24 h tokens, renewed by the connector) | full + incremental |
 | `woocommerce` | `{"site_url"}` (optional) | none | **push only** - see below |
 | `webhook` | `{"sample": [...]}` (optional, for preview only) | none | **push only** |
 

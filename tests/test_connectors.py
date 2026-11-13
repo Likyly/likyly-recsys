@@ -137,3 +137,68 @@ def test_exhausted_retries_surface_as_connector_error(monkeypatch):
     connector = RestApiConnector({"base_url": "https://x.invalid", "items_path": "items"}, {})
     with pytest.raises(ConnectorError):
         connector._get({})
+
+
+# --- Shopify: Dev Dashboard apps (client id + secret, 24 h tokens) ---------------------------
+
+from connectors.shopify import ShopifyConnector  # noqa: E402
+
+SHOP = {"shop_domain": "demo.myshopify.com"}
+CLIENT = {"client_id": "cid", "client_secret": "secret"}
+
+
+def _shopify(monkeypatch, credentials, tokens, statuses_by_token):
+    """A connector whose token endpoint hands out `tokens` in order, and whose products
+    endpoint answers each token with `statuses_by_token[token]` (200 by default)."""
+    issued, seen = list(tokens), []
+
+    def fake_token(self):
+        if not issued:
+            return FakeResponse({"error": "invalid_client"}, status_code=400)
+        return FakeResponse({"access_token": issued.pop(0)})
+
+    def fake_request(self, url, params):
+        token = self._headers()["X-Shopify-Access-Token"]
+        seen.append(token)
+        status = statuses_by_token.get(token, 200)
+        return FakeResponse({"products": [{"id": 1, "title": "Bag"}]} if status == 200 else {"errors": "x"}, status_code=status)
+
+    monkeypatch.setattr(ShopifyConnector, "_request_token", fake_token)
+    monkeypatch.setattr(ShopifyConnector, "_request", fake_request)
+    return ShopifyConnector(SHOP, credentials), seen
+
+
+def test_shopify_client_credentials_fetches_a_token_once(monkeypatch):
+    connector, seen = _shopify(monkeypatch, CLIENT, ["t1"], {})
+    assert connector.test_connection().ok
+    connector.preview(limit=1)
+    assert seen == ["t1", "t1"]
+
+
+def test_shopify_expired_token_is_renewed_once(monkeypatch):
+    connector, seen = _shopify(monkeypatch, CLIENT, ["old", "new"], {"old": 401})
+    assert connector.test_connection().ok
+    assert seen == ["old", "new"]
+
+
+def test_shopify_refused_client_credentials_is_a_clear_error(monkeypatch):
+    monkeypatch.setattr(ShopifyConnector, "_request_token", lambda self: FakeResponse({"error": "invalid_client"}, status_code=400))
+    result = ShopifyConnector(SHOP, CLIENT).test_connection()
+    assert not result.ok and "client id and secret" in result.message
+
+
+def test_shopify_access_token_is_used_as_is(monkeypatch):
+    def no_token(self):
+        raise AssertionError("no token request with a shpat_ token")
+
+    connector, seen = _shopify(monkeypatch, {"access_token": "shpat_x"}, [], {})
+    monkeypatch.setattr(ShopifyConnector, "_request_token", no_token)
+    assert connector.test_connection().ok
+    assert seen == ["shpat_x"]
+
+
+def test_shopify_access_token_rejected_is_not_retried(monkeypatch):
+    connector, seen = _shopify(monkeypatch, {"access_token": "shpat_x"}, [], {"shpat_x": 401})
+    result = connector.test_connection()
+    assert not result.ok and "rejected" in result.message
+    assert seen == ["shpat_x"]
