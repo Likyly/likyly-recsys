@@ -196,3 +196,56 @@ export function removalStep(dir, id, rel) {
 
 /** Every folder a supported tool reads project skills from (the LIKYLY skill goes in `<dir>/likyly`). */
 export const SKILL_DIRS = [...new Set(EDITORS.map((e) => e.skillDir))];
+
+/** A developer key the LIKYLY server will find: exported, or in this project's credentials file. */
+export function hasDeveloperKey(dir, env = process.env) {
+  if (env[KEY_ENV]?.trim() || env.LIKYLY_API_KEY?.trim()) return true;
+  const path = join(dir, CREDENTIALS_FILE);
+  return existsSync(path) && /^\s*(LIKYLY_DEVELOPER_KEY|LIKYLY_API_KEY)\s*=\s*\S/m.test(readFileSync(path, "utf8"));
+}
+
+// Claude Code asks before starting a server found in .mcp.json, with "don't use it" selected. The
+// developer already chose Claude Code in the wizard: that approval goes in the project's personal
+// settings (.claude/settings.local.json, not meant to be committed).
+export const CLAUDE_LOCAL_SETTINGS = ".claude/settings.local.json";
+
+/** Add "likyly" to enabledMcpjsonServers. Returns { path, status: "added" | "same" | "invalid" }. */
+export function approveClaudeServer(dir, { dryRun = false } = {}) {
+  const path = join(dir, CLAUDE_LOCAL_SETTINGS);
+  let settings = {};
+  if (existsSync(path)) {
+    try {
+      settings = JSON.parse(readFileSync(path, "utf8") || "{}");
+    } catch {
+      return { path, status: "invalid" };
+    }
+  }
+  const list = Array.isArray(settings.enabledMcpjsonServers) ? settings.enabledMcpjsonServers : [];
+  if (list.includes("likyly")) return { path, status: "same" };
+  settings.enabledMcpjsonServers = [...list, "likyly"];
+  if (!dryRun) {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, JSON.stringify(settings, null, 2) + "\n");
+  }
+  return { path, status: "added" };
+}
+
+/** Uninstall: take "likyly" out of that list; a file left with nothing else goes too. */
+export function unapproveStep(dir) {
+  const path = join(dir, CLAUDE_LOCAL_SETTINGS);
+  if (!existsSync(path)) return null;
+  let settings;
+  try {
+    settings = JSON.parse(readFileSync(path, "utf8"));
+  } catch {
+    return null;
+  }
+  if (!settings?.enabledMcpjsonServers?.includes?.("likyly")) return null;
+  settings.enabledMcpjsonServers = settings.enabledMcpjsonServers.filter((s) => s !== "likyly");
+  if (!settings.enabledMcpjsonServers.length) delete settings.enabledMcpjsonServers;
+  const empty = !Object.keys(settings).length;
+  return {
+    label: empty ? `Delete ${CLAUDE_LOCAL_SETTINGS} (only the LIKYLY approval was in it)` : `Remove the likyly approval from ${CLAUDE_LOCAL_SETTINGS}`,
+    run: () => (empty ? unlinkSync(path) : writeFileSync(path, JSON.stringify(settings, null, 2) + "\n")),
+  };
+}

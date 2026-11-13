@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { detectProject, detectEditors, installedEditors, EDITORS } from "../src/frameworks.mjs";
-import { mergeConfig, writeMcpConfig, removeTomlBlock } from "../src/mcp.mjs";
+import { mergeConfig, writeMcpConfig, removeTomlBlock, approveClaudeServer, hasDeveloperKey } from "../src/mcp.mjs";
 import { isServerOnlyKey, writeEnv, writeStarter } from "../src/setup.mjs";
 import { parseArgs } from "../src/cli.mjs";
 import { describePlan, installMode } from "../src/actions.mjs";
@@ -544,4 +544,25 @@ test("a Shopify app project is recognised and left untouched: no SDK, no provide
   assert.equal(existsSync(join(dir, "app/components/likyly-provider.tsx")), false);
   assert.equal(existsSync(join(dir, ".env")), false);
   assert.ok(existsSync(join(dir, ".mcp.json")), "the assistant is still connected");
+});
+
+
+test("Claude Code: the likyly server is approved in settings.local.json, other settings kept, removed on uninstall", () => {
+  const dir = project({ ...pkg({ next: "16", react: "19" }), "app/": "", ".claude/settings.local.json": { permissions: { allow: ["Bash(ls)"] }, enabledMcpjsonServers: ["other"] } });
+  assert.equal(runCli(["--yes", "--no-install", "--public-key", "pk_test", "--editor", "claude-code", "--dir", dir], dir).status, 0);
+  const settings = JSON.parse(readFileSync(join(dir, ".claude/settings.local.json"), "utf8"));
+  assert.deepEqual(settings.enabledMcpjsonServers, ["other", "likyly"]);
+  assert.deepEqual(settings.permissions, { allow: ["Bash(ls)"] });
+  assert.equal(approveClaudeServer(dir).status, "same", "never added twice");
+
+  assert.equal(runCli(["uninstall", "--yes", "--dir", dir], dir).status, 0);
+  assert.deepEqual(JSON.parse(readFileSync(join(dir, ".claude/settings.local.json"), "utf8")), { permissions: { allow: ["Bash(ls)"] }, enabledMcpjsonServers: ["other"] });
+});
+
+test("a developer key counts when exported or in the project's credentials file", () => {
+  const dir = project({});
+  assert.equal(hasDeveloperKey(dir, {}), false);
+  assert.equal(hasDeveloperKey(dir, { LIKYLY_DEVELOPER_KEY: "lk_x" }), true);
+  writeFileSync(join(mkdirSync(join(dir, ".likyly"), { recursive: true }) ?? join(dir, ".likyly"), "credentials.env"), "# account\nLIKYLY_DEVELOPER_KEY=lk_y\n");
+  assert.equal(hasDeveloperKey(dir, {}), true);
 });

@@ -5,7 +5,7 @@
 import { existsSync, readFileSync, readdirSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { detectProject, EDITORS } from "./frameworks.mjs";
-import { SKILL_DIRS, configPath, removalStep } from "./mcp.mjs";
+import { SKILL_DIRS, configPath, removalStep, unapproveStep } from "./mcp.mjs";
 import { CLAUDE_COMMANDS, commandExists, runAsync, starterContent } from "./setup.mjs";
 
 const ENV_FILES = [".env", ".env.local"];
@@ -104,6 +104,9 @@ export function planUninstall(dir) {
     if (step?.kept) kept.push(step.kept);
     else if (step) steps.push(step);
   }
+
+  const approval = unapproveStep(dir);
+  if (approval) steps.push(approval);
 
   // The skill in every tool's skills folder, Claude Code's commands, and the credentials folder.
   for (const rel of [...SKILL_DIRS.map((d) => `${d}/likyly`), ...CLAUDE_COMMANDS.map((f) => `.claude/commands/${f}`), ".likyly"]) {

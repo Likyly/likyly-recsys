@@ -7,8 +7,8 @@ import { homedir } from "node:os";
 import { useEffect, useRef, useState } from "react";
 import { Box, Static, Text, render, useApp, useStdout, useWindowSize } from "ink";
 import { EDITORS, detectEditors, detectProject, installedEditors } from "../frameworks.mjs";
-import { KEY_ENV } from "../mcp.mjs";
-import { commandExists } from "../setup.mjs";
+import { KEY_ENV, hasDeveloperKey } from "../mcp.mjs";
+import { commandExists, wizardInvocation } from "../setup.mjs";
 import { checkCompat, describeCompat } from "../compat.mjs";
 import {
   applyDeveloperKey,
@@ -40,6 +40,8 @@ const MCP_STEPS = [
   ["mcp", "Connect your AI assistant"],
   ["verify", "Verify the installation"],
 ];
+// `mcp add` without a developer key: sign in first, or the assistant cannot reach LIKYLY.
+const MCP_STEPS_SIGN_IN = [["key", "Connect your LIKYLY account"], ...MCP_STEPS];
 
 // Below this, Ink can no longer redraw the live step in place (it would repeat on screen).
 const MIN_COLUMNS = 64;
@@ -153,11 +155,11 @@ function ReviewPanel({ review }) {
 }
 
 /** The closing panel, printed once: what is done, and what the assistant will do next. */
-function DonePanel({ editors, dryRun, level, devKey }) {
+function DonePanel({ editors, dryRun, level, devKey, dir }) {
   const failed = level === "fail";
   const { stdout } = useStdout();
   const width = Math.min((stdout?.columns ?? 80) - 2, 86);
-  const needsDevKey = editors.length && !devKey && !dryRun;
+  const needsDevKey = editors.length && !devKey && !dryRun && !hasDeveloperKey(dir);
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={failed ? C.coral : level === "warn" ? C.amber : C.mint} paddingX={2} paddingY={1} width={width}>
       <Text>
@@ -204,8 +206,10 @@ function DonePanel({ editors, dryRun, level, devKey }) {
 }
 
 /** The one remaining choice, Enter by default: hand over to the assistant. */
-function NextAction({ editors, canReview, onPick }) {
+function NextAction({ editors, canReview, onPick, signedIn }) {
   const items = [];
+  // Without a developer key the assistant cannot reach LIKYLY: signing in comes first.
+  if (editors.length && !signedIn) items.push({ label: "Connect your LIKYLY account first", value: "signin", hint: "your assistant needs it to reach LIKYLY" });
   if (editors.includes("claude-code") && commandExists("claude")) items.push({ label: "Launch Claude Code now", value: "claude", hint: "it starts on this prompt" });
   if (canReview) items.push({ label: "Review the changes first", value: "review", hint: "git diff of what LIKYLY changed" });
   if (editors.includes("codex") && commandExists("codex")) items.push({ label: "Launch Codex now", value: "codex", hint: "it starts on this prompt" });
@@ -218,7 +222,9 @@ function NextAction({ editors, canReview, onPick }) {
 function App({ opts: initialOpts, result }) {
   const { exit } = useApp();
   const opts = useRef({ ...initialOpts }).current;
-  const order = opts.command === "mcp" ? MCP_STEPS : INSTALL_STEPS;
+  const [order] = useState(() =>
+    opts.command !== "mcp" ? INSTALL_STEPS : hasDeveloperKey(opts.dir) || opts.dryRun ? MCP_STEPS : MCP_STEPS_SIGN_IN,
+  );
   const [steps, setSteps] = useState(() => Object.fromEntries(order.map(([id]) => [id, { status: "pending", results: [] }])));
   const [phase, setPhase] = useState(order[0][0]);
   const [project] = useState(() => detectProject(opts.dir));
@@ -253,6 +259,7 @@ function App({ opts: initialOpts, result }) {
     result.code = code;
     result.launch = launch;
     result.files = files;
+    result.editors = chosenEditors;
     setPhase("end");
     setLeaving(true);
   };
@@ -283,7 +290,10 @@ function App({ opts: initialOpts, result }) {
         cancelled = true;
       };
     }
-    if (phase === "key" && (!project.envVar || opts.publicKey)) {
+    // The account step always runs, whatever the project: it brings the developer key the
+    // assistant needs (a Shopify theme, WordPress or an app have no env var for the public key,
+    // and used to skip it). Only a public key given on the command line (CI) skips it.
+    if (phase === "key" && opts.publicKey && opts.command !== "mcp") {
       finish("key", [...applyKey(opts, project, opts.publicKey), ...applyStarter(opts, project)], opts.publicKey ? maskKey(opts.publicKey) : undefined);
       setPhase("mcp");
     }
@@ -383,7 +393,7 @@ function App({ opts: initialOpts, result }) {
     ),
     sdk: () => (installMode(opts, project) === "run" && !opts.dryRun ? <LiveLog command={project.install.cmd.join(" ")} lines={log} /> : null),
     key: () =>
-      project.envVar && !opts.publicKey ? (
+      !opts.publicKey || opts.command === "mcp" ? (
         <AccountStep
           project={project}
           dir={opts.dir}
@@ -394,7 +404,8 @@ function App({ opts: initialOpts, result }) {
             const received = workspace
               ? [{ level: "ok", text: `Received from likyly.com: public key ${maskKey(key)}${devKey ? " + developer key" : ""}`, hint: `(${[account, workspace].filter(Boolean).join(" · ")})` }]
               : [];
-            finish("key", [...received, ...applyKey(opts, project, key), ...applyStarter(opts, project), ...applyDeveloperKey(opts, devKey, { account, workspace })], summary);
+            const files = opts.command === "mcp" ? [] : [...applyKey(opts, project, key), ...applyStarter(opts, project)];
+            finish("key", [...received, ...files, ...applyDeveloperKey(opts, devKey, { account, workspace })], summary);
             setPhase("mcp");
           }}
         />
@@ -437,7 +448,7 @@ function App({ opts: initialOpts, result }) {
             {item.kind === "done" ? (
               <>
                 {item.review ? <ReviewPanel review={item.review} /> : null}
-                <DonePanel editors={chosenEditors} dryRun={opts.dryRun} level={item.level} devKey={keys.current.devKey} />
+                <DonePanel editors={chosenEditors} dryRun={opts.dryRun} level={item.level} devKey={keys.current.devKey} dir={opts.dir} />
               </>
             ) : null}
           </Box>
@@ -453,7 +464,7 @@ function App({ opts: initialOpts, result }) {
       ) : null}
       {phase === "next" ? (
         <Box paddingX={1} marginTop={1} display={tooSmall ? "none" : "flex"}>
-          <NextAction editors={chosenEditors} canReview={reviewRef.current.length > 0} onPick={(v) => end(failed ? 1 : 0, v, reviewRef.current)} />
+          <NextAction editors={chosenEditors} canReview={reviewRef.current.length > 0} signedIn={opts.dryRun || Boolean(keys.current.devKey) || hasDeveloperKey(opts.dir)} onPick={(v) => end(failed ? 1 : 0, v, reviewRef.current)} />
         </Box>
       ) : null}
     </>
@@ -461,7 +472,14 @@ function App({ opts: initialOpts, result }) {
 }
 
 /** After the UI is gone: run what the developer picked, with the terminal handed over. */
-function launch(choice, dir, files = []) {
+function launch(choice, dir, files = [], editors = []) {
+  if (choice === "signin") {
+    // The same wizard, `mcp add` for the assistants just connected: it opens the sign-in first.
+    const cmd = `${wizardInvocation()} mcp --editor ${editors.join(",")}`;
+    console.log(`\n  ${cmd}\n`);
+    spawnSync(cmd, { cwd: dir, stdio: "inherit", shell: true });
+    return;
+  }
   if (choice === "review") {
     // Modified files as a diff (in the developer's pager), new ones listed: git diff skips them.
     const tracked = files.filter((f) => f.code !== "A").map((f) => f.path);
@@ -490,6 +508,6 @@ export async function runInteractive(opts, version) {
   const result = { code: 130, version, launch: null };
   const app = render(<App opts={opts} result={result} />, { exitOnCtrlC: true });
   await app.waitUntilExit();
-  if (result.launch) launch(result.launch, opts.dir, result.files);
+  if (result.launch) launch(result.launch, opts.dir, result.files, result.editors);
   return result.code;
 }

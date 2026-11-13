@@ -30,8 +30,9 @@ exactly this, nothing more:
 ```
 
 - Account and workspace come from the comment lines of `.likyly/credentials.env`; leave the
-  block out if the file is missing - then step 1 is "Run `npx @likyly/wizard mcp add` in a
-  terminal, then restart Claude Code in this folder".
+  block out if the file is missing - the developer key was never received - then step 1 is "Run
+  `npx @likyly/wizard@latest mcp add` in a terminal and sign in on likyly.com when it opens (it
+  stores the key in this folder), then restart Claude Code here".
 - Don't diagnose: the server reads its key from `.likyly/credentials.env` by itself, so never ask
   to export or `source` anything. If Reconnect fails, the developer pastes the error shown by
   `/mcp` and only then you explain.

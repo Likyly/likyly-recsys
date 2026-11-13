@@ -3,7 +3,7 @@
 
 import { relative } from "node:path";
 import { EDITORS, editorById } from "./frameworks.mjs";
-import { configPath, writeMcpConfig } from "./mcp.mjs";
+import { approveClaudeServer, configPath, writeMcpConfig } from "./mcp.mjs";
 import { commandExists, runAsync, writeClaudeCommands, writeCredentials, writeEnv, writeKeyFile, writeSkill, writeStarter } from "./setup.mjs";
 import { checkCompat, describeCompat } from "./compat.mjs";
 import { checkKey, installedPackages } from "./verify.mjs";
@@ -99,6 +99,9 @@ export function connectEditors(opts, editors) {
     if (skill) results.push(ok(`LIKYLY skill → ${relative(opts.dir, skill.path)}`));
   }
   if (editors.includes("claude-code")) {
+    const approval = approveClaudeServer(opts.dir, { dryRun: opts.dryRun });
+    if (approval.status === "added") results.push(ok(`Claude Code starts the likyly server without asking → ${relative(opts.dir, approval.path)}`));
+    else if (approval.status === "invalid") results.push(warn(`${relative(opts.dir, approval.path)} is not valid JSON: Claude Code will ask once before starting the likyly server`));
     const command = writeClaudeCommands(opts.dir, { dryRun: opts.dryRun });
     results.push(ok(`Claude Code commands ${command.names.join(", ")} → ${relative(opts.dir, command.path)}`));
   }
