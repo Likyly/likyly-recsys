@@ -566,3 +566,81 @@ test("a developer key counts when exported or in the project's credentials file"
   writeFileSync(join(mkdirSync(join(dir, ".likyly"), { recursive: true }) ?? join(dir, ".likyly"), "credentials.env"), "# account\nLIKYLY_DEVELOPER_KEY=lk_y\n");
   assert.equal(hasDeveloperKey(dir, {}), true);
 });
+
+// --- Shopify catalog, connected by the wizard (credentials never reach the assistant) ----------
+
+import { catalogName, connectShopifyCatalog, normalizeShopDomain, shopifyCredentials } from "../src/shopify.mjs";
+
+function fakeApi(routes) {
+  const calls = [];
+  const fetchImpl = async (url, init) => {
+    const path = url.replace(/^https?:\/\/[^/]+/, "");
+    calls.push({ method: init.method, path, body: init.body ? JSON.parse(init.body) : undefined, key: init.headers["X-API-Key"] });
+    const [status, data] = routes[`${init.method} ${path}`] ?? [404, { detail: "not found" }];
+    return { status, ok: status < 300, json: async () => data };
+  };
+  return { calls, fetchImpl };
+}
+
+test("Shopify: store address and credentials are normalised", () => {
+  assert.equal(normalizeShopDomain("My-Shop"), "my-shop.myshopify.com");
+  assert.equal(normalizeShopDomain("https://my-shop.myshopify.com/admin/products"), "my-shop.myshopify.com");
+  assert.equal(normalizeShopDomain("www.my-shop.com"), null, "a custom domain is not the Shopify address");
+  assert.deepEqual(shopifyCredentials("shpat_abc"), { access_token: "shpat_abc" });
+  assert.deepEqual(shopifyCredentials(" id ", " shpss_x "), { client_id: "id", client_secret: "shpss_x" });
+  assert.equal(shopifyCredentials("id", ""), null);
+  assert.equal(catalogName("likyly-sandbox.myshopify.com"), "likyly-sandbox");
+});
+
+test("Shopify: a new source is created, tested and synced, with the developer key", async () => {
+  const { calls, fetchImpl } = fakeApi({
+    "GET /data-sources": [200, []],
+    "POST /data-sources": [201, { id: 7, type: "shopify", product_type: "my-shop", config: { shop_domain: "my-shop.myshopify.com" } }],
+    "POST /data-sources/7/test": [200, { ok: true, message: "Connected to my-shop.myshopify.com - 1 product(s) on the first page" }],
+    "POST /data-sources/7/sync": [202, { id: 1, status: "running" }],
+  });
+  const results = await connectShopifyCatalog({ apiKey: "lk_dev", shop: "my-shop.myshopify.com", credentials: { client_id: "a", client_secret: "b" }, fetchImpl });
+  assert.ok(results.every((r) => r.level !== "fail"), JSON.stringify(results));
+  const create = calls.find((c) => c.method === "POST" && c.path === "/data-sources");
+  assert.deepEqual(create.body, { name: "Shopify · my-shop.myshopify.com", type: "shopify", product_type: "my-shop", config: { shop_domain: "my-shop.myshopify.com" }, credentials: { client_id: "a", client_secret: "b" } });
+  assert.deepEqual(calls.find((c) => c.path === "/data-sources/7/sync").body, { mode: "full" });
+  assert.ok(calls.every((c) => c.key === "lk_dev"));
+  assert.doesNotMatch(JSON.stringify(results), /shpss_|"b"/, "the secret is never echoed");
+});
+
+test("Shopify: a source that fails its test is deleted again; an existing one for the shop is updated", async () => {
+  const failing = fakeApi({
+    "GET /data-sources": [200, []],
+    "POST /data-sources": [201, { id: 8, type: "shopify", product_type: "s", config: { shop_domain: "s.myshopify.com" } }],
+    "POST /data-sources/8/test": [200, { ok: false, message: "Shopify refused the client id and secret (400)" }],
+    "DELETE /data-sources/8": [200, { message: "deleted" }],
+  });
+  const r1 = await connectShopifyCatalog({ apiKey: "lk", shop: "s.myshopify.com", credentials: { client_id: "a", client_secret: "b" }, fetchImpl: failing.fetchImpl });
+  assert.equal(r1[0].level, "fail");
+  assert.match(r1[0].text, /refused the client id and secret/);
+  assert.ok(failing.calls.some((c) => c.method === "DELETE" && c.path === "/data-sources/8"));
+
+  const existing = fakeApi({
+    "GET /data-sources": [200, [{ id: 3, type: "shopify", product_type: "s", config: { shop_domain: "s.myshopify.com" } }]],
+    "PATCH /data-sources/3": [200, {}],
+    "POST /data-sources/3/test": [200, { ok: true, message: "ok" }],
+    "POST /data-sources/3/sync": [429, { detail: "One sync per day on the free plan" }],
+  });
+  const r2 = await connectShopifyCatalog({ apiKey: "lk", shop: "s.myshopify.com", credentials: { access_token: "shpat_x" }, fetchImpl: existing.fetchImpl });
+  assert.ok(!existing.calls.some((c) => c.method === "POST" && c.path === "/data-sources"), "no second source");
+  assert.deepEqual(existing.calls.find((c) => c.method === "PATCH").body, { credentials: { access_token: "shpat_x" } });
+  assert.ok(r2.some((r) => r.level === "warn" && /One sync per day/.test(r.text)));
+});
+
+test("Shopify: an API error is reported with its own message", async () => {
+  const { fetchImpl } = fakeApi({ "GET /data-sources": [200, []], "POST /data-sources": [503, { detail: "LIKYLY cannot store data source credentials right now" }] });
+  const r = await connectShopifyCatalog({ apiKey: "lk", shop: "s.myshopify.com", credentials: { access_token: "shpat_x" }, fetchImpl });
+  assert.match(r[0].text, /cannot store data source credentials/);
+});
+
+test("shopify command: needs a terminal", () => {
+  const dir = project({});
+  const res = runCli(["shopify", "--yes", "--dir", dir], dir);
+  assert.equal(res.status, 1);
+  assert.match(res.stderr, /run it in a terminal/);
+});

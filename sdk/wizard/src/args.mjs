@@ -22,7 +22,9 @@ ${blue("Usage")}
 ${blue("Commands")}
   install        ${dim("(default)")} detect the framework, install the SDK, write your key,
                  connect your AI assistant to the LIKYLY MCP server
-  mcp add        only connect your AI assistant (Claude Code, Cursor, VS Code)
+  mcp add        only connect your AI assistant (signs you in first if needed)
+  shopify        connect a Shopify store's catalog: you type the app's credentials here,
+                 they go straight to LIKYLY (encrypted), never to your assistant
   detect         print what was detected, change nothing
   inventory      list what LIKYLY put in this project: packages, key variable, setup files,
                  and every source line that uses LIKYLY (read-only; --json for data)
@@ -86,6 +88,7 @@ export function parseArgs(argv) {
       opts.command = "cache-clear";
       opts.placement = positional[2] ?? opts.placement;
     } else if (cmd === "mcp add" || cmd === "mcp") opts.command = "mcp";
+    else if (cmd === "shopify") opts.command = "shopify";
     else if (cmd === "detect") opts.command = "detect";
     else if (cmd === "inventory") opts.command = "inventory";
     else if (cmd === "uninstall") opts.command = "uninstall";

@@ -95,8 +95,11 @@ that sends the product view, shows the products LIKYLY recommends - read from th
 so prices follow the visitor's currency - and tracks impressions and clicks. Add it from the
 theme editor (*Add section → LIKYLY recommendations*) or let your assistant put it in
 `templates/product.json`, then preview with `shopify theme dev` and publish with
-`shopify theme push`. The catalog comes from the `shopify` source (a Dev Dashboard app's client
-id and secret, or a `shpat_` token).
+`shopify theme push`. Right after you sign in, the wizard connects the store's catalog itself:
+you type the store address and the app's Client ID and secret (the secret is masked) in the
+terminal, and they go straight to LIKYLY, encrypted - never to your AI assistant, never to a file.
+The app is one from Shopify's Dev Dashboard installed on the store with `read_products` (or, on
+an older store, a `shpat_` token). Later, or for another store: `npx @likyly/wizard shopify`.
 
 In a Shopify **app** project (`shopify.app.toml`), the wizard installs and writes nothing but the
 assistant's config: an app calls LIKYLY from its server with the secret key and shows

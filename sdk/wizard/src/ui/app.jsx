@@ -7,7 +7,8 @@ import { homedir } from "node:os";
 import { useEffect, useRef, useState } from "react";
 import { Box, Static, Text, render, useApp, useStdout, useWindowSize } from "ink";
 import { EDITORS, detectEditors, detectProject, installedEditors } from "../frameworks.mjs";
-import { KEY_ENV, hasDeveloperKey } from "../mcp.mjs";
+import { KEY_ENV, hasDeveloperKey, readDeveloperKey } from "../mcp.mjs";
+import { ShopifyCatalogStep } from "./shopify.jsx";
 import { commandExists, wizardInvocation } from "../setup.mjs";
 import { checkCompat, describeCompat } from "../compat.mjs";
 import {
@@ -40,8 +41,12 @@ const MCP_STEPS = [
   ["mcp", "Connect your AI assistant"],
   ["verify", "Verify the installation"],
 ];
+const ACCOUNT_STEP = ["key", "Connect your LIKYLY account"];
 // `mcp add` without a developer key: sign in first, or the assistant cannot reach LIKYLY.
-const MCP_STEPS_SIGN_IN = [["key", "Connect your LIKYLY account"], ...MCP_STEPS];
+const MCP_STEPS_SIGN_IN = [ACCOUNT_STEP, ...MCP_STEPS];
+const CATALOG_STEP = ["catalog", "Connect your Shopify catalog"];
+// `npx @likyly/wizard shopify`: (re)connect a store's catalog, nothing else.
+const SHOPIFY_STEPS = [CATALOG_STEP];
 
 // Below this, Ink can no longer redraw the live step in place (it would repeat on screen).
 const MIN_COLUMNS = 64;
@@ -222,12 +227,19 @@ function NextAction({ editors, canReview, onPick, signedIn }) {
 function App({ opts: initialOpts, result }) {
   const { exit } = useApp();
   const opts = useRef({ ...initialOpts }).current;
-  const [order] = useState(() =>
-    opts.command !== "mcp" ? INSTALL_STEPS : hasDeveloperKey(opts.dir) || opts.dryRun ? MCP_STEPS : MCP_STEPS_SIGN_IN,
-  );
+  const [project] = useState(() => detectProject(opts.dir));
+  const [order] = useState(() => {
+    const signedIn = hasDeveloperKey(opts.dir) || opts.dryRun;
+    if (opts.command === "mcp") return signedIn ? MCP_STEPS : MCP_STEPS_SIGN_IN;
+    if (opts.command === "shopify") return signedIn ? SHOPIFY_STEPS : [ACCOUNT_STEP, ...SHOPIFY_STEPS];
+    // A Shopify theme: its catalog is connected here, in the terminal, never through the assistant.
+    if (project?.id === "shopify") return INSTALL_STEPS.flatMap((s) => (s[0] === "key" ? [s, CATALOG_STEP] : [s]));
+    return INSTALL_STEPS;
+  });
+  /** The phase after `id`, or "end" after the last one. */
+  const after = (id) => order[order.findIndex(([k]) => k === id) + 1]?.[0] ?? "end";
   const [steps, setSteps] = useState(() => Object.fromEntries(order.map(([id]) => [id, { status: "pending", results: [] }])));
   const [phase, setPhase] = useState(order[0][0]);
-  const [project] = useState(() => detectProject(opts.dir));
   const [compat] = useState(() => checkCompat(opts.dir, project));
   // Git: where the developer was, and what was already modified, so the end of the run can show
   // exactly what LIKYLY changed (and work on its own branch if they want).
@@ -293,11 +305,12 @@ function App({ opts: initialOpts, result }) {
     // The account step always runs, whatever the project: it brings the developer key the
     // assistant needs (a Shopify theme, WordPress or an app have no env var for the public key,
     // and used to skip it). Only a public key given on the command line (CI) skips it.
-    if (phase === "key" && opts.publicKey && opts.command !== "mcp") {
+    if (phase === "key" && opts.publicKey && opts.command === "install") {
       finish("key", [...applyKey(opts, project, opts.publicKey), ...applyStarter(opts, project)], opts.publicKey ? maskKey(opts.publicKey) : undefined);
-      setPhase("mcp");
+      setPhase(after("key"));
     }
     if (phase === "mcp" && opts.editors) connect(opts.editors);
+    if (phase === "end" && opts.command === "shopify") end(steps.catalog?.status === "fail" ? 1 : 0);
     if (phase === "verify") {
       verifyInstall(opts, project, { ...keys.current, editors: chosenEditors }).then((r) => {
         const level = failed || r.some((x) => x.level === "fail") ? "fail" : r.some((x) => x.level === "warn") ? "warn" : "ok";
@@ -393,7 +406,7 @@ function App({ opts: initialOpts, result }) {
     ),
     sdk: () => (installMode(opts, project) === "run" && !opts.dryRun ? <LiveLog command={project.install.cmd.join(" ")} lines={log} /> : null),
     key: () =>
-      !opts.publicKey || opts.command === "mcp" ? (
+      !opts.publicKey || opts.command !== "install" ? (
         <AccountStep
           project={project}
           dir={opts.dir}
@@ -404,12 +417,21 @@ function App({ opts: initialOpts, result }) {
             const received = workspace
               ? [{ level: "ok", text: `Received from likyly.com: public key ${maskKey(key)}${devKey ? " + developer key" : ""}`, hint: `(${[account, workspace].filter(Boolean).join(" · ")})` }]
               : [];
-            const files = opts.command === "mcp" ? [] : [...applyKey(opts, project, key), ...applyStarter(opts, project)];
+            const files = opts.command === "install" ? [...applyKey(opts, project, key), ...applyStarter(opts, project)] : [];
             finish("key", [...received, ...files, ...applyDeveloperKey(opts, devKey, { account, workspace })], summary);
-            setPhase("mcp");
+            setPhase(after("key"));
           }}
         />
       ) : null,
+    catalog: () => (
+      <ShopifyCatalogStep
+        apiKey={keys.current.devKey || readDeveloperKey(opts.dir)}
+        onDone={(results, summary) => {
+          finish("catalog", results, summary);
+          setPhase(after("catalog"));
+        }}
+      />
+    ),
     mcp: () =>
       opts.editors ? null : (
         <>

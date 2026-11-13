@@ -197,12 +197,16 @@ export function removalStep(dir, id, rel) {
 /** Every folder a supported tool reads project skills from (the LIKYLY skill goes in `<dir>/likyly`). */
 export const SKILL_DIRS = [...new Set(EDITORS.map((e) => e.skillDir))];
 
-/** A developer key the LIKYLY server will find: exported, or in this project's credentials file. */
-export function hasDeveloperKey(dir, env = process.env) {
-  if (env[KEY_ENV]?.trim() || env.LIKYLY_API_KEY?.trim()) return true;
+/** The developer key the LIKYLY server will use: exported, or in this project's credentials file. */
+export function readDeveloperKey(dir, env = process.env) {
+  const exported = env[KEY_ENV]?.trim() || env.LIKYLY_API_KEY?.trim();
+  if (exported) return exported;
   const path = join(dir, CREDENTIALS_FILE);
-  return existsSync(path) && /^\s*(LIKYLY_DEVELOPER_KEY|LIKYLY_API_KEY)\s*=\s*\S/m.test(readFileSync(path, "utf8"));
+  if (!existsSync(path)) return null;
+  return readFileSync(path, "utf8").match(/^\s*(?:LIKYLY_DEVELOPER_KEY|LIKYLY_API_KEY)\s*=\s*["']?([^"'\s#]+)/m)?.[1] ?? null;
 }
+
+export const hasDeveloperKey = (dir, env = process.env) => Boolean(readDeveloperKey(dir, env));
 
 // Claude Code asks before starting a server found in .mcp.json, with "don't use it" selected. The
 // developer already chose Claude Code in the wizard: that approval goes in the project's personal

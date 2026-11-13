@@ -89,11 +89,13 @@ URL, or call the push endpoint from their own code when products change.
    `credentials` shape looks like.
 2. `create_data_source` with the type that matches what the developer described (a REST API,
    a CSV, Shopify, ...). This only saves configuration - nothing is fetched yet.
-   Shopify credentials are either `{"access_token": "shpat_..."}` (a legacy custom app) or
-   `{"client_id", "client_secret"}` of an app made in Shopify's Dev Dashboard and installed on
-   the store with `read_products` (the only kind new stores can create since 2026; LIKYLY
-   renews its 24 h tokens itself). Ask the developer for them; never write them into the theme
-   or any file git tracks.
+   **Shopify: never ask for the store's credentials in the conversation.** `list_data_sources`
+   first: a `shopify` source for the store means the catalog is already connected (the wizard
+   did it). Without one, ask the developer to run `npx @likyly/wizard shopify` in a terminal: it
+   asks for the store address and the app's Client ID and secret (masked) and sends them straight
+   to LIKYLY, encrypted - then continue with `get_sync_status`. If they paste credentials in the
+   conversation anyway, don't use them: point them to the command, and suggest rotating the
+   secret in Shopify's Dev Dashboard since it was shared.
 3. `test_data_source` - confirms LIKYLY can actually reach it. Fix the config/credentials and
    retry if it fails; don't move on with a broken connection.
 4. `preview_data_source` - a small real sample plus a suggested field mapping.
