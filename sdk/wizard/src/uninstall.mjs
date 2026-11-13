@@ -5,7 +5,7 @@
 import { existsSync, readFileSync, readdirSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { detectProject, EDITORS } from "./frameworks.mjs";
-import { configPath } from "./mcp.mjs";
+import { SKILL_DIRS, configPath, removalStep } from "./mcp.mjs";
 import { CLAUDE_COMMANDS, commandExists, runAsync, starterContent } from "./setup.mjs";
 
 const ENV_FILES = [".env", ".env.local"];
@@ -100,27 +100,13 @@ export function planUninstall(dir) {
 
   // The likyly server in each assistant's MCP config; a file left with nothing else goes too.
   for (const editor of EDITORS) {
-    const path = configPath(dir, editor.id);
-    if (!existsSync(path)) continue;
-    let config;
-    try {
-      config = JSON.parse(readFileSync(path, "utf8"));
-    } catch {
-      kept.push(`${relative(dir, path)} (not valid JSON: remove the "likyly" server by hand)`);
-      continue;
-    }
-    const key = editor.id === "vscode" ? "servers" : "mcpServers";
-    if (!config?.[key]?.likyly) continue;
-    delete config[key].likyly;
-    const empty = !Object.keys(config[key]).length && Object.keys(config).every((k) => k === key || (k === "inputs" && !config.inputs?.length));
-    steps.push({
-      label: empty ? `Delete ${relative(dir, path)} (only LIKYLY was in it)` : `Remove the likyly server from ${relative(dir, path)}`,
-      run: () => (empty ? unlinkSync(path) : writeFileSync(path, JSON.stringify(config, null, 2) + "\n")),
-    });
+    const step = removalStep(dir, editor.id, relative(dir, configPath(dir, editor.id)));
+    if (step?.kept) kept.push(step.kept);
+    else if (step) steps.push(step);
   }
 
-  // Claude Code skill and commands, and the credentials folder.
-  for (const rel of [".claude/skills/likyly", ...CLAUDE_COMMANDS.map((f) => `.claude/commands/${f}`), ".likyly"]) {
+  // The skill in every tool's skills folder, Claude Code's commands, and the credentials folder.
+  for (const rel of [...SKILL_DIRS.map((d) => `${d}/likyly`), ...CLAUDE_COMMANDS.map((f) => `.claude/commands/${f}`), ".likyly"]) {
     const path = join(dir, rel);
     if (existsSync(path)) steps.push({ label: `Delete ${rel}${rel === ".likyly" ? " (your developer key for this project)" : ""}`, run: () => rmSync(path, { recursive: true, force: true }) });
   }

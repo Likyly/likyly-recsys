@@ -6,7 +6,7 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { detectProject, EDITORS } from "./frameworks.mjs";
-import { configPath } from "./mcp.mjs";
+import { SKILL_DIRS, configPath, hasLikylyServer } from "./mcp.mjs";
 import { CLAUDE_COMMANDS, starterContent } from "./setup.mjs";
 
 const ENV_FILES = [".env", ".env.local", ".env.development", ".env.production"];
@@ -88,12 +88,11 @@ export function takeInventory(dir) {
     }
   }
   for (const editor of EDITORS) {
-    const path = configPath(dir, editor.id);
-    const config = existsSync(path) ? readJson(path) : null;
-    const key = editor.id === "vscode" ? "servers" : "mcpServers";
-    if (config?.[key]?.likyly) setup.push({ what: "mcp", path: relative(dir, path), note: editor.label ?? editor.id });
+    if (hasLikylyServer(dir, editor.id)) setup.push({ what: "mcp", path: relative(dir, configPath(dir, editor.id)), note: editor.label ?? editor.id });
   }
-  if (existsSync(join(dir, ".claude/skills/likyly"))) setup.push({ what: "skill", path: ".claude/skills/likyly" });
+  for (const skillDir of SKILL_DIRS) {
+    if (existsSync(join(dir, skillDir, "likyly"))) setup.push({ what: "skill", path: `${skillDir}/likyly` });
+  }
   for (const file of CLAUDE_COMMANDS) {
     if (existsSync(join(dir, ".claude/commands", file))) setup.push({ what: "command", path: `.claude/commands/${file}`, note: `/${file.replace(/\.md$/, "")}` });
   }

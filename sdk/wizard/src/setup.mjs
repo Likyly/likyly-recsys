@@ -254,11 +254,11 @@ export function readSkill() {
   return null;
 }
 
-/** Install the skill for Claude Code (`.claude/skills/likyly/SKILL.md`). */
-export function writeSkill(dir, { dryRun = false } = {}) {
+/** Install the skill where a tool reads project skills (`<skillDir>/likyly/SKILL.md`; Claude Code by default). */
+export function writeSkill(dir, { dryRun = false, skillDir = ".claude/skills" } = {}) {
   const skill = readSkill();
   if (!skill) return null;
-  const path = join(dir, ".claude", "skills", "likyly", "SKILL.md");
+  const path = join(dir, skillDir, "likyly", "SKILL.md");
   const status = existsSync(path) ? "updated" : "created";
   if (!dryRun) {
     mkdirSync(dirname(path), { recursive: true });

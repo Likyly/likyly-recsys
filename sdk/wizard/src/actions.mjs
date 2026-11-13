@@ -2,7 +2,7 @@
 // renderer run exactly the same code. A result is { level: "ok" | "warn" | "fail", text, hint? }.
 
 import { relative } from "node:path";
-import { EDITORS } from "./frameworks.mjs";
+import { EDITORS, editorById } from "./frameworks.mjs";
 import { configPath, writeMcpConfig } from "./mcp.mjs";
 import { commandExists, runAsync, writeClaudeCommands, writeCredentials, writeEnv, writeKeyFile, writeSkill, writeStarter } from "./setup.mjs";
 import { checkCompat, describeCompat } from "./compat.mjs";
@@ -78,20 +78,25 @@ export function applyStarter(opts, project) {
   return starter.status === "created" ? [ok(`Starter file ${rel}`)] : [info(`${rel} already in place, left as is`)];
 }
 
-/** Connect each chosen AI assistant to the LIKYLY MCP server (+ the skill for Claude Code). */
+/** Connect each chosen AI assistant to the LIKYLY MCP server, and give it the LIKYLY skill. */
 export function connectEditors(opts, editors) {
   const results = [];
-  for (const editor of editors) {
+  for (const id of editors) {
     try {
-      const { path, replaced } = writeMcpConfig(opts.dir, editor, { hosted: opts.hosted, dryRun: opts.dryRun });
-      results.push(ok(`${editorLabel(editor)} → ${relative(opts.dir, path)}${replaced ? " (updated)" : ""}`));
+      const { path, replaced } = writeMcpConfig(opts.dir, id, { hosted: opts.hosted, dryRun: opts.dryRun });
+      results.push(ok(`${editorLabel(id)} → ${relative(opts.dir, path)}${replaced ? " (updated)" : ""}`));
+      if (editorById(id)?.trust) results.push(info(`${editorLabel(id)} reads it once you trust this folder (it asks the first time it opens here)`));
     } catch (err) {
       results.push(fail(err.message));
     }
   }
-  if (editors.includes("claude-code")) {
-    const skill = writeSkill(opts.dir, { dryRun: opts.dryRun });
+  // One copy of the skill per folder those tools read (.agents/skills serves several of them).
+  const skillDirs = [...new Set(editors.map((id) => editorById(id)?.skillDir).filter(Boolean))];
+  for (const skillDir of skillDirs) {
+    const skill = writeSkill(opts.dir, { dryRun: opts.dryRun, skillDir });
     if (skill) results.push(ok(`LIKYLY skill → ${relative(opts.dir, skill.path)}`));
+  }
+  if (editors.includes("claude-code")) {
     const command = writeClaudeCommands(opts.dir, { dryRun: opts.dryRun });
     results.push(ok(`Claude Code commands ${command.names.join(", ")} → ${relative(opts.dir, command.path)}`));
   }

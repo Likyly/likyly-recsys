@@ -6,7 +6,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { homedir } from "node:os";
 import { useEffect, useRef, useState } from "react";
 import { Box, Static, Text, render, useApp, useStdout, useWindowSize } from "ink";
-import { EDITORS, detectEditors, detectProject } from "../frameworks.mjs";
+import { EDITORS, detectEditors, detectProject, installedEditors } from "../frameworks.mjs";
 import { KEY_ENV } from "../mcp.mjs";
 import { commandExists } from "../setup.mjs";
 import { checkCompat, describeCompat } from "../compat.mjs";
@@ -208,6 +208,7 @@ function NextAction({ editors, canReview, onPick }) {
   const items = [];
   if (editors.includes("claude-code") && commandExists("claude")) items.push({ label: "Launch Claude Code now", value: "claude", hint: "it starts on this prompt" });
   if (canReview) items.push({ label: "Review the changes first", value: "review", hint: "git diff of what LIKYLY changed" });
+  if (editors.includes("codex") && commandExists("codex")) items.push({ label: "Launch Codex now", value: "codex", hint: "it starts on this prompt" });
   if (editors.includes("cursor") && commandExists("cursor")) items.push({ label: "Open Cursor", value: "cursor", hint: "the prompt is copied, paste it in the chat" });
   items.push({ label: "Copy the prompt and exit", value: "copy" });
   items.push({ label: "Exit", value: "exit" });
@@ -311,6 +312,8 @@ function App({ opts: initialOpts, result }) {
   }
 
   const detected = detectEditors(opts.dir);
+  // Installed on this machine, or already used in this project: those are ticked to begin with.
+  const [installed] = useState(() => installedEditors());
   // In a git repository, offer a branch of its own so the developer can review before merging.
   const offerBranch = Boolean(repo && !opts.dryRun && repo.branch !== git.BRANCH);
   const current = repo?.branch ?? "the current branch";
@@ -399,11 +402,19 @@ function App({ opts: initialOpts, result }) {
     mcp: () =>
       opts.editors ? null : (
         <>
-          <Text color={C.muted}>Which assistants should talk to LIKYLY? No key is ever written in these files.</Text>
+          <Text color={C.muted}>Which assistants should talk to LIKYLY? Each gets the MCP server and the LIKYLY skill. No key is ever written in these files.</Text>
           <Box marginTop={1}>
             <MultiSelect
-              items={EDITORS.map((e) => ({ value: e.id, label: e.label, hint: e.file, badge: detected.includes(e.id) ? "detected" : undefined }))}
-              initial={detected.length ? detected : ["claude-code"]}
+              items={EDITORS.map((e) => ({
+                value: e.id,
+                label: e.label,
+                hint: e.file,
+                badge: detected.includes(e.id) ? "in this project" : installed.includes(e.id) ? "installed" : undefined,
+              }))}
+              initial={(() => {
+                const ticked = EDITORS.map((e) => e.id).filter((id) => detected.includes(id) || installed.includes(id));
+                return ticked.length ? ticked : ["claude-code"];
+              })()}
               onSubmit={connect}
             />
           </Box>
@@ -463,6 +474,9 @@ function launch(choice, dir, files = []) {
   if (choice === "claude") {
     console.log("\n  Starting Claude Code…\n");
     spawnSync("claude", [AGENT_PROMPT], { cwd: dir, stdio: "inherit", shell: process.platform === "win32" });
+  } else if (choice === "codex") {
+    console.log("\n  Starting Codex…\n");
+    spawnSync("codex", [AGENT_PROMPT], { cwd: dir, stdio: "inherit", shell: process.platform === "win32" });
   } else if (choice === "cursor") {
     copyToClipboard(AGENT_PROMPT);
     spawn("cursor", [dir], { stdio: "ignore", detached: true }).unref();

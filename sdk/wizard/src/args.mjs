@@ -36,7 +36,7 @@ ${blue("Commands")}
 ${blue("Options")}
   --dir <path>           project folder ${dim("(default: current folder)")}
   --public-key <key>     your LIKYLY public key ${dim("(asked otherwise)")}
-  --editor <ids>         claude-code,cursor,vscode ${dim("(default: the detected ones)")}
+  --editor <ids>         ${EDITORS.map((e) => e.id).join(",")} ${dim("(default: the detected ones)")}
   --placement <slug>     with cache clear: the placement to empty (default: all)
   --branch <new|current> with uninstall, in a git repository: work on a new branch
                          likyly/uninstall, or on the current one (asked otherwise)

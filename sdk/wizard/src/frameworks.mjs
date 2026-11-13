@@ -3,7 +3,9 @@
 // add them, which env file and variable name the framework exposes to the browser, and which
 // starter file (if any) to write.
 
+import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 
 const JS_SDK = "@likyly/sdk";
@@ -263,12 +265,48 @@ export function detectProject(dir) {
   return wp ?? phpFramework ?? detectJs(dir) ?? php ?? detectPython(dir) ?? detectOthers(dir);
 }
 
-/** AI coding tools whose project-level MCP config we know how to write. */
+/**
+ * AI coding tools whose project-level MCP config we know how to write (formats checked against
+ * each tool's docs, 2026-11). Per tool:
+ * - `file` / `format`: the MCP config (JSON under `serversKey`, or a TOML block for Codex and
+ *   Mistral Vibe);
+ * - `keyRef`: how the tool expands an environment variable in that file, when it does so without
+ *   extra setup. Tools without one get no key reference at all: the LIKYLY server then reads the
+ *   developer key from the environment or from .likyly/credentials.env (found from its working
+ *   directory, the project);
+ * - `workspaceVar`: the tool's variable for the project folder, when it has one;
+ * - `skillDir`: where the tool reads project skills (`.agents/skills` is the shared one);
+ * - `detect`: folders that show the project already uses the tool; `commands` / `apps`: signs the
+ *   tool is installed on this machine;
+ * - `trust`: the tool only reads project config in a folder the developer trusted.
+ * Not here: Windsurf / Devin Desktop (MCP config is global only) and opencode (config format in
+ * flux).
+ */
+const JETBRAINS_IDES = ["IntelliJ IDEA", "IntelliJ IDEA Ultimate", "IntelliJ IDEA CE", "PhpStorm", "WebStorm", "PyCharm", "PyCharm Professional Edition", "PyCharm CE", "GoLand", "Rider", "RubyMine", "CLion", "RustRover"];
 export const EDITORS = [
-  { id: "claude-code", label: "Claude Code", file: ".mcp.json", detect: (dir) => has(dir, ".mcp.json", ".claude", "CLAUDE.md") },
-  { id: "cursor", label: "Cursor", file: ".cursor/mcp.json", detect: (dir) => has(dir, ".cursor", ".cursorrules") },
-  { id: "vscode", label: "VS Code (Copilot)", file: ".vscode/mcp.json", detect: (dir) => has(dir, ".vscode") },
+  { id: "claude-code", label: "Claude Code", file: ".mcp.json", format: "json", serversKey: "mcpServers", keyRef: "${LIKYLY_DEVELOPER_KEY:-}", skillDir: ".claude/skills", detect: (dir) => has(dir, ".mcp.json", ".claude", "CLAUDE.md"), commands: ["claude"], apps: [] },
+  { id: "cursor", label: "Cursor", file: ".cursor/mcp.json", format: "json", serversKey: "mcpServers", keyRef: "${env:LIKYLY_DEVELOPER_KEY}", workspaceVar: "${workspaceFolder}", skillDir: ".agents/skills", detect: (dir) => has(dir, ".cursor", ".cursorrules"), commands: ["cursor"], apps: ["Cursor"] },
+  { id: "vscode", label: "VS Code (Copilot)", file: ".vscode/mcp.json", format: "json", serversKey: "servers", keyRef: "${env:LIKYLY_DEVELOPER_KEY}", workspaceVar: "${workspaceFolder}", skillDir: ".github/skills", detect: (dir) => has(dir, ".vscode"), commands: ["code"], apps: ["Visual Studio Code"] },
+  { id: "codex", label: "Codex (OpenAI)", file: ".codex/config.toml", format: "codex-toml", skillDir: ".agents/skills", detect: (dir) => has(dir, ".codex"), commands: ["codex"], apps: ["Codex"], trust: true },
+  { id: "antigravity", label: "Antigravity (Google, ex-Gemini CLI)", file: ".agents/mcp_config.json", format: "json", serversKey: "mcpServers", skillDir: ".agents/skills", detect: (dir) => has(dir, ".agents/mcp_config.json", ".gemini"), commands: ["antigravity", "agy", "gemini"], apps: ["Antigravity"] },
+  { id: "mistral-vibe", label: "Mistral Vibe", file: ".vibe/config.toml", format: "vibe-toml", skillDir: ".agents/skills", detect: (dir) => has(dir, ".vibe"), commands: ["vibe"], apps: [], trust: true },
+  { id: "kiro", label: "Kiro (AWS)", file: ".kiro/settings/mcp.json", format: "json", serversKey: "mcpServers", skillDir: ".kiro/skills", detect: (dir) => has(dir, ".kiro"), commands: ["kiro", "kiro-cli"], apps: ["Kiro"] },
+  { id: "junie", label: "Junie (JetBrains)", file: ".junie/mcp/mcp.json", format: "json", serversKey: "mcpServers", skillDir: ".junie/skills", detect: (dir) => has(dir, ".junie"), commands: ["junie"], apps: JETBRAINS_IDES },
 ];
+
+export const editorById = (id) => EDITORS.find((e) => e.id === id);
+
+function onPath(bin) {
+  const probe = process.platform === "win32" ? ["where", [bin]] : ["sh", ["-c", `command -v ${JSON.stringify(bin)}`]];
+  return spawnSync(probe[0], probe[1], { stdio: "ignore" }).status === 0;
+}
+
+/** The tools installed on this machine: a command on the PATH, or (macOS) the app. */
+export function installedEditors({ home = homedir(), platform = process.platform, commandExists = onPath } = {}) {
+  const appInstalled = (app) =>
+    platform === "darwin" && [join("/Applications", `${app}.app`), join(home, "Applications", `${app}.app`)].some((p) => existsSync(p));
+  return EDITORS.filter((e) => e.commands.some(commandExists) || e.apps.some(appInstalled)).map((e) => e.id);
+}
 
 export function detectEditors(dir) {
   return EDITORS.filter((e) => e.detect(dir)).map((e) => e.id);

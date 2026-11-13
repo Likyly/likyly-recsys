@@ -5,8 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { detectProject, detectEditors } from "../src/frameworks.mjs";
-import { mergeConfig, writeMcpConfig } from "../src/mcp.mjs";
+import { detectProject, detectEditors, installedEditors, EDITORS } from "../src/frameworks.mjs";
+import { mergeConfig, writeMcpConfig, removeTomlBlock } from "../src/mcp.mjs";
 import { isServerOnlyKey, writeEnv, writeStarter } from "../src/setup.mjs";
 import { parseArgs } from "../src/cli.mjs";
 import { describePlan, installMode } from "../src/actions.mjs";
@@ -453,4 +453,81 @@ test("an unrecognised folder says so and exits with an error", () => {
   const res = runCli(["--yes", "--dir", dir], dir);
   assert.equal(res.status, 1);
   assert.match(res.stdout + res.stderr, /No project recognised here .*Shopify theme/);
+});
+
+
+// --- Every supported assistant: Codex, Antigravity, Mistral Vibe, Kiro, Junie ------------------
+
+test("Codex: a TOML block that keeps the rest of the file, updates in place, and comes out cleanly", () => {
+  const dir = project({ ".codex/config.toml": 'model = "gpt-5"\n\n[mcp_servers.other]\ncommand = "x"\n' });
+  const first = writeMcpConfig(dir, "codex");
+  assert.equal(first.replaced, false);
+  let text = readFileSync(join(dir, ".codex/config.toml"), "utf8");
+  assert.match(text, /^model = "gpt-5"/);
+  assert.match(text, /\[mcp_servers\.other\]/);
+  assert.match(text, /\[mcp_servers\.likyly\]\ncommand = "npx"\nargs = \["-y", "-p", "@likyly\/mcp-server", "likyly-mcp-server"\]\nenv_vars = \["LIKYLY_DEVELOPER_KEY"\]/);
+  assert.doesNotMatch(text, /lk_|LIKYLY_API_KEY/, "never a key in the file");
+
+  assert.equal(writeMcpConfig(dir, "codex").replaced, true);
+  text = readFileSync(join(dir, ".codex/config.toml"), "utf8");
+  assert.equal(text.match(/\[mcp_servers\.likyly\]/g).length, 1, "updated, not duplicated");
+  assert.equal(removeTomlBlock(text), 'model = "gpt-5"\n\n[mcp_servers.other]\ncommand = "x"\n');
+});
+
+test("Codex and Vibe: a likyly server written by hand is left alone", () => {
+  const dir = project({ ".codex/config.toml": '[mcp_servers.likyly]\ncommand = "mine"\n', ".vibe/config.toml": '[[mcp_servers]]\nname = "likyly"\n' });
+  assert.throws(() => writeMcpConfig(dir, "codex"), /already defines a likyly server/);
+  assert.throws(() => writeMcpConfig(dir, "mistral-vibe"), /already defines a likyly server/);
+});
+
+test("Mistral Vibe: an [[mcp_servers]] entry, stdio", () => {
+  const dir = project({});
+  writeMcpConfig(dir, "mistral-vibe");
+  const text = readFileSync(join(dir, ".vibe/config.toml"), "utf8");
+  assert.match(text, /\[\[mcp_servers\]\]\nname = "likyly"\ntransport = "stdio"\ncommand = "npx"/);
+});
+
+test("Antigravity, Kiro, Junie: mcpServers in their own file, no key reference (read from the credentials file)", () => {
+  const dir = project({});
+  for (const [id, file] of [["antigravity", ".agents/mcp_config.json"], ["kiro", ".kiro/settings/mcp.json"], ["junie", ".junie/mcp/mcp.json"]]) {
+    writeMcpConfig(dir, id);
+    const entry = JSON.parse(readFileSync(join(dir, file), "utf8")).mcpServers.likyly;
+    assert.equal(entry.command, "npx", id);
+    assert.deepEqual(Object.keys(entry.env), ["LIKYLY_BASE_URL"], id);
+  }
+});
+
+test("the original three keep their exact config", () => {
+  assert.equal(mergeConfig("claude-code", null).config.mcpServers.likyly.env.LIKYLY_API_KEY, "${LIKYLY_DEVELOPER_KEY:-}");
+  assert.equal(mergeConfig("cursor", null).config.mcpServers.likyly.env.LIKYLY_ENV_FILE, "${workspaceFolder}/.likyly/credentials.env");
+  assert.equal(mergeConfig("vscode", null).config.servers.likyly.type, "stdio");
+});
+
+test("end to end: every assistant gets its config, and the skill once per folder it reads", () => {
+  const dir = project({ ...pkg({ next: "16", react: "19" }), "app/": "" });
+  const all = EDITORS.map((e) => e.id).join(",");
+  const res = runCli(["--yes", "--no-install", "--public-key", "pk_test", "--editor", all, "--dir", dir], dir);
+  assert.equal(res.status, 0, res.stdout + res.stderr);
+  for (const e of EDITORS) assert.ok(existsSync(join(dir, e.file)), e.file);
+  for (const d of [".claude/skills", ".agents/skills", ".github/skills", ".kiro/skills", ".junie/skills"]) assert.ok(existsSync(join(dir, d, "likyly/SKILL.md")), d);
+  assert.equal(res.stdout.match(/LIKYLY skill → \.agents\/skills/g).length, 1, ".agents/skills is shared: written once");
+  assert.match(res.stdout, /trust this folder/);
+
+  const inventory = runCli(["inventory", "--json", "--dir", dir], dir);
+  const listed = JSON.parse(inventory.stdout).setup.filter((s) => s.what === "mcp").map((s) => s.path).sort();
+  assert.deepEqual(listed, EDITORS.map((e) => e.file).sort());
+
+  const un = runCli(["uninstall", "--yes", "--dir", dir], dir);
+  assert.equal(un.status, 0, un.stdout + un.stderr);
+  for (const e of EDITORS) assert.equal(existsSync(join(dir, e.file)), false, e.file);
+  for (const d of [".claude/skills", ".agents/skills", ".github/skills", ".kiro/skills", ".junie/skills"]) assert.equal(existsSync(join(dir, d, "likyly")), false, d);
+});
+
+test("installed assistants: a command on the PATH or a macOS app", () => {
+  const home = mkdtempSync(join(tmpdir(), "likyly-home-"));
+  mkdirSync(join(home, "Applications", "Kiro.app"), { recursive: true });
+  const found = installedEditors({ home, platform: "darwin", commandExists: (bin) => bin === "codex" || bin === "vibe" });
+  assert.ok(found.includes("codex") && found.includes("mistral-vibe") && found.includes("kiro"), found.join(","));
+  assert.ok(!found.includes("claude-code"));
+  assert.deepEqual(installedEditors({ home, platform: "linux", commandExists: () => false }), [], "apps only count on macOS");
 });

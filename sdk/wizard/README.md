@@ -27,10 +27,25 @@ An interactive terminal UI (built with [Ink](https://github.com/vadimdemedes/ink
    skip. The key is written under the name the framework exposes to the browser
    (`NEXT_PUBLIC_LIKYLY_KEY`, `VITE_LIKYLY_KEY`, `PUBLIC_LIKYLY_KEY`…), plus a starter file (React
    provider, Nuxt plugin, SvelteKit module…). Secret (`sk_`) and developer (`lk_`) keys are refused.
-5. **Connect your AI assistant** to the [LIKYLY MCP server](https://www.npmjs.com/package/@likyly/mcp-server): `.mcp.json` (Claude Code, plus
-   the skill in `.claude/skills/likyly`), `.cursor/mcp.json` (Cursor), `.vscode/mcp.json` (VS Code).
-   The developer key is never written to these files: they reference `LIKYLY_DEVELOPER_KEY` (or VS
-   Code asks for it on start).
+5. **Connect your AI assistant** to the [LIKYLY MCP server](https://www.npmjs.com/package/@likyly/mcp-server)
+   and give it the LIKYLY skill. The assistants installed on your machine (or already used in
+   the project) are ticked to begin with:
+
+   | Assistant | MCP config | Skill |
+   |---|---|---|
+   | Claude Code | `.mcp.json` | `.claude/skills/likyly` (+ the `/likyly-*` commands) |
+   | Cursor | `.cursor/mcp.json` | `.agents/skills/likyly` |
+   | VS Code (Copilot) | `.vscode/mcp.json` | `.github/skills/likyly` |
+   | Codex (OpenAI) | `.codex/config.toml` | `.agents/skills/likyly` |
+   | Antigravity (Google, ex-Gemini CLI) | `.agents/mcp_config.json` | `.agents/skills/likyly` |
+   | Mistral Vibe | `.vibe/config.toml` | `.agents/skills/likyly` |
+   | Kiro (AWS) | `.kiro/settings/mcp.json` | `.kiro/skills/likyly` |
+   | Junie (JetBrains) | `.junie/mcp/mcp.json` | `.junie/skills/likyly` |
+
+   The developer key is never written to these files: they reference `LIKYLY_DEVELOPER_KEY`
+   where the tool expands variables, otherwise the server reads `.likyly/credentials.env`.
+   Codex and Mistral Vibe read project config only in a folder you trusted. Not supported:
+   Windsurf / Devin Desktop (its MCP config is global, not per project).
 
 6. **Verify the installation**: SDK installed and its version, your stack supported (Next.js
    13+, React 18–19, Node 18+, ...), public and developer keys accepted by the API, assistants
@@ -40,7 +55,7 @@ Before that, it lists what it changed in your project - apart from what you had 
 modified - and what git does not track on purpose (`.env.local`, `.likyly/`). Review it in VS
 Code's Source Control panel or with `git diff`; "Review the changes first" opens the diff.
 
-It ends on one choice, Enter by default: **Launch Claude Code** on the integration prompt (or open
+It ends on one choice, Enter by default: **Launch Claude Code** (or **Codex**) on the integration prompt (or open
 Cursor with the prompt copied). Your assistant then connects the catalog, creates the placement,
 wires it into your pages and validates the integration - ask it in plain words ("check my LIKYLY
 integration", "empty the LIKYLY cache"), there are no commands to learn.
