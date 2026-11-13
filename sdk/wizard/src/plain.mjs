@@ -54,7 +54,7 @@ export async function runPlain(opts) {
   const project = detectProject(opts.dir);
   step(1, 4, "Detect the project");
   if (!project) {
-    report([{ level: "warn", text: "No framework recognised here. Run it at your project root, or follow", hint: DOCS_URL }]);
+    report([{ level: "warn", text: "No project recognised here (no package.json, composer.json, pyproject.toml, Gemfile, go.mod, Cargo.toml, .csproj, pom.xml, WordPress or Shopify theme). Run it at your project root, or follow", hint: DOCS_URL }]);
     return 1;
   }
   report([{ level: "ok", text: `${project.label}${project.packageManager ? ` (${project.packageManager})` : ""}` }]);

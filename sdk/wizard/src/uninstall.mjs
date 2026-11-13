@@ -92,6 +92,12 @@ export function planUninstall(dir) {
     }
   }
 
+  // The public key snippet of a Shopify theme: written by the wizard, holds nothing else.
+  if (project?.keyFile && existsSync(join(dir, project.keyFile))) {
+    const path = join(dir, project.keyFile);
+    steps.push({ label: `Delete ${project.keyFile}`, run: () => unlinkSync(path) });
+  }
+
   // The likyly server in each assistant's MCP config; a file left with nothing else goes too.
   for (const editor of EDITORS) {
     const path = configPath(dir, editor.id);

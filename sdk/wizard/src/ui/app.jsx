@@ -245,17 +245,24 @@ function App({ opts: initialOpts, result }) {
     setPrinted((p) => [...p, { key: id, kind: "step", title: order.find(([k]) => k === id)[1], ...st }]);
   };
   const failed = Object.values(steps).some((s) => s.status === "fail");
+  // Leaving is deferred to after the next render: calling exit() right after finish() would
+  // unmount before <Static> prints that last step (a failed detection showed nothing at all).
+  const [leaving, setLeaving] = useState(false);
   const end = (code, launch = null, files = []) => {
     result.code = code;
     result.launch = launch;
     result.files = files;
-    exit();
+    setPhase("end");
+    setLeaving(true);
   };
+  useEffect(() => {
+    if (leaving) exit();
+  }, [leaving]);
 
   useEffect(() => {
     if (phase === "detect") {
       if (!project) {
-        finish("detect", [{ level: "fail", text: "No framework recognised here. Run it at your project root, or follow", hint: DOCS_URL }]);
+        finish("detect", [{ level: "fail", text: "No project recognised here (no package.json, composer.json, pyproject.toml, Gemfile, go.mod, Cargo.toml, .csproj, pom.xml, WordPress or Shopify theme). Run it at your project root, or follow", hint: DOCS_URL }]);
         end(1);
         return;
       }

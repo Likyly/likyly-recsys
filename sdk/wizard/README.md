@@ -12,8 +12,9 @@ An interactive terminal UI (built with [Ink](https://github.com/vadimdemedes/ink
 
 1. **Detect your project**: the framework from the project's own files (`package.json`,
    `composer.json`, `pyproject.toml`, `Gemfile`, `go.mod`, `Cargo.toml`, `*.csproj`, `pom.xml`,
-   `wp-config.php`) and the package manager already in use (npm, pnpm, yarn, bun, composer, uv,
-   poetry, bundler…).
+   `wp-config.php`, a Shopify theme's `layout/theme.liquid`) and the package manager already in
+   use (npm, pnpm, yarn, bun, composer, uv, poetry, bundler…). Nothing recognised: it says so and
+   stops.
 2. **Review the plan**: every command it will run and every file it will write, before anything
    happens. Nothing existing is overwritten. In a git repository it offers to work on a new
    branch, `likyly/setup` (your uncommitted work comes along, untouched), and it never commits.
@@ -69,6 +70,18 @@ can take them out. Your LIKYLY account (catalog, placements, keys) is not touche
 The developer key comes back from the browser sign-in too and is stored in
 `.likyly/credentials.env` (that folder ignores itself in git, file readable by you only); the
 MCP server reads it there, so nothing needs exporting.
+
+## Shopify themes
+
+Run it in a theme pulled with Shopify CLI (`shopify theme pull --store <shop>.myshopify.com`).
+Nothing is installed: the wizard writes the public key to `snippets/likyly-key.liquid` and adds
+`sections/likyly-recommendations.liquid`, a self-contained section (the SDK comes from jsDelivr)
+that sends the product view, shows the products LIKYLY recommends - read from the store itself,
+so prices follow the visitor's currency - and tracks impressions and clicks. Add it from the
+theme editor (*Add section → LIKYLY recommendations*) or let your assistant put it in
+`templates/product.json`, then preview with `shopify theme dev` and publish with
+`shopify theme push`. The catalog comes from the `shopify` source (a Dev Dashboard app's client
+id and secret, or a `shpat_` token).
 
 ## What it looks like
 

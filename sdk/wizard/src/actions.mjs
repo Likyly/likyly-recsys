@@ -4,7 +4,7 @@
 import { relative } from "node:path";
 import { EDITORS } from "./frameworks.mjs";
 import { configPath, writeMcpConfig } from "./mcp.mjs";
-import { commandExists, runAsync, writeClaudeCommands, writeCredentials, writeEnv, writeSkill, writeStarter } from "./setup.mjs";
+import { commandExists, runAsync, writeClaudeCommands, writeCredentials, writeEnv, writeKeyFile, writeSkill, writeStarter } from "./setup.mjs";
 import { checkCompat, describeCompat } from "./compat.mjs";
 import { checkKey, installedPackages } from "./verify.mjs";
 import { existsSync } from "node:fs";
@@ -35,7 +35,7 @@ export async function installSdk(opts, project, onLine) {
     case "plugin":
       return [warn("WordPress: install the LIKYLY plugin, then paste your two keys in the LIKYLY menu of your admin.", WP_PLUGIN_URL)];
     case "none":
-      return [];
+      return project.next ? [info("Nothing to install. Then run:", project.next)] : [];
     case "manual":
       return [warn("Run it yourself:", line)];
     case "missing":
@@ -55,6 +55,12 @@ export async function installSdk(opts, project, onLine) {
 
 /** Write the public key to the env file the framework exposes to the browser. */
 export function applyKey(opts, project, key) {
+  if (project.keyFile) {
+    if (!key) return [warn(`Add it later: put your public key (pk_...) alone in ${project.keyFile}`)];
+    const res = writeKeyFile(opts.dir, project.keyFile, key, { dryRun: opts.dryRun });
+    if (res.status === "same") return [info(`${project.keyFile} already holds this key`)];
+    return [ok(`Public key → ${project.keyFile}${res.status === "updated" ? " (updated)" : ""}`)];
+  }
   if (!project.envFile || !project.envVar) return [warn("Add your public key to the app configuration.", DOCS_URL)];
   if (!key) return [warn(`Add it later to ${project.envFile}:`, `${project.envVar}=pk_...`)];
   const res = writeEnv(opts.dir, project.envFile, project.envVar, key, { dryRun: opts.dryRun });
@@ -100,6 +106,7 @@ export function describePlan(opts, project) {
   else if (mode === "manual" || mode === "missing") rows.push(["Show", project.install.cmd.join(" ")]);
   else if (mode === "plugin") rows.push(["Plugin", "LIKYLY for WordPress / WooCommerce"]);
   if (project.envFile && project.envVar) rows.push(["Key", `${project.envVar} → ${project.envFile}`]);
+  if (project.keyFile) rows.push(["Key", project.keyFile]);
   if (project.starter) rows.push(["Create", project.starter.path]);
   rows.push(["Connect", "your AI assistant to the LIKYLY MCP server"]);
   return rows;

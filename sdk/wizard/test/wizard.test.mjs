@@ -415,3 +415,42 @@ test("help is a command too", () => {
   assert.equal(parseArgs(["help"]).command, "help");
   assert.throws(() => parseArgs(["uninstall", "--branch", "elsewhere"]), /--branch expects new or current/);
 });
+
+const shopifyTheme = () =>
+  project({ "layout/theme.liquid": "<html></html>", "config/settings_schema.json": "[]", "sections/main-product.liquid": "", "package.json": { devDependencies: { prettier: "3" } } });
+
+test("detects a Shopify theme, even with a package.json for its tooling", () => {
+  const found = detectProject(shopifyTheme());
+  assert.equal(found.id, "shopify");
+  assert.equal(found.install, null);
+  assert.equal(found.starter.path, "sections/likyly-recommendations.liquid");
+  assert.equal(detectProject(project({ "layout/theme.liquid": "" }))?.id, undefined, "a lone theme.liquid is not enough");
+});
+
+test("end to end: a Shopify theme gets the key snippet and the section, nothing else", () => {
+  const dir = shopifyTheme();
+  const res = runCli(["--yes", "--public-key", "pk_test_shop", "--dir", dir], dir);
+  assert.equal(res.status, 0, res.stderr);
+  assert.match(res.stdout, /Shopify theme/);
+  assert.match(res.stdout, /shopify theme dev/);
+  assert.match(readFileSync(join(dir, "snippets/likyly-key.liquid"), "utf8"), /endcomment -%}pk_test_shop\n$/);
+  const section = readFileSync(join(dir, "sections/likyly-recommendations.liquid"), "utf8");
+  // The schema is valid JSON, and the module script is valid JavaScript.
+  JSON.parse(section.match(/{% schema %}([\s\S]*){% endschema %}/)[1]);
+  const script = section.match(/<script type="module">([\s\S]*)<\/script>/)[1].replace(/^\s*import .*$/m, "");
+  const check = spawnSync(process.execPath, ["--input-type=module", "--check"], { input: script, encoding: "utf8" });
+  assert.equal(check.status, 0, check.stderr);
+  assert.doesNotMatch(section, /[éèàçù]/);
+
+  // A new key replaces the old one; the same key leaves the file alone.
+  runCli(["--yes", "--public-key", "pk_test_new", "--dir", dir], dir);
+  assert.match(readFileSync(join(dir, "snippets/likyly-key.liquid"), "utf8"), /pk_test_new/);
+  assert.doesNotMatch(readFileSync(join(dir, "snippets/likyly-key.liquid"), "utf8"), /pk_test_shop/);
+});
+
+test("an unrecognised folder says so and exits with an error", () => {
+  const dir = project({});
+  const res = runCli(["--yes", "--dir", dir], dir);
+  assert.equal(res.status, 1);
+  assert.match(res.stdout + res.stderr, /No project recognised here .*Shopify theme/);
+});

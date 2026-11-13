@@ -227,9 +227,34 @@ function detectOthers(dir) {
   return null;
 }
 
+/**
+ * A Shopify theme (Online Store 2.0), as `shopify theme pull` writes it. No package to install:
+ * the section loads the SDK from jsDelivr, the public key lives in a snippet, and the developer
+ * adds the section from the theme editor.
+ */
+function detectShopify(dir) {
+  if (!has(dir, "layout/theme.liquid") || !has(dir, "config/settings_schema.json")) return null;
+  return {
+    id: "shopify",
+    label: "Shopify theme",
+    language: "liquid",
+    sdkDocs: "typescript",
+    packages: [],
+    install: null,
+    envFile: null,
+    envVar: null,
+    keyFile: "snippets/likyly-key.liquid",
+    starter: { path: "sections/likyly-recommendations.liquid", template: "shopify-section" },
+    next: "shopify theme dev (preview), then shopify theme push",
+  };
+}
+
 /** Detect the project in `dir`. Returns `null` when nothing recognisable is found. */
 export function detectProject(dir) {
-  // WordPress first: a WP install often ships a package.json for its theme tooling.
+  // A Shopify theme first: theme tooling may add a package.json, it is still a theme.
+  const shopify = detectShopify(dir);
+  if (shopify) return shopify;
+  // WordPress next: a WP install often ships a package.json for its theme tooling.
   const wp = has(dir, "wp-config.php", "wp-config-sample.php", "wp-content") ? detectPhp(dir) : null;
   // A PHP framework next to a package.json (Laravel ships Vite, Symfony may ship Encore) is a PHP
   // project: its package.json only builds the front assets.

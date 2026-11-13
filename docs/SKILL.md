@@ -88,6 +88,11 @@ URL, or call the push endpoint from their own code when products change.
    `credentials` shape looks like.
 2. `create_data_source` with the type that matches what the developer described (a REST API,
    a CSV, Shopify, ...). This only saves configuration - nothing is fetched yet.
+   Shopify credentials are either `{"access_token": "shpat_..."}` (a legacy custom app) or
+   `{"client_id", "client_secret"}` of an app made in Shopify's Dev Dashboard and installed on
+   the store with `read_products` (the only kind new stores can create since 2026; LIKYLY
+   renews its 24 h tokens itself). Ask the developer for them; never write them into the theme
+   or any file git tracks.
 3. `test_data_source` - confirms LIKYLY can actually reach it. Fix the config/credentials and
    retry if it fails; don't move on with a broken connection.
 4. `preview_data_source` - a small real sample plus a suggested field mapping.
@@ -163,6 +168,16 @@ commit only the files you changed (not their pending work), push the branch and 
      requirements` named. Use `LikylySession` (from `@likyly/sdk`, exposed as
      `useLikyly().session` under `@likyly/react`) for an anonymous session id if the project
      has none of its own yet.
+   - A Shopify theme (`layout/theme.liquid`, where the wizard wrote
+     `sections/likyly-recommendations.liquid` and `snippets/likyly-key.liquid`): write no new
+     code - the section already loads the SDK, sends the product view, renders the cards from
+     the store's own `/products/<handle>.js` and tracks impressions and clicks. Add it to
+     `templates/product.json`: a `"likyly-recommendations"` entry in `sections` with `"type":
+     "likyly-recommendations"` and `"settings": {"placement": "<the slug you created>"}`, and its
+     key in `order` right after the main product section. The ids it sends are Shopify's numeric
+     product ids and it needs the handle in `url`: the `shopify` source's default mapping gives
+     exactly that. Tell the developer to preview with `shopify theme dev --store <shop>` and to
+     publish with `shopify theme push`.
    - Anything else: `likyly.recommend({ placement, context })`, render the items yourself,
      call `likyly.events.recommendationImpression`/`recommendationClick` for the events
      `<LikylyRecommendations>` would have handled automatically.
