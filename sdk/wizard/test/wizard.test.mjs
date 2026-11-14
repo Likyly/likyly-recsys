@@ -598,9 +598,11 @@ test("Shopify: a new source is created, tested and synced, with the developer ke
     "POST /data-sources": [201, { id: 7, type: "shopify", product_type: "my-shop", config: { shop_domain: "my-shop.myshopify.com" } }],
     "POST /data-sources/7/test": [200, { ok: true, message: "Connected to my-shop.myshopify.com - 1 product(s) on the first page" }],
     "POST /data-sources/7/sync": [202, { id: 1, status: "running" }],
+    "GET /data-sources/7/syncs": [200, [{ id: 1, status: "success", items_fetched: 120, items_upserted: 50, items_failed: 0 }]],
   });
-  const results = await connectShopifyCatalog({ apiKey: "lk_dev", shop: "my-shop.myshopify.com", credentials: { client_id: "a", client_secret: "b" }, fetchImpl });
+  const results = await connectShopifyCatalog({ apiKey: "lk_dev", shop: "my-shop.myshopify.com", credentials: { client_id: "a", client_secret: "b" }, fetchImpl, wait: async () => {} });
   assert.ok(results.every((r) => r.level !== "fail"), JSON.stringify(results));
+  assert.ok(results.some((r) => r.text === "50 product(s) synced to LIKYLY"), "the real outcome, not just 'started'");
   const create = calls.find((c) => c.method === "POST" && c.path === "/data-sources");
   assert.deepEqual(create.body, { name: "Shopify · my-shop.myshopify.com", type: "shopify", product_type: "my-shop", config: { shop_domain: "my-shop.myshopify.com" }, credentials: { client_id: "a", client_secret: "b" } });
   assert.deepEqual(calls.find((c) => c.path === "/data-sources/7/sync").body, { mode: "full" });
@@ -626,10 +628,10 @@ test("Shopify: a source that fails its test is deleted again; an existing one fo
     "POST /data-sources/3/test": [200, { ok: true, message: "ok" }],
     "POST /data-sources/3/sync": [429, { detail: "One sync per day on the free plan" }],
   });
-  const r2 = await connectShopifyCatalog({ apiKey: "lk", shop: "s.myshopify.com", credentials: { access_token: "shpat_x" }, fetchImpl: existing.fetchImpl });
+  const r2 = await connectShopifyCatalog({ apiKey: "lk", shop: "s.myshopify.com", credentials: { access_token: "shpat_x" }, fetchImpl: existing.fetchImpl, wait: async () => {} });
   assert.ok(!existing.calls.some((c) => c.method === "POST" && c.path === "/data-sources"), "no second source");
   assert.deepEqual(existing.calls.find((c) => c.method === "PATCH").body, { credentials: { access_token: "shpat_x" } });
-  assert.ok(r2.some((r) => r.level === "warn" && /One sync per day/.test(r.text)));
+  assert.ok(r2.some((r) => r.level === "fail" && /could not start: One sync per day/.test(r.text)));
 });
 
 test("Shopify: an API error is reported with its own message", async () => {
@@ -643,4 +645,17 @@ test("shopify command: needs a terminal", () => {
   const res = runCli(["shopify", "--yes", "--dir", dir], dir);
   assert.equal(res.status, 1);
   assert.match(res.stderr, /run it in a terminal/);
+});
+
+test("Shopify: a sync that saves nothing says why (e.g. the plan's catalog limit)", async () => {
+  const { fetchImpl } = fakeApi({
+    "GET /data-sources": [200, []],
+    "POST /data-sources": [201, { id: 4, type: "shopify", product_type: "s", config: { shop_domain: "s.myshopify.com" } }],
+    "POST /data-sources/4/test": [200, { ok: true, message: "ok" }],
+    "POST /data-sources/4/sync": [202, { id: 5, status: "running" }],
+    "GET /data-sources/4/syncs": [200, [{ id: 5, status: "failed", items_fetched: 120, items_upserted: 0, items_failed: 120, error_summary: JSON.stringify([{ stage: "upsert", message: "Free plan limit reached: 1 catalog max." }]) }]],
+  });
+  const r = await connectShopifyCatalog({ apiKey: "lk", shop: "s.myshopify.com", credentials: { access_token: "shpat_x" }, fetchImpl, wait: async () => {} });
+  const failure = r.find((x) => x.level === "fail");
+  assert.equal(failure.text, "No product saved in LIKYLY (120 rejected): Free plan limit reached: 1 catalog max.");
 });

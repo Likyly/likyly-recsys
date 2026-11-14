@@ -33,11 +33,14 @@ export function ShopifyCatalogStep({ apiKey, onDone }) {
   const [first, setFirst] = useState("");
   const [error, setError] = useState(null);
   const [credentials, setCredentials] = useState(null);
+  const [fetched, setFetched] = useState(0);
   const skip = () => onDone([{ level: "info", text: "Skipped. Connect the catalog later:", hint: LATER }], "skipped");
 
   useEffect(() => {
     if (stage !== "running") return;
-    connectShopifyCatalog({ apiKey, shop, credentials }).then((results) => onDone(results, results.some((r) => r.level === "fail") ? "not connected" : shop));
+    connectShopifyCatalog({ apiKey, shop, credentials, onProgress: setFetched }).then((results) =>
+      onDone(results, results.some((r) => r.level === "fail") ? "not connected" : shop),
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps -- runs once, when the fields are filled
   }, [stage]);
 
@@ -106,7 +109,7 @@ export function ShopifyCatalogStep({ apiKey, onDone }) {
       <Text color={C.blue}>
         <Spinner type="dots" />
       </Text>{" "}
-      Connecting {shop} to LIKYLY, then starting the first sync…
+      {fetched ? `Syncing ${shop}: ${fetched} product(s) read so far…` : `Connecting ${shop} to LIKYLY and syncing its products (about a minute)…`}
     </Text>
   );
 }

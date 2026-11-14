@@ -48,12 +48,52 @@ function client(apiKey, fetchImpl) {
 
 const detail = (r) => (typeof r.data?.detail === "string" ? r.data.detail : `HTTP ${r.status}`);
 
+/** The first error of a sync run, from its error_summary (a JSON list, or a plain message). */
+function firstError(run) {
+  try {
+    const list = JSON.parse(run.error_summary ?? "[]");
+    return Array.isArray(list) ? list[0]?.message : String(list);
+  } catch {
+    return run.error_summary;
+  }
+}
+
+/**
+ * Start the full sync and wait for its outcome (polling, up to ~3 minutes): the developer is
+ * told what actually landed in LIKYLY, and why nothing did when it failed - never just
+ * "started".
+ */
+async function firstSync(api, id, { wait, onProgress, timeoutMs = 180000 }) {
+  const started = await api("POST", `/data-sources/${id}/sync`, { mode: "full" });
+  if (!started.ok) return [fail(`The first sync could not start: ${detail(started)}`)];
+  for (let elapsed = 0; elapsed < timeoutMs; elapsed += 3000) {
+    await wait(3000);
+    const runs = await api("GET", `/data-sources/${id}/syncs`);
+    const run = runs.ok ? (runs.data ?? []).find((r) => r.id === started.data?.id) ?? runs.data?.[0] : null;
+    if (!run) continue;
+    if (run.status === "running") {
+      onProgress?.(run.items_fetched ?? 0);
+      continue;
+    }
+    const saved = run.items_upserted ?? 0;
+    const rejected = run.items_failed ?? 0;
+    const why = firstError(run);
+    if (run.status === "failed" || (!saved && rejected)) {
+      return [fail(`No product saved in LIKYLY${rejected ? ` (${rejected} rejected)` : ""}: ${why ?? "the sync failed"}`)];
+    }
+    const lines = [ok(`${saved} product(s) synced to LIKYLY`)];
+    if (rejected) lines.push(warn(`${rejected} product(s) rejected: ${why}`));
+    return lines;
+  }
+  return [warn("The first sync is still running: check it later in your LIKYLY console (Catalogue → Connecteurs)")];
+}
+
 /**
  * Create (or, for the same shop, update) the `shopify` source, test it, start the first sync.
  * A source this call created and that fails its test is deleted again: nothing half-configured
  * is left behind (the free plan has room for one source).
  */
-export async function connectShopifyCatalog({ apiKey, shop, credentials, fetchImpl = fetch }) {
+export async function connectShopifyCatalog({ apiKey, shop, credentials, fetchImpl = fetch, wait = (ms) => new Promise((r) => setTimeout(r, ms)), onProgress }) {
   const api = client(apiKey, fetchImpl);
   let created = false;
   let source;
@@ -87,10 +127,7 @@ export async function connectShopifyCatalog({ apiKey, shop, credentials, fetchIm
     }
 
     const results = [ok(`Connected ${shop} → catalog ${source.product_type}`, `(${test.data.message})`)];
-    const sync = await api("POST", `/data-sources/${source.id}/sync`, { mode: "full" });
-    if (sync.ok) results.push(ok("First sync started: the products arrive in LIKYLY within a minute or two"));
-    else if (sync.status === 429) results.push(warn(`Sync not started now: ${detail(sync)}`));
-    else results.push(warn(`Sync not started: ${detail(sync)}`));
+    results.push(...(await firstSync(api, source.id, { wait, onProgress })));
     results.push(info("The credentials went straight to LIKYLY, encrypted: they are in no file and your assistant never sees them"));
     return results;
   } catch (error) {

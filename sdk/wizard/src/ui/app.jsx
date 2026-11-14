@@ -427,6 +427,19 @@ function App({ opts: initialOpts, result }) {
       <ShopifyCatalogStep
         apiKey={keys.current.devKey || readDeveloperKey(opts.dir)}
         onDone={(results, summary) => {
+          // The standalone command ends here: say what comes next, whatever happened.
+          if (opts.command === "shopify") {
+            const failedHere = results.some((r) => r.level === "fail");
+            results = failedHere
+              ? [...results, { level: "info", text: "Fix the cause above, then run again:", hint: "npx @likyly/wizard shopify" }]
+              : summary === "skipped"
+                ? results
+                : [
+                    ...results,
+                    { level: "info", text: "Next, ask your AI assistant:", hint: '"The Shopify catalog is connected: add LIKYLY recommendations to my product page."' },
+                    { level: "info", text: "Assistant not connected to LIKYLY yet? First:", hint: "npx @likyly/wizard mcp add" },
+                  ];
+          }
           finish("catalog", results, summary);
           setPhase(after("catalog"));
         }}
