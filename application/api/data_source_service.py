@@ -74,6 +74,17 @@ def create_data_source(client_id: int, payload) -> dict[str, Any]:
     if source_limit is not None and db.count_data_sources(client_id) >= source_limit:
         raise PlanLimitError(db.plan_limit_message(plan, f"{source_limit} data source(s) max"))
 
+    # A source writing into a new catalog when the plan has no room for one would be accepted,
+    # then every item refused at sync time: say it now, with the catalog in the way.
+    index_limit = db.get_plan_limits(plan)["index_limit"]
+    existing = db.list_product_types_for_client(client_id)
+    if index_limit is not None and payload.product_type not in existing and len(existing) >= index_limit:
+        names = ", ".join(f"'{name}'" for name in sorted(existing))
+        raise PlanLimitError(
+            db.plan_limit_message(plan, f"{index_limit} catalog(s) max, already used by {names}")
+            + f" - or empty it first: https://www.likyly.com/account/catalogues/{sorted(existing)[0]}/parametres"
+        )
+
     try:
         type_info = get_source_type(payload.type)
     except ValueError as error:

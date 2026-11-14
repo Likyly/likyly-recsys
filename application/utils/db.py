@@ -2198,14 +2198,17 @@ def get_sync_run(data_source_id: int, run_id: int) -> Optional[dict]:
 
 
 def count_syncs_today(data_source_id: int) -> int:
-    """How many sync runs of any outcome were already started today for this source - used
-    to enforce PLAN_LIMITS' manual_sync_daily_limit, same day-boundary convention as
-    count_trainings_today."""
+    """How many sync runs were already started today for this source - used to enforce
+    PLAN_LIMITS' manual_sync_daily_limit, same day-boundary convention as
+    count_trainings_today. A failed run that saved nothing (bad credentials, a plan limit)
+    doesn't use up the day's sync: the developer fixes the cause and tries again."""
     with SessionLocal() as session:
         start_of_day = utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
         return session.query(DataSourceSyncRunModel).filter(
             DataSourceSyncRunModel.data_source_id == data_source_id,
             DataSourceSyncRunModel.started_at >= start_of_day,
+            # "partial" too: runs recorded before failed-with-nothing-saved got its own status.
+            ~(DataSourceSyncRunModel.status.in_(("failed", "partial")) & (func.coalesce(DataSourceSyncRunModel.items_upserted, 0) == 0)),
         ).count()
 
 

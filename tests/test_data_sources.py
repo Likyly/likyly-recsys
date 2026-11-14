@@ -488,3 +488,52 @@ def test_credentials_without_an_encryption_key_are_a_clear_503_not_a_crash(http,
     assert response.status_code == 503
     assert "cannot store data source credentials" in response.json()["detail"]
     assert "shop" not in [d["name"] for d in http.get("/data-sources", headers=tenant.secret).json()], "nothing saved"
+
+
+def test_a_source_that_would_open_a_second_catalog_on_free_is_refused_at_creation(http, monkeypatch):
+    monkeypatch.setattr("connectors.rest_api.RestApiConnector._request", lambda self, params: _fake_get_single_page(None))
+    tenant = make_tenant(db.PLAN_FREE)
+    imported = http.post("/items/import", headers=tenant.secret, params={"data_product_type": "running-shoes"}, json={"items": [
+        {"item_id": "RUN-1", "title": "Shoe"},
+    ]})
+    assert imported.status_code == 200 and imported.json()["succeeded"] == 1, imported.text
+    response = http.post("/data-sources", headers=tenant.secret, json={
+        "name": "shop", "type": "rest_api", "product_type": "likyly-sandbox",
+        "config": {"base_url": "https://example.invalid/products", "items_path": "products"},
+    })
+    assert response.status_code == 403
+    assert "'running-shoes'" in response.json()["detail"]
+    assert "/account/catalogues/running-shoes/parametres" in response.json()["detail"]
+    # Writing into the catalog the workspace already has is fine.
+    assert http.post("/data-sources", headers=tenant.secret, json={
+        "name": "shop", "type": "rest_api", "product_type": "running-shoes",
+        "config": {"base_url": "https://example.invalid/products", "items_path": "products"},
+    }).status_code == 201
+
+
+def test_a_sync_that_saves_nothing_fails_visibly_and_does_not_use_up_the_day(http, monkeypatch):
+    monkeypatch.setattr("connectors.rest_api.RestApiConnector._request", lambda self, params: _fake_get_single_page(None))
+    tenant = make_tenant(db.PLAN_FREE)  # one sync per day
+    ds_id = http.post("/data-sources", headers=tenant.secret, json={
+        "name": "rest", "type": "rest_api", "product_type": "shop", "sync_mode": "full",
+        "config": {"base_url": "https://example.invalid/products", "items_path": "products"},
+        "field_mapping": {"external_id": "id", "title": "no_such_field"},
+    }).json()["id"]
+
+    run = http.post(f"/data-sources/{ds_id}/sync", headers=tenant.secret, json={"mode": "full"}).json()
+    last = http.get(f"/data-sources/{ds_id}/syncs", headers=tenant.secret).json()[0]
+    assert last["id"] == run["id"]
+    assert last["status"] == "failed" and last["items_upserted"] == 0 and last["items_failed"] == 2
+    source = http.get(f"/data-sources/{ds_id}", headers=tenant.secret).json()
+    assert source["status"] == "error"
+    assert source["last_error"].startswith("No item saved (2 rejected)")
+    assert source["last_success_at"] is None
+
+    # Fixed mapping, same day: the failed run did not count against the free plan's daily sync.
+    db.SYNC_COOLDOWN_SECONDS, cooldown = 0, db.SYNC_COOLDOWN_SECONDS
+    try:
+        http.put(f"/data-sources/{ds_id}/field-mapping", headers=tenant.secret, json={"mapping": {"external_id": "id", "title": "name"}})
+        again = http.post(f"/data-sources/{ds_id}/sync", headers=tenant.secret, json={"mode": "full"})
+        assert again.status_code == 202, again.text
+    finally:
+        db.SYNC_COOLDOWN_SECONDS = cooldown

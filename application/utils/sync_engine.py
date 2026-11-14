@@ -165,13 +165,22 @@ class SyncEngine:
                     db.delete_data_source_item_hashes(source_id, stale)
                     items_deleted += len(stale)
 
-            status = "partial" if items_failed else "success"
+            # Nothing saved although items came in: a failure, not a "partial" success - the
+            # source shows why (e.g. a plan limit) instead of "connected" with no error.
+            nothing_saved = items_failed and not items_upserted
+            status = "failed" if nothing_saved else "partial" if items_failed else "success"
             db.finish_sync_run(
                 run_id, status, items_fetched, items_upserted, items_deleted, items_failed,
                 error_summary=json.dumps(errors[:20]) if errors else None,
             )
             now = datetime.now(timezone.utc)
-            db.update_data_source(self.client_id, source_id, status="connected", last_sync_at=now, last_success_at=now, last_error=None)
+            first_error = errors[0].get("message") if errors else None
+            if nothing_saved:
+                db.update_data_source(self.client_id, source_id, status="error", last_sync_at=now,
+                                      last_error=f"No item saved ({items_failed} rejected): {first_error}")
+            else:
+                db.update_data_source(self.client_id, source_id, status="connected", last_sync_at=now, last_success_at=now,
+                                      last_error=f"{items_failed} item(s) rejected: {first_error}" if items_failed else None)
         except Exception as error:
             db.finish_sync_run(run_id, "failed", items_fetched, items_upserted, items_deleted, items_failed, error_summary=str(error))
             db.update_data_source(self.client_id, source_id, status="error", last_sync_at=datetime.now(timezone.utc), last_error=str(error))
