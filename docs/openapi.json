@@ -2745,6 +2745,21 @@
             ],
             "title": "Name"
           },
+          "product_type": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "pattern": "^[a-zA-Z0-9_-]+$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Write into another catalog from the next sync on (an existing one, or a new one if the plan has room). The items already written stay in the old catalog.",
+            "title": "Product Type"
+          },
           "schedule": {
             "anyOf": [
               {
@@ -14669,7 +14684,7 @@
         "x-required-key": "scope:sources:read"
       },
       "patch": {
-        "description": "Partial update - only the fields given are changed. `config` is merged shallowly\nwith the existing config (so updating one key doesn't require resending the rest);\n`credentials`, if given, fully replaces the encrypted blob.",
+        "description": "Partial update - only the fields given are changed. `config` is merged shallowly\nwith the existing config (so updating one key doesn't require resending the rest);\n`credentials`, if given, fully replaces the encrypted blob. `product_type` moves the source\nto another catalog from its next sync on (403 when the plan has no room for a new one).",
         "operationId": "update_data_source",
         "parameters": [
           {

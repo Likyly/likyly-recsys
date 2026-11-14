@@ -59,6 +59,18 @@ exactly this, nothing more:
   Do not retry, rename the catalog, split the catalog or push through another route: stop, tell
   the developer which limit was hit, and give them the upgrade link from the error message
   (there is no online payment yet - Pro is requested with a form in their LIKYLY console).
+  **Before Pro, offer to reuse what the workspace already has** - that stays within the plan:
+  - a catalog: point the source at it (`update_data_source` with `product_type` set to the
+    catalog named in the error; its items stay next to the new ones, within the product
+    limit), or the developer empties it from the console link in the error;
+  - a placement: `list_placements` first, and change an existing one with `update_placement`
+    (`product_type`, `context_type`, `name`, `limit`...) instead of creating another one -
+    always for a placement whose `product_type` is a catalog the account no longer has.
+  Ask the developer which one they want; never delete anything without their yes.
+- **Diagnose from the latest state, not an old error.** A sync's `error_summary` belongs to
+  that run only: read the most recent run (`get_sync_status`) and `get_catalog_stats` together.
+  A run with `status: "success"`, items fetched and 0 saved while the catalog is empty is not a
+  plan limit: start a new full sync, and report it if it still saves nothing.
 - Every strategy underneath a placement (`content`, `session`, `collaborative`, `hybrid`,
   `popular`, or `auto`) is an existing LIKYLY engine - don't reimplement any of this logic
   yourself, only configure it.
@@ -110,7 +122,9 @@ URL, or call the push endpoint from their own code when products change.
 
 ## Phase 2: Configure recommendations
 
-1. Translate the developer's request into a `create_placement` call. `strategy: "auto"`
+1. `list_placements` first: a placement for the same spot (or one left on a catalog the
+   account no longer has) is changed with `update_placement`, not duplicated. Otherwise,
+   translate the developer's request into a `create_placement` call. `strategy: "auto"`
    covers most requests on its own (it already blends: identified user + current item ->
    hybrid; current item alone -> content; a session with history -> session; nothing usable ->
    popular) - reach for an explicit strategy only if the developer asked for one specific

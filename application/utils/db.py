@@ -2241,6 +2241,22 @@ def upsert_data_source_item_hashes(data_source_id: int, run_id: int, hashes: dic
         session.commit()
 
 
+def catalog_external_item_ids(client_id: int, product_type: str) -> set[str]:
+    """The external ids of the items really in this catalog right now. A full sync trusts a
+    stored content hash only for these: an item missing from the catalog (a refused upsert,
+    a catalog emptied from the console) is re-sent even though its hash didn't change."""
+    with SessionLocal() as session:
+        rows = session.query(IdMapModel.external_id).join(
+            ProductModel,
+            (ProductModel.client_id == IdMapModel.client_id)
+            & (ProductModel.product_type == IdMapModel.product_type)
+            & (ProductModel.work_id == IdMapModel.internal_id),
+        ).filter(
+            IdMapModel.client_id == client_id, IdMapModel.product_type == product_type, IdMapModel.kind == KIND_ITEM,
+        ).all()
+        return {r.external_id for r in rows}
+
+
 def delete_data_source_item_hashes(data_source_id: int, external_ids: list[str]) -> None:
     if not external_ids:
         return

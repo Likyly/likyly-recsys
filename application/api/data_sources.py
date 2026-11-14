@@ -97,13 +97,16 @@ def get_data_source(data_source_id: int, client_id: int = Depends(require_scope(
 def update_data_source(data_source_id: int, payload: DataSourceUpdate, client_id: int = Depends(require_scope("sources:write"))):
     """Partial update - only the fields given are changed. `config` is merged shallowly
     with the existing config (so updating one key doesn't require resending the rest);
-    `credentials`, if given, fully replaces the encrypted blob."""
+    `credentials`, if given, fully replaces the encrypted blob. `product_type` moves the source
+    to another catalog from its next sync on (403 when the plan has no room for a new one)."""
     try:
         return service.update_data_source(client_id, data_source_id, payload)
     except service.NotFoundError as error:
         raise _not_found(error)
     except service.ValidationError as error:
         raise _invalid(error)
+    except service.PlanLimitError as error:
+        raise _plan_limited(error)
 
 
 @router.delete("/{data_source_id}", response_model=Message, summary="Delete a data source", responses=_errors(401, 403, 404, 422))

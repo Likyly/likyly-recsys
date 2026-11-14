@@ -983,6 +983,7 @@ class DataSourceCreate(BaseModel):
 
 class DataSourceUpdate(BaseModel):
     name: Optional[str] = None
+    product_type: Optional[str] = Field(default=None, min_length=1, max_length=64, pattern=r'^[a-zA-Z0-9_-]+$', description="Write into another catalog from the next sync on (an existing one, or a new one if the plan has room). The items already written stay in the old catalog.")
     config: Optional[dict[str, Any]] = None
     credentials: Optional[dict[str, Any]] = None
     sync_mode: Optional[str] = None

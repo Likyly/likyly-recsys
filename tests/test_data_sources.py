@@ -537,3 +537,71 @@ def test_a_sync_that_saves_nothing_fails_visibly_and_does_not_use_up_the_day(htt
         assert again.status_code == 202, again.text
     finally:
         db.SYNC_COOLDOWN_SECONDS = cooldown
+
+
+def _rest_source(http, tenant, product_type):
+    return http.post("/data-sources", headers=tenant.secret, json={
+        "name": "rest", "type": "rest_api", "product_type": product_type, "sync_mode": "full",
+        "config": {"base_url": "https://example.invalid/products", "items_path": "products"},
+        "field_mapping": {"external_id": "id", "title": "name"},
+    }).json()["id"]
+
+
+def _sync(http, tenant, ds_id):
+    response = http.post(f"/data-sources/{ds_id}/sync", headers=tenant.secret, json={"mode": "full"})
+    assert response.status_code == 202, response.text
+    return http.get(f"/data-sources/{ds_id}/syncs", headers=tenant.secret).json()[0]
+
+
+def test_items_refused_by_the_plan_are_sent_again_once_there_is_room(http, monkeypatch):
+    # Production: a Shopify sync refused by the one-catalog limit stored the items' hashes all
+    # the same, so once the old catalog was deleted the next sync skipped all 120 products as
+    # "unchanged" and reported success with an empty catalog.
+    import ingestion
+    monkeypatch.setattr("connectors.rest_api.RestApiConnector._request", lambda self, params: _fake_get_single_page(None))
+    monkeypatch.setattr("db.SYNC_COOLDOWN_SECONDS", 0)
+    tenant = make_tenant(db.PLAN_FREE)
+    ds_id = _rest_source(http, tenant, "shop")
+    http.post("/items/import", headers=tenant.secret, params={"data_product_type": "running-shoes"}, json={"items": [{"item_id": "RUN-1", "title": "Shoe"}]})
+
+    refused = _sync(http, tenant, ds_id)
+    assert refused["status"] == "failed" and refused["items_failed"] == 2
+
+    ingestion.delete_items(tenant.client_id, "running-shoes", ["RUN-1"])  # the console's "empty this catalog"
+    again = _sync(http, tenant, ds_id)  # same day: the refused run didn't use up the free plan's sync
+    assert again["status"] == "success" and again["items_upserted"] == 2, again
+    assert http.get(f"/data-sources/{ds_id}/stats", headers=tenant.secret).json()["item_count"] == 2
+
+
+def test_a_catalog_emptied_from_the_console_is_filled_again_by_the_next_sync(http, tenant, monkeypatch):
+    import ingestion
+    monkeypatch.setattr("connectors.rest_api.RestApiConnector._request", lambda self, params: _fake_get_single_page(None))
+    monkeypatch.setattr("db.SYNC_COOLDOWN_SECONDS", 0)
+    ds_id = _rest_source(http, tenant, "shop")
+    assert _sync(http, tenant, ds_id)["items_upserted"] == 2
+    assert _sync(http, tenant, ds_id)["items_upserted"] == 0  # unchanged and still there: skipped
+
+    ingestion.delete_items(tenant.client_id, "shop", ["p1", "p2"])
+    assert _sync(http, tenant, ds_id)["items_upserted"] == 2
+
+
+def test_a_source_moves_to_another_catalog_and_the_plan_limit_offers_reuse(http, monkeypatch):
+    monkeypatch.setattr("connectors.rest_api.RestApiConnector._request", lambda self, params: _fake_get_single_page(None))
+    monkeypatch.setattr("db.SYNC_COOLDOWN_SECONDS", 0)
+    tenant = make_tenant(db.PLAN_FREE)
+    ds_id = _rest_source(http, tenant, "old-shop")
+    assert _sync(http, tenant, ds_id)["items_upserted"] == 2
+
+    # The free plan's one catalog is taken: moving to a new one is refused, with both ways out.
+    refused = http.patch(f"/data-sources/{ds_id}", headers=tenant.secret, json={"product_type": "new-shop"})
+    assert refused.status_code == 403
+    assert "set product_type to 'old-shop'" in refused.json()["detail"]
+    assert "/account/catalogues/old-shop/parametres" in refused.json()["detail"]
+
+    # Unlimited plan: the source moves, and its next sync fills the new catalog from scratch.
+    db.set_client_plan(tenant.client_id, db.PLAN_UNLIMITED)
+    moved = http.patch(f"/data-sources/{ds_id}", headers=tenant.secret, json={"product_type": "new-shop"})
+    assert moved.status_code == 200 and moved.json()["product_type"] == "new-shop"
+    run = _sync(http, tenant, ds_id)
+    assert run["items_upserted"] == 2 and run["items_deleted"] == 0
+    assert {i["item_id"] for i in http.get("/items", params={"data_product_type": "new-shop"}, headers=tenant.secret).json()} == {"p1", "p2"}

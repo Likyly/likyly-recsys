@@ -68,22 +68,29 @@ def _require(client_id: int, data_source_id: int) -> dict[str, Any]:
     return row
 
 
+def _check_catalog_room(client_id: int, plan: str, product_type: str) -> None:
+    """A source writing into a new catalog when the plan has no room for one would be accepted,
+    then every item refused at sync time: say it now, with the catalog in the way and the two
+    ways out that stay on the same plan (write into that catalog, or empty it)."""
+    index_limit = db.get_plan_limits(plan)["index_limit"]
+    existing = sorted(db.list_product_types_for_client(client_id))
+    if index_limit is None or product_type in existing or len(existing) < index_limit:
+        return
+    names = ", ".join(f"'{name}'" for name in existing)
+    raise PlanLimitError(
+        db.plan_limit_message(plan, f"{index_limit} catalog(s) max, already used by {names}")
+        + f" - or reuse it: set product_type to '{existing[0]}' (its items stay, within the plan's product limit)"
+        + f" - or empty it first: https://www.likyly.com/account/catalogues/{existing[0]}/parametres"
+    )
+
+
 def create_data_source(client_id: int, payload) -> dict[str, Any]:
     plan = db.get_client_plan(client_id)
     source_limit = db.get_plan_limits(plan)["data_source_limit"]
     if source_limit is not None and db.count_data_sources(client_id) >= source_limit:
         raise PlanLimitError(db.plan_limit_message(plan, f"{source_limit} data source(s) max"))
 
-    # A source writing into a new catalog when the plan has no room for one would be accepted,
-    # then every item refused at sync time: say it now, with the catalog in the way.
-    index_limit = db.get_plan_limits(plan)["index_limit"]
-    existing = db.list_product_types_for_client(client_id)
-    if index_limit is not None and payload.product_type not in existing and len(existing) >= index_limit:
-        names = ", ".join(f"'{name}'" for name in sorted(existing))
-        raise PlanLimitError(
-            db.plan_limit_message(plan, f"{index_limit} catalog(s) max, already used by {names}")
-            + f" - or empty it first: https://www.likyly.com/account/catalogues/{sorted(existing)[0]}/parametres"
-        )
+    _check_catalog_room(client_id, plan, payload.product_type)
 
     try:
         type_info = get_source_type(payload.type)
@@ -130,6 +137,11 @@ def update_data_source(client_id: int, data_source_id: int, payload) -> dict[str
     fields: dict[str, Any] = {}
     if payload.name is not None:
         fields["name"] = payload.name
+    moved = payload.product_type is not None and payload.product_type != existing["product_type"]
+    if moved:
+        _check_catalog_room(client_id, db.get_client_plan(client_id), payload.product_type)
+        fields["product_type"] = payload.product_type
+        fields["cursor"] = None  # an incremental bookmark into the old catalog's history
     if payload.config is not None:
         fields["config"] = {**(existing.get("config") or {}), **payload.config}
     if payload.credentials is not None:
@@ -145,7 +157,12 @@ def update_data_source(client_id: int, data_source_id: int, payload) -> dict[str
         fields["schedule"] = payload.schedule
     if not fields:
         return existing
-    return db.update_data_source(client_id, data_source_id, **fields)
+    updated = db.update_data_source(client_id, data_source_id, **fields)
+    if moved:
+        # The content hashes describe what this source wrote into the old catalog: forget them,
+        # so the next full sync sends every item to the new one (and deletes nothing there).
+        db.delete_data_source_item_hashes(data_source_id, list(db.get_data_source_item_hashes(data_source_id)))
+    return updated
 
 
 def delete_data_source(client_id: int, data_source_id: int) -> None:

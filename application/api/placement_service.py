@@ -29,13 +29,25 @@ class ValidationError(Exception):
     missing required signal, ...) - the route layer turns this into a 422."""
 
 
+def _known_catalogs(client_id: int) -> list[str]:
+    """The catalogs a placement can recommend from: those holding items or events, plus those
+    a data source writes into (connected, first sync not done yet)."""
+    sources = {s["product_type"] for s in db.list_data_sources(client_id) if s.get("product_type")}
+    return sorted(set(db.list_catalogs_for_client(client_id)) | sources)
+
+
 def _resolve_product_type(client_id: int, requested: Optional[str]) -> str:
     """Same "single catalog -> inferred, several -> must say which" convention as the rest
     of the API's Catalog dependency (app.py's resolve_catalog), reimplemented here rather than
-    imported: app.py mounts placements.py, so the reverse import would be circular."""
+    imported: app.py mounts placements.py, so the reverse import would be circular. A catalog
+    the account doesn't have is refused, naming those it has: a placement on a deleted or
+    misspelled catalog would only ever answer with nothing."""
+    catalogs = _known_catalogs(client_id)
     if requested is not None:
+        if catalogs and requested not in catalogs:
+            names = ", ".join(f"'{name}'" for name in catalogs)
+            raise ValidationError(f"No catalog '{requested}' in this account - its catalogs: {names}. Set product_type to one of them.")
         return requested
-    catalogs = db.list_catalogs_for_client(client_id)
     if len(catalogs) > 1:
         raise ValidationError("product_type is required: this account has several catalogs - say which one this placement recommends from")
     return catalogs[0] if catalogs else "default"

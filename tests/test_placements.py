@@ -304,3 +304,17 @@ def test_legacy_getRec_is_unaffected(http, seeded):
     response = http.post("/getRec", params=Q, headers=seeded.public, json={"item_id": "SKU-NIKE-001", "count": 3})
     assert response.status_code == 200
     assert response.json()["strategy"] == "content"
+
+
+def test_a_placement_only_targets_a_catalog_the_account_has_and_can_be_moved(http, seeded):
+    # Production: a placement created on a catalog deleted from the console answered with
+    # nothing, and nothing said why.
+    refused = http.post("/placements", headers=seeded.secret, json={
+        "slug": "pdp-old", "name": "Old", "context_type": "product_page", "product_type": "running-shoes",
+    })
+    assert refused.status_code == 422
+    assert "No catalog 'running-shoes'" in refused.json()["detail"] and "'shop'" in refused.json()["detail"]
+
+    create_pdp_placement(http, seeded)
+    assert http.patch(f"/placements/{PDP_SLUG}", headers=seeded.secret, json={"product_type": "gone"}).status_code == 422
+    assert http.patch(f"/placements/{PDP_SLUG}", headers=seeded.secret, json={"product_type": "shop", "name": "Reused"}).json()["name"] == "Reused"

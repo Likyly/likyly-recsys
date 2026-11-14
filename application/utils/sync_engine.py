@@ -96,6 +96,9 @@ class SyncEngine:
         errors: list[dict[str, Any]] = []
         seen_ids: set[str] = set()
         existing_hashes = db.get_data_source_item_hashes(source_id)
+        # A hash only proves "unchanged" for an item that is still in the catalog: one that was
+        # refused (plan limit) or removed from the console is sent again.
+        in_catalog = db.catalog_external_item_ids(self.client_id, product_type) if existing_hashes else set()
         pending_hashes: dict[str, str] = {}
 
         try:
@@ -128,7 +131,7 @@ class SyncEngine:
                         continue
 
                     content_hash = _content_hash(item)
-                    if existing_hashes.get(item.external_id) == content_hash:
+                    if existing_hashes.get(item.external_id) == content_hash and item.external_id in in_catalog:
                         pending_hashes[item.external_id] = content_hash
                         continue  # unchanged since the last time this source produced it
 
@@ -145,9 +148,15 @@ class SyncEngine:
                         items_upserted += outcome.succeeded
                         items_failed += len(outcome.errors)
                         errors.extend({"stage": "upsert", **e} for e in outcome.errors)
+                        refused = [e.get("id") for e in outcome.errors]
                     except PlanLimitError as error:
                         items_failed += len(to_upsert)
                         errors.append({"stage": "upsert", "message": str(error)})
+                        refused = [e.item_id for e in to_upsert]
+                    # A refused item keeps no hash: the next sync sends it again instead of
+                    # skipping it as "unchanged" (it never reached the catalog).
+                    for external_id in refused:
+                        pending_hashes.pop(external_id, None)
                 if to_delete:
                     delete_items(self.client_id, product_type, to_delete)
                     items_deleted += len(to_delete)
