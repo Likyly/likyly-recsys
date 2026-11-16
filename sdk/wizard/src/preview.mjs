@@ -60,7 +60,7 @@ export async function previewPlan(project, dir, options = {}) {
       install: "npm install -g @shopify/cli",
       notes: [
         "Open the local address it prints (http://127.0.0.1:9292), then a product page.",
-        `A password-protected store (every development store) asks for its storefront password: ${store ? `https://admin.shopify.com/store/${store.replace(/\.myshopify\.com$/, "")}/online_store/preferences` : "Shopify admin"} → Online Store → Preferences → Password protection. Not your admin login, not the app's client secret.`,
+        `A password-protected store (every development store) asks for its storefront password: ${store ? `https://admin.shopify.com/store/${store.replace(/\.myshopify\.com$/, "")}/online_store/preferences` : "Shopify admin"} (Online Store → Preferences) → Store access → Private mode → Password. Not your admin login, not the app's client secret.`,
         "Nothing on 127.0.0.1:9292 means the preview did not start: read the error in its window.",
         "Theme changes show up live while it runs.",
       ],

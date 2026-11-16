@@ -224,7 +224,7 @@ commit only the files you changed (not their pending work), push the branch and 
    dev script otherwise) in a **new terminal window**, where the developer can answer its
    prompts - a password-protected store (every development store) asks for its storefront
    password there: it is in the store's admin, `https://admin.shopify.com/store/<handle>/online_store/preferences`
-   → Password protection - not the admin login, not the app's client secret. Never run
+   → Store access → Private mode → Password - not the admin login, not the app's client secret. Never run
    `shopify theme dev` (or another interactive dev server) yourself: it stops on that prompt,
    which you can't answer. Then give the page to open (for a theme:
    `http://127.0.0.1:9292/products/<a real handle>`) and say to view it and click a
