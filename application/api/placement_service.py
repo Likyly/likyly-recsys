@@ -126,6 +126,11 @@ def _rank_and_fill(client_id: int, placement: dict[str, Any], context_dict: dict
     from recommender import present_records, rec_popular
 
     product_type = placement["product_type"]
+    if engine.current_item_unknown(client_id, placement, context_dict):
+        return engine.PlacementResult("none", [], [], [
+            f"current_item_id '{context_dict['current_item_id']}' is not in catalog '{product_type}' - nothing shown "
+            "(business_rules.unknown_current_item 'popular' shows the most popular items instead)"
+        ]), []
     want = min(100, limit * _CANDIDATE_MARGIN)
     result = engine.run_placement(placement, context_dict, want, client_id=client_id, blend_session=blend_session)
     presented = apply_filters(

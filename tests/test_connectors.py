@@ -325,3 +325,11 @@ def test_magento_oauth_signature_matches_oauthlib():
     theirs = dict(part.strip().split("=", 1) for part in headers["Authorization"][len("OAuth "):].split(","))
     mine = dict(part.strip().split("=", 1) for part in ours[len("OAuth "):].split(","))
     assert mine["oauth_signature"] == theirs["oauth_signature"]
+
+
+def test_magento_chosen_categories_only(monkeypatch):
+    products = [_magento_product(1), {**_magento_product(2), "extension_attributes": {"category_links": [{"category_id": "9"}]}}]
+    connector, _ = _magento(monkeypatch, products)
+    connector.config = {**MAGENTO, "categories": ["Running"]}
+    items = [connector.normalize_item(r, {}) for p in connector.full_sync() for r in p.raw_records]
+    assert [i.deleted for i in items] == [False, True]  # category 9 is not a chosen one (not even named)

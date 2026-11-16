@@ -177,6 +177,7 @@ class RecommendationStrategy(str, Enum):
     session = "session"
     popular = "popular"
     content_session = "content_session"
+    none = "none"  # nothing served on purpose: the product page's own item is not in the catalog
 
 
 class SimilarUserPublic(BaseModel):
@@ -1144,6 +1145,16 @@ class PlacementFilters(BaseModel):
 class PlacementBusinessRules(BaseModel):
     exclude_current_item: bool = Field(default=True, description="Never recommend the item named in context.current_item_id back to itself.")
     exclude_cart_items: bool = Field(default=False, description="Never recommend an item already in context.cart_item_ids.")
+    unknown_current_item: Literal["empty", "popular"] = Field(
+        default="empty",
+        description=(
+            "On a product page (context_type product_page, or current_item_id required), when "
+            "context.current_item_id is not in the catalog (not synced yet, refused by the plan's "
+            "product limit, another catalog's id): 'empty' (default) returns no items "
+            "(strategy_used 'none') rather than the most popular items, unrelated to the page; "
+            "'popular' shows those."
+        ),
+    )
 
 
 class PlacementCreate(BaseModel):

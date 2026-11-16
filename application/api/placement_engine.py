@@ -107,6 +107,24 @@ class PlacementResult:
     warnings: list[str] = field(default_factory=list)
 
 
+def current_item_unknown(client_id: int, placement: dict[str, Any], context: dict[str, Any]) -> bool:
+    """A product page asking for its own product, which this catalog doesn't have (not synced
+    yet, refused by the plan's product limit, an id from another catalog): with the default
+    business rule (unknown_current_item 'empty'), nothing is shown rather than the most
+    popular items, unrelated to the page."""
+    item_id = context.get("current_item_id")
+    if not item_id or (placement.get("business_rules") or {}).get("unknown_current_item", "empty") != "empty":
+        return False
+    required = (placement.get("signals") or {}).get("required") or []
+    if placement.get("context_type") != "product_page" and "current_item_id" not in required:
+        return False
+    product_type = placement["product_type"]
+    internal = resolve_internal_ids(client_id, product_type, KIND_ITEM, [item_id]).get(item_id)
+    if internal is None:
+        return True
+    return internal not in set(get_data(product_type, None, None, client_id=client_id)["work_id"].tolist())
+
+
 def missing_required_signals(placement: dict[str, Any], context: dict[str, Any]) -> list[str]:
     """Which of placement.signals["required"] the caller didn't send - the only signal
     validation Placements do; everything else is optional by construction."""

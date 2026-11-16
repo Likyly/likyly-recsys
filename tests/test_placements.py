@@ -318,3 +318,37 @@ def test_a_placement_only_targets_a_catalog_the_account_has_and_can_be_moved(htt
     create_pdp_placement(http, seeded)
     assert http.patch(f"/placements/{PDP_SLUG}", headers=seeded.secret, json={"product_type": "gone"}).status_code == 422
     assert http.patch(f"/placements/{PDP_SLUG}", headers=seeded.secret, json={"product_type": "shop", "name": "Reused"}).json()["name"] == "Reused"
+
+
+# ---------------------------------------------------------------------------
+# A product page whose product LIKYLY doesn't have: nothing, not unrelated popular items
+# ---------------------------------------------------------------------------
+
+def test_unknown_current_item_on_a_product_page_returns_nothing(http, seeded):
+    create_pdp_placement(http, seeded)
+    response = http.post(f"/placements/{PDP_SLUG}/recommend", headers=seeded.public, json={"context": {"current_item_id": "GOLF-001"}})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["items"] == []
+    assert body["strategy_used"] == "none"
+    assert body["recommendation_id"]
+
+    preview = http.post(f"/placements/{PDP_SLUG}/preview", headers=seeded.secret, json={"context": {"current_item_id": "GOLF-001"}}).json()
+    assert preview["items"] == [] and preview["strategy_used"] == "none"
+    assert "GOLF-001" in preview["warnings"][0] and "unknown_current_item" in preview["warnings"][0]
+
+    # A product the catalog has still gets its neighbours.
+    known = http.post(f"/placements/{PDP_SLUG}/recommend", headers=seeded.public, json={"context": {"current_item_id": "SKU-NIKE-001"}}).json()
+    assert known["items"] and known["strategy_used"] != "none"
+
+
+def test_unknown_current_item_popular_keeps_the_old_behaviour(http, seeded):
+    create_pdp_placement(http, seeded, business_rules={"exclude_current_item": True, "unknown_current_item": "popular"})
+    body = http.post(f"/placements/{PDP_SLUG}/recommend", headers=seeded.public, json={"context": {"current_item_id": "GOLF-001"}}).json()
+    assert body["items"] and body["strategy_used"] == "popular"
+
+
+def test_unknown_current_item_off_a_product_page_is_not_emptied(http, seeded):
+    create_pdp_placement(http, seeded, context_type="homepage", signals={"required": [], "optional": ["current_item_id"]})
+    body = http.post(f"/placements/{PDP_SLUG}/recommend", headers=seeded.public, json={"context": {"current_item_id": "GOLF-001"}}).json()
+    assert body["items"]

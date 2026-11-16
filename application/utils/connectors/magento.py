@@ -2,7 +2,7 @@
 read with an Integration's credentials.
 
 config: {"store_url": "https://shop.example.com", "store_code": "default", "page_size": 100,
-         "url_suffix": ".html"}
+         "url_suffix": ".html", "categories": ["Golf clubs", ...]}  (categories: optional, only those)
 credentials: the four values an Integration shows once activated (System -> Extensions ->
 Integrations): {"consumer_key", "consumer_secret", "access_token", "access_token_secret"}, or
 {"access_token"} alone.
@@ -238,8 +238,20 @@ class MagentoConnector(Connector):
             "product_url": f"{store['base_url']}{url_key}{suffix}" if url_key else None,
             "category_names": [names[i] for i in category_ids if names.get(i)],
             "stock": self._stock(stock_item),
-            "active": raw.get("status") == 1 and raw.get("visibility") in (2, 3, 4),
+            "active": raw.get("status") == 1 and raw.get("visibility") in (2, 3, 4) and self._in_chosen_categories(category_ids, names),
         }
+
+    def _in_chosen_categories(self, category_ids: list[int], names: dict[int, str]) -> bool:
+        """config.categories (names, as the wizard lists them; null = products without a
+        category): only those products are listed - a plan's product limit, a store bigger than
+        what the recommendations are for. No config.categories: every product."""
+        chosen = self.config.get("categories")
+        if not chosen:
+            return True
+        product_names = [names[i] for i in category_ids if names.get(i)]
+        if not product_names:
+            return None in chosen
+        return any(name in chosen for name in product_names)
 
     @staticmethod
     def _stock(stock_item: dict[str, Any]) -> Optional[int]:

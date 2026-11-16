@@ -39,7 +39,7 @@ choice given a name.
 | `signals` | `{required: [...], optional: [...]}` - see below. |
 | `fallback_strategy` | Tried if `strategy` returns nothing. `popular` is always the final safety net regardless. |
 | `filters` | Attribute-based inclusion rules - `category_in`, `category_not_in`, `in_stock_only`, `include_attributes`, `exclude_attributes`. |
-| `business_rules` | Behavioral rules - `exclude_current_item` (default `true`), `exclude_cart_items`. |
+| `business_rules` | Behavioral rules - `exclude_current_item` (default `true`), `exclude_cart_items`, `unknown_current_item` (`empty` by default, or `popular`). |
 | `tracking_configuration` | Reserved for a future per-placement tracking override - `{}` today. |
 | `enabled`, `version` | Status; `version` increments on every update. |
 
@@ -86,6 +86,11 @@ Applied after ranking, to the already-presented items:
 
 - `exclude_current_item` (default `true`) - never recommends `context.current_item_id` back
   to itself.
+- `unknown_current_item` (default `empty`) - on a product page (`context_type: product_page`,
+  or `current_item_id` required), when `context.current_item_id` is not in the catalog (not
+  synced yet, refused by the plan's product limit, another catalog's id), nothing is returned
+  (`strategy_used: "none"`, a warning in the preview) instead of the most popular items, which
+  have nothing to do with the page. `popular` keeps showing those.
 - `exclude_cart_items` - never recommends anything in `context.cart_item_ids`.
 
 Results can come back under `limit` after filtering - there's no re-fetch/top-up loop yet
