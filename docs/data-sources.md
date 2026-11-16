@@ -76,12 +76,20 @@ the sync engine, the API routes, or the MCP tools needs to change.
 | `json_url` | `{"url", "format": "json", "items_path": "..."}` | same as `csv_url` | full only |
 | `rest_api` | `{"base_url", "items_path", "pagination": {...}, "auth": {...}, "updated_since_param"}` | `{"token"}` or `{"username","password"}` | full + incremental |
 | `shopify` | `{"shop_domain", "api_version", "page_size"}` | `{"access_token"}` (legacy custom app) or `{"client_id", "client_secret"}` (Dev Dashboard app: 24 h tokens, renewed by the connector) | full + incremental |
+| `magento` | `{"store_url", "store_code": "default", "url_suffix": ".html", "page_size"}` | an Integration's `{"consumer_key", "consumer_secret", "access_token", "access_token_secret"}` (OAuth 1.0a signed requests), or `{"access_token"}` alone (Bearer: the store must allow it) | full + incremental |
 | `woocommerce` | `{"site_url"}` (optional) | none | **push only** - see below |
 | `webhook` | `{"sample": [...]}` (optional, for preview only) | none | **push only** |
 
 `rest_api.pagination.type` is one of `page` (`page`/`per_page` params), `cursor` (a
 `next_cursor`-style field in the response), or `none` (single page). `rest_api.auth.type` is
 `bearer`, `api_key` (with a configurable header name), `basic`, or `none`.
+
+`magento` lists enabled products visible in the catalog or the search (`/V1/products`, pages
+counted against `total_count`: Magento answers a page past the end with the last page again).
+Item id = SKU; image = the store's media URL + `catalog/product` + the base image; url = base URL
++ `url_key` + `url_suffix`; categories by name; stock from `/V1/stockItems/lowStock` (read once
+per sync; a product not listed there has unmanaged stock: unknown). Incremental: `updated_at >=`
+the last run, products disabled or hidden since are removed.
 
 ### WooCommerce: reusing the existing connector, not rebuilding one
 

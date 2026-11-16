@@ -202,3 +202,126 @@ def test_shopify_access_token_rejected_is_not_retried(monkeypatch):
     result = connector.test_connection()
     assert not result.ok and "rejected" in result.message
     assert seen == ["shpat_x"]
+
+
+# --- Magento: REST API + Integration credentials ---------------------------------------------
+
+from connectors.magento import MagentoConnector, oauth_header  # noqa: E402
+
+MAGENTO = {"store_url": "https://shop.example.com/", "page_size": 2}
+INTEGRATION = {"consumer_key": "ck", "consumer_secret": "cs", "access_token": "at", "access_token_secret": "ats"}
+
+
+def _magento_product(n, **extra):
+    return {
+        "id": n, "sku": f"SKU-{n}", "name": f"Shoe {n}", "price": 10.0 * n, "status": 1, "visibility": 4,
+        "updated_at": "2026-11-16 10:00:00",
+        "custom_attributes": [
+            {"attribute_code": "url_key", "value": f"shoe-{n}"},
+            {"attribute_code": "image", "value": f"/s/h/shoe-{n}.jpg"},
+            {"attribute_code": "description", "value": "<p>Light</p>"},
+        ],
+        "extension_attributes": {"category_links": [{"category_id": "3"}], "stock_item": {"qty": 5, "is_in_stock": True, "manage_stock": True}},
+        **extra,
+    }
+
+
+def _magento(monkeypatch, products, credentials=INTEGRATION, statuses=None):
+    """Magento answers a page past the end with the last page again, like the real one."""
+    calls = []
+
+    def fake_request(self, url, params):
+        calls.append((url, dict(params)))
+        if url.endswith("/store/storeConfigs"):
+            return FakeResponse([{"code": "default", "base_url": "https://shop.example.com/", "base_media_url": "https://cdn.example.com/media/"}])
+        if url.endswith("/categories/list"):
+            return FakeResponse({"items": [{"id": 3, "name": "Running", "level": 2}]})
+        if url.endswith("/stockItems/lowStock"):
+            return FakeResponse({"items": [{"product_id": 1, "qty": 0, "is_in_stock": False, "manage_stock": True}, {"product_id": 2, "qty": 7, "is_in_stock": True, "manage_stock": True}], "total_count": 2})
+        if statuses:
+            return FakeResponse({"message": "nope"}, status_code=statuses.pop(0))
+        size, page = params["searchCriteria[pageSize]"], params["searchCriteria[currentPage]"]
+        last = max(1, -(-len(products) // size))
+        page = min(page, last)
+        return FakeResponse({"items": products[(page - 1) * size: page * size], "total_count": len(products)})
+
+    monkeypatch.setattr(MagentoConnector, "_request", fake_request)
+    return MagentoConnector(MAGENTO, credentials), calls
+
+
+def test_magento_pages_stop_at_total_count_not_on_an_empty_page(monkeypatch):
+    connector, calls = _magento(monkeypatch, [_magento_product(n) for n in range(1, 6)])
+    pages = list(connector.full_sync())
+    assert [len(p.raw_records) for p in pages] == [2, 2, 1]
+    assert [p.has_more for p in pages] == [True, True, False]
+    listed = [params for url, params in calls if url.endswith("/V1/products")]
+    assert listed[0]["searchCriteria[filterGroups][0][filters][0][field]"] == "status"
+    assert listed[0]["searchCriteria[filterGroups][1][filters][0][value]"] == "2,3,4"
+
+
+def test_magento_product_becomes_an_item_with_full_urls(monkeypatch):
+    connector, _ = _magento(monkeypatch, [_magento_product(1)])
+    raw = next(iter(connector.full_sync())).raw_records[0]
+    item = connector.normalize_item(raw, {})
+    assert item.external_id == "SKU-1"
+    assert item.title == "Shoe 1"
+    assert item.price == 10.0
+    assert item.image == "https://cdn.example.com/media/catalog/product/s/h/shoe-1.jpg"
+    assert item.url == "https://shop.example.com/shoe-1.html"
+    assert item.categories == ["Running"]
+    assert item.stock == 5
+    assert item.description == "<p>Light</p>"
+    assert not item.deleted
+
+
+@pytest.mark.parametrize("stock_item,expected", [
+    ({"qty": 0, "is_in_stock": False, "manage_stock": True}, 0),
+    ({"qty": 0, "is_in_stock": True, "manage_stock": False}, None),
+    ({"qty": 0, "is_in_stock": True, "manage_stock": True}, None),  # backorders
+    ({}, None),
+])
+def test_magento_stock(stock_item, expected):
+    assert MagentoConnector._stock(stock_item) == expected
+
+
+def test_magento_stock_comes_from_the_stock_list_when_products_carry_none(monkeypatch):
+    bare = [{**_magento_product(n), "extension_attributes": {"category_links": []}} for n in (1, 2, 3)]
+    connector, calls = _magento(monkeypatch, bare)
+    items = [connector.normalize_item(r, {}) for p in connector.full_sync() for r in p.raw_records]
+    assert [i.stock for i in items] == [0, 7, None]  # out of stock, counted, not managed by the store
+    assert sum(url.endswith("/stockItems/lowStock") for url, _ in calls) == 1  # read once per sync
+
+
+def test_magento_disabled_product_is_dropped_on_incremental(monkeypatch):
+    connector, calls = _magento(monkeypatch, [_magento_product(1, status=2)])
+    page = next(iter(connector.incremental_sync({"last_updated_at": "2026-11-01 00:00:00"})))
+    assert connector.normalize_item(page.raw_records[0], {}).deleted
+    assert page.checkpoint["last_updated_at"]
+    listed = [params for url, params in calls if url.endswith("/V1/products")][0]
+    assert listed["searchCriteria[filterGroups][0][filters][0][field]"] == "updated_at"
+
+
+def test_magento_bearer_refused_says_how_to_fix(monkeypatch):
+    connector, _ = _magento(monkeypatch, [], credentials={"access_token": "at"}, statuses=[401])
+    result = connector.test_connection()
+    assert not result.ok
+    assert "four values" in result.message and "standalone Bearer" in result.message
+
+
+def test_magento_missing_store_url_is_a_clear_error():
+    result = MagentoConnector({"store_url": "shop.example.com"}, INTEGRATION).test_connection()
+    assert not result.ok and "store_url" in result.message
+
+
+def test_magento_oauth_signature_matches_oauthlib():
+    oauth1 = pytest.importorskip("oauthlib.oauth1")
+    url = "https://shop.example.com/rest/default/V1/products"
+    params = {"searchCriteria[pageSize]": 2, "searchCriteria[filterGroups][0][filters][0][value]": "2026-11-01 00:00:00"}
+    ours = oauth_header("GET", url, params, INTEGRATION, nonce="abc", timestamp="1700000000")
+    client = oauth1.Client("ck", client_secret="cs", resource_owner_key="at", resource_owner_secret="ats",
+                           signature_method=oauth1.SIGNATURE_HMAC_SHA256, nonce="abc", timestamp="1700000000")
+    from urllib.parse import urlencode, quote
+    _, headers, _ = client.sign(url + "?" + urlencode(params, quote_via=quote))
+    theirs = dict(part.strip().split("=", 1) for part in headers["Authorization"][len("OAuth "):].split(","))
+    mine = dict(part.strip().split("=", 1) for part in ours[len("OAuth "):].split(","))
+    assert mine["oauth_signature"] == theirs["oauth_signature"]

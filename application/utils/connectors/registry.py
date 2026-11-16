@@ -10,6 +10,7 @@ from typing import Type
 
 from .base import Connector
 from .csv_file import CsvUploadConnector, RemoteFileConnector
+from .magento import MagentoConnector
 from .rest_api import RestApiConnector
 from .shopify import ShopifyConnector
 from .webhook import WebhookConnector
@@ -52,6 +53,16 @@ SOURCE_TYPES: dict[str, SourceTypeInfo] = {
         id="shopify", label="Shopify",
         description="A Shopify store's product catalog, via the Admin REST API.",
         connector_class=ShopifyConnector, supports_incremental=True, requires_credentials=True,
+    ),
+    "magento": SourceTypeInfo(
+        id="magento", label="Magento / Adobe Commerce",
+        description=(
+            "A Magento Open Source or Adobe Commerce store's product catalog, via its REST API and an "
+            "Integration (System > Extensions > Integrations). config: store_url, store_code (default "
+            "'default'), url_suffix (default '.html'); credentials: the Integration's consumer_key, "
+            "consumer_secret, access_token, access_token_secret."
+        ),
+        connector_class=MagentoConnector, supports_incremental=True, requires_credentials=True,
     ),
     "woocommerce": SourceTypeInfo(
         id="woocommerce", label="WooCommerce",
