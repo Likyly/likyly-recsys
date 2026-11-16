@@ -17724,7 +17724,7 @@
     },
     "/items": {
       "get": {
-        "description": "One page of the catalog, ordered by creation. The total number of items in this\ncatalog is in the `X-Total-Count` response header. Secret key only: a public key lives in\nweb pages, and must not be able to export your whole catalog (recommendations already\nreturn the few items they recommend).",
+        "description": "One page of the catalog, ordered by creation. The total number of items in this\ncatalog is in the `X-Total-Count` response header. The secret key, or a developer key with\n`catalog:read` or `sources:read` - never the public key: it lives in web pages, and must not\nbe able to export your whole catalog (recommendations already return the few items they\nrecommend).",
         "operationId": "items_list",
         "parameters": [
           {
@@ -17836,8 +17836,7 @@
         "summary": "List items",
         "tags": [
           "items"
-        ],
-        "x-required-key": "secret"
+        ]
       }
     },
     "/items/delete": {

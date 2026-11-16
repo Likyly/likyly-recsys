@@ -303,6 +303,25 @@ async def get_current_client_id(
     return await _resolve_client_id(background_tasks, api_key, "secret")
 
 
+# Developer-key scopes that may read the catalog's items (read-only): a coding agent or the
+# wizard showing example pages (`npx @likyly/wizard pages`) needs a few real items and their
+# URLs. "sources:read" counts: it already reads what the sources write (catalog stats).
+CATALOG_READ_SCOPES = {"catalog:read", "sources:read"}
+
+
+async def get_client_id_catalog_read(
+    background_tasks: BackgroundTasks, api_key: Optional[str] = Security(api_key_header),
+) -> int:
+    """The secret key, or a developer key allowed to read the catalog. Never the public key."""
+    developer = _developer_key_client(api_key) if api_key else None
+    if developer and CATALOG_READ_SCOPES & set(developer[1]):
+        background_tasks.add_task(touch_client_usage, developer[0])
+        return developer[0]
+    if developer:
+        raise HTTPException(status_code=403, detail="This endpoint requires the 'catalog:read' or 'sources:read' scope - use the secret key or a developer key granted it")
+    return await _resolve_client_id(background_tasks, api_key, "secret")
+
+
 async def get_current_client_id_public_ok(
     background_tasks: BackgroundTasks, api_key: Optional[str] = Security(api_key_header),
 ) -> int:
@@ -370,6 +389,8 @@ def resolve_catalog(
     if data_product_type is not None:
         return data_product_type
     resolved = get_client_and_scope_by_api_key(api_key) if api_key else None
+    if resolved is None and api_key:
+        resolved = _developer_key_client(api_key)  # a developer key reads the same catalogs
     if resolved is None:
         return DEFAULT_CATALOG
     catalogs = _catalogs_of(resolved[0])
@@ -1628,12 +1649,13 @@ def items_list(
     response: Response, data_product_type: Catalog,
     limit: int = Query(100, ge=1, le=1000, description="Page size."),
     offset: int = Query(0, ge=0, description="Rows to skip."),
-    client_id: int = Depends(get_current_client_id),
+    client_id: int = Depends(get_client_id_catalog_read),
 ):
     """One page of the catalog, ordered by creation. The total number of items in this
-    catalog is in the `X-Total-Count` response header. Secret key only: a public key lives in
-    web pages, and must not be able to export your whole catalog (recommendations already
-    return the few items they recommend)."""
+    catalog is in the `X-Total-Count` response header. The secret key, or a developer key with
+    `catalog:read` or `sources:read` - never the public key: it lives in web pages, and must not
+    be able to export your whole catalog (recommendations already return the few items they
+    recommend)."""
     response.headers["X-Total-Count"] = str(count_products_in_catalog(client_id, data_product_type))
     return fetch_items(client_id, data_product_type, limit=limit, offset=offset)
 

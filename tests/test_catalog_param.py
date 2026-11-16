@@ -102,3 +102,20 @@ def test_a_catalog_emptied_from_the_console_does_not_make_the_live_one_ambiguous
         response = http.post(f"/events/{event}", headers=tenant.public, json={"session_id": "s", "item_id": "1551"})
         assert response.status_code == 200, response.text
     assert http.get("/items/1551", headers=tenant.secret).json()["title"] == "2001"
+
+
+def test_a_developer_key_reads_a_few_items_to_show_example_pages_never_the_public_key(http):
+    # `npx @likyly/wizard pages` builds one example URL per page type from real items, with the
+    # developer key the wizard wrote - not the secret key, which it never holds.
+    tenant = make_tenant()
+    http.put("/items/aerolune", params={"data_product_type": "likyly-sandbox"}, headers=tenant.secret, json={"title": "Aerolune", "properties": {"url": "aerolune-swift-ultra-3"}})
+    _, agent = db.create_developer_key(tenant.client_id, "wizard", ["sources:read", "placements:read", "analytics:read"])
+    _, plugin = db.create_developer_key(tenant.client_id, "plugin", ["analytics:read"])
+
+    listed = http.get("/items", params={"limit": 1}, headers={"X-API-Key": agent})  # catalog omitted: resolved for this key too
+    assert listed.status_code == 200, listed.text
+    assert listed.json()[0]["item_id"] == "aerolune" and listed.json()[0]["properties"]["url"] == "aerolune-swift-ultra-3"
+    assert listed.headers["x-total-count"] == "1"
+    assert http.get("/items", headers={"X-API-Key": plugin}).status_code == 403
+    assert http.get("/items", headers=tenant.public).status_code == 403
+    assert http.put("/items/x", headers={"X-API-Key": agent}, json={"title": "no"}).status_code in (401, 403), "read-only"
