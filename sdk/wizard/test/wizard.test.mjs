@@ -1188,6 +1188,7 @@ test("Magento: the module is enabled and the Integration created by bin/magento;
   const { calls, run } = fakeMagento({
     "deploy:mode:show": [true, ["Current application mode: developer."]],
     "module:status Likyly_Recommendations": [true, ["Module is disabled"]],
+    "likyly:catalog": [true, [JSON.stringify({ store_url: "http://localhost:8896", store_code: "default", count: 1 }), JSON.stringify({ id: "A", title: "A", categories: ["X"] })]],
     "likyly:integration": [true, [JSON.stringify(CREDS)]],
   });
   const shown = [];
@@ -1196,13 +1197,13 @@ test("Magento: the module is enabled and the Integration created by bin/magento;
   assert.equal(r.mode, "pull");
   assert.equal(r.storeUrl, "http://localhost:8896");
   assert.deepEqual(r.credentials, { consumer_key: "ck", consumer_secret: "cs", access_token: "at", access_token_secret: "ats" });
-  assert.deepEqual(calls, ["deploy:mode:show", "module:status Likyly_Recommendations", "module:enable Likyly_Recommendations", "setup:upgrade --keep-generated", "cache:flush", "likyly:catalog --store", "likyly:integration"]);
+  assert.deepEqual(calls, ["deploy:mode:show", "module:status Likyly_Recommendations", "module:enable Likyly_Recommendations", "setup:upgrade --keep-generated", "cache:flush", "likyly:catalog", "likyly:integration"]);
   assert.doesNotMatch(shown.join("\n"), /ats|"cs"/);
   assert.equal(readFileSync(join(dir, ".likyly/bin-magento"), "utf8"), "php bin/magento\n");
 
   // Already enabled: no setup:upgrade again.
-  const again = fakeMagento({ "module:status Likyly_Recommendations": [true, ["Module is enabled"]], "likyly:integration": [true, [JSON.stringify(CREDS)]] });
-  await createMagentoIntegration({ dir, cli: ["php", "bin/magento"], run: again.run });
+  const again = fakeMagento({ "module:status Likyly_Recommendations": [true, ["Module is enabled"]], "likyly:catalog": [true, [JSON.stringify({ store_url: "http://localhost:8896" })]], "likyly:integration": [true, [JSON.stringify(CREDS)]] });
+  await createMagentoIntegration({ dir, cli: ["php", "bin/magento"], run: again.run, apiUrl: "http://127.0.0.1:6161" });
   assert.ok(!again.calls.some((c) => c.startsWith("setup:upgrade")));
 });
 
@@ -1346,7 +1347,6 @@ test("Magento: a local store with LIKYLY in the cloud - products read with likyl
   const dir = project({});
   const { calls, run } = fakeMagento({
     "module:status Likyly_Recommendations": [true, ["Module is enabled"]],
-    "likyly:catalog --store": [true, [STORE_LINE]],
     "likyly:catalog": [true, ["Some PHP notice", STORE_LINE, ...ITEMS.map((i) => JSON.stringify(i))]],
   });
   const r = await createMagentoIntegration({ dir, cli: ["php", "bin/magento"], run, apiUrl: "https://api.likyly.com" });
@@ -1387,4 +1387,25 @@ test("Magento: the products go to a push source - created the first time, its se
   const r2 = await pushMagentoCatalog({ apiKey: "lk", storeUrl: "http://localhost:8896", items: ITEMS, fetchImpl });
   assert.ok(r2.some((x) => x.text === "2 product(s) sent to LIKYLY"), JSON.stringify(r2));
   assert.deepEqual(pushes.map((p) => p.secret), ["ps_rotated"]);
+});
+
+// --- Magento: does the store fit the plan? --------------------------------------------------------
+
+import { categoryCounts, itemsInCategories, productRoom } from "../src/magento.mjs";
+
+test("Magento: room left in the plan, and the categories to choose from", async () => {
+  const plan = (body, status = 200) => async () => ({ ok: status < 300, status, json: async () => body });
+  const free = await productRoom({ apiKey: "lk", fetchImpl: plan({ plan: "free", plan_name: "Free", usage: { product_count: 10, product_limit: 50 }, upgrade_url: "https://likyly.com/account/upgrade" }) });
+  assert.deepEqual(free, { plan: "free", planName: "Free", limit: 50, room: 40, upgradeUrl: "https://likyly.com/account/upgrade" });
+  const resend = await productRoom({ apiKey: "lk", inCatalog: 10, fetchImpl: plan({ plan: "free", usage: { product_count: 50, product_limit: 50 } }) });
+  assert.equal(resend.room, 10, "products already in the catalog take no new room");
+  assert.equal((await productRoom({ apiKey: "lk", fetchImpl: plan({ plan: "unlimited", usage: { product_count: 9, product_limit: null } }) })).room, null);
+  assert.equal(await productRoom({ apiKey: "lk", fetchImpl: plan({}, 403) }), null);
+
+  const items = [
+    { id: "1", categories: ["Golf clubs"] }, { id: "2", categories: ["Golf clubs", "Sale"] }, { id: "3", categories: ["Books"] }, { id: "4", categories: [] },
+  ];
+  assert.deepEqual(categoryCounts(items), [{ name: "Golf clubs", count: 2 }, { name: "Books", count: 1 }, { name: "Sale", count: 1 }, { name: null, count: 1 }]);
+  assert.deepEqual(itemsInCategories(items, ["Sale", "Books"]).map((i) => i.id), ["2", "3"]);
+  assert.deepEqual(itemsInCategories(items, [null]).map((i) => i.id), ["4"]);
 });

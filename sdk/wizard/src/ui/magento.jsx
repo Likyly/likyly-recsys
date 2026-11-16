@@ -11,11 +11,18 @@ import { useEffect, useRef, useState } from "react";
 import { Box, Text } from "ink";
 import Spinner from "ink-spinner";
 import { C } from "./theme.jsx";
-import { Select } from "./widgets.jsx";
+import { MultiSelect, Select } from "./widgets.jsx";
+import { openUrl } from "./system.mjs";
 import { Field } from "./shopify.jsx";
 import {
+  magentoCatalogName,
+  categoryCounts,
   connectMagentoCatalog,
+  createIntegration,
   createMagentoIntegration,
+  itemsInCategories,
+  prepareMagentoStore,
+  productRoom,
   isMagentoPushSource,
   pushMagentoCatalog,
   detectMagentoCli,
@@ -72,7 +79,8 @@ export function MagentoCatalogStep({ apiKey, dir, onDone, standalone = false }) 
   const [fetched, setFetched] = useState(0);
   const [cli, setCli] = useState(() => (dir ? detectMagentoCli(dir, { commandExists }) : null));
   const [progress, setProgress] = useState({ step: "", line: "" });
-  const auto = useRef(null); // { storeCode, credentials } from likyly:integration
+  const auto = useRef(null); // { mode, storeCode, items, categories, credentials }
+  const [plan, setPlan] = useState(null); // { room, planName, upgradeUrl } when the store doesn't fit
   const canRun = Boolean(dir) && hasModuleCommand(dir);
   const skip = () => onDone([{ level: "info", text: "Skipped. Connect the catalog later:", hint: LATER }], "skipped");
   const firstStage = canRun ? "how" : "store";
@@ -100,31 +108,65 @@ export function MagentoCatalogStep({ apiKey, dir, onDone, standalone = false }) 
     // eslint-disable-next-line react-hooks/exhaustive-deps -- runs once
   }, [stage]);
 
-  // bin/magento: enable the module, create the Integration.
+  // bin/magento: enable the module, read the products; then check they fit the plan.
   useEffect(() => {
     if (stage !== "creating") return;
-    createMagentoIntegration({
+    prepareMagentoStore({
       dir,
       cli: cli.cmd,
       run: (cmd, onLine) => runAsync(dir, cmd, onLine),
       onStep: (step) => setProgress({ step, line: "" }),
       onLine: (line) => setProgress((p) => ({ ...p, line: line.trim().slice(0, 100) })),
-    }).then((r) => {
+    }).then(async (r) => {
       if (!r.ok) {
         setError(r.error);
         return setStage("how");
       }
-      auto.current = { mode: r.mode, storeCode: r.storeCode, credentials: r.credentials, items: r.items };
+      auto.current = { mode: r.mode, storeCode: r.storeCode, items: r.items, categories: null };
       setStoreUrl(r.storeUrl);
-      setStage(r.mode === "push" ? "pushing" : "running");
+      setProgress({ step: "Checking your plan", line: "" });
+      // Products this catalog already has are sent again, they take no new room.
+      const inCatalog = existing && magentoCatalogName(r.storeUrl) === existing.product_type ? (existing.itemCount ?? 0) : 0;
+      const room = await productRoom({ apiKey, inCatalog });
+      if (room && room.room !== null && r.items.length > room.room) {
+        setPlan(room);
+        return setStage("plan");
+      }
+      proceed(null);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- runs once per attempt
   }, [stage]);
 
+  /** Go on with every product (categories null) or only those of the chosen categories. */
+  const proceed = (categories) => {
+    auto.current.categories = categories;
+    if (categories) auto.current.items = itemsInCategories(auto.current.items, categories);
+    setStage(auto.current.mode === "push" ? "pushing" : "integration");
+  };
+
+  // A store LIKYLY reads itself: the read-only Integration it reads it with.
+  useEffect(() => {
+    if (stage !== "integration") return;
+    createIntegration({ cli: cli.cmd, run: (cmd, onLine) => runAsync(dir, cmd, onLine), onStep: (step) => setProgress({ step, line: "" }) }).then((r) => {
+      if (!r.ok) {
+        setError(r.error);
+        return setStage("how");
+      }
+      auto.current.credentials = r.credentials;
+      setStage("running");
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs once
+  }, [stage]);
+
+  const chosenLine = () =>
+    auto.current?.categories
+      ? [{ level: "info", text: `Only these categories (your plan's room): ${auto.current.categories.map((c) => c ?? "no category").join(", ")}`, hint: `- ${LATER} to change them` }]
+      : [];
+
   useEffect(() => {
     if (stage !== "running") return;
     const credentials = auto.current?.credentials ?? magentoCredentials(values);
-    connectMagentoCatalog({ apiKey, storeUrl, storeCode: auto.current?.storeCode, credentials, onProgress: setFetched }).then((results) => {
+    connectMagentoCatalog({ apiKey, storeUrl, storeCode: auto.current?.storeCode, categories: auto.current?.categories, credentials, onProgress: setFetched }).then((results) => {
       const refused = results.find((r) => r.retry);
       if (refused) {
         const wasAuto = Boolean(auto.current);
@@ -134,7 +176,7 @@ export function MagentoCatalogStep({ apiKey, dir, onDone, standalone = false }) 
         setRefusal(`${refused.text.replace(/^Magento refused the connection: /, "")}.${wasAuto ? "" : " Check the address and the Integration's values, or leave empty to skip."}`);
         return setStage(wasAuto ? "how" : "store");
       }
-      const head = auto.current ? [{ level: "ok", text: "LIKYLY module enabled, read-only Integration \"LIKYLY\" created", hint: `(${cli.label})` }] : [];
+      const head = auto.current ? [{ level: "ok", text: "LIKYLY module enabled, read-only Integration \"LIKYLY\" created", hint: `(${cli.label})` }, ...chosenLine()] : [];
       onDone([...head, ...results], results.some((r) => r.level === "fail") ? "not connected" : storeUrl.replace(/^https?:\/\//, ""));
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- runs once, when the store and credentials are known
@@ -148,6 +190,7 @@ export function MagentoCatalogStep({ apiKey, dir, onDone, standalone = false }) 
       onDone(
         [
           { level: "ok", text: "LIKYLY module enabled", hint: `(${cli.label})` },
+          ...chosenLine(),
           ...results,
           ...(failed
             ? []
@@ -234,6 +277,60 @@ export function MagentoCatalogStep({ apiKey, dir, onDone, standalone = false }) 
     );
   }
 
+  if (stage === "plan") {
+    const total = auto.current.items.length;
+    return (
+      <Box flexDirection="column">
+        <Text>
+          Your store has {total} products; your {plan.planName} plan has room for {plan.room} more in LIKYLY.
+        </Text>
+        <Text color={C.muted}>LIKYLY only recommends products it has: on the page of a product left out, the block stays empty.</Text>
+        <Box marginTop={1}>
+          <Select
+            items={[
+              { value: "categories", label: `Choose the categories to send (up to ${plan.room} products)` },
+              { value: "pro", label: "Get a bigger plan", hint: plan.upgradeUrl },
+              { value: "anyway", label: `Send them all anyway: the first ${plan.room} are kept` },
+            ]}
+            onSubmit={(choice) => {
+              if (choice === "anyway") return proceed(null);
+              if (choice === "categories") return setStage("categories");
+              if (plan.upgradeUrl) openUrl(plan.upgradeUrl);
+              onDone(
+                [
+                  { level: "warn", text: `Not connected yet: ${total} products, room for ${plan.room} on the ${plan.planName} plan. Once your plan is bigger, run:`, hint: LATER },
+                  ...(plan.upgradeUrl ? [{ level: "info", text: "Opened in your browser:", hint: plan.upgradeUrl }] : []),
+                ],
+                "skipped",
+              );
+            }}
+          />
+        </Box>
+      </Box>
+    );
+  }
+
+  if (stage === "categories") {
+    const counts = categoryCounts(auto.current.items);
+    return (
+      <Box flexDirection="column">
+        <Text>Which categories should LIKYLY recommend from? Room for {plan.room} products.</Text>
+        {error ? <Text color={C.coral}>✗ {error}</Text> : null}
+        <MultiSelect
+          items={counts.map((c) => ({ value: c.name ?? "\u0000none", label: c.name ?? "Products without a category", hint: `${c.count} product(s)` }))}
+          onSubmit={(values) => {
+            const names = values.map((v) => (v === "\u0000none" ? null : v));
+            const count = itemsInCategories(auto.current.items, names).length;
+            if (!count) return setError("Pick at least one category (space), then Enter.");
+            if (count > plan.room) return setError(`That's ${count} products: room for ${plan.room}. Untick one.`);
+            setError(null);
+            proceed(names);
+          }}
+        />
+      </Box>
+    );
+  }
+
   if (stage === "command")
     return (
       <Field
@@ -252,7 +349,7 @@ export function MagentoCatalogStep({ apiKey, dir, onDone, standalone = false }) 
       />
     );
 
-  if (stage === "creating" || stage === "enabling")
+  if (stage === "creating" || stage === "enabling" || stage === "integration")
     return (
       <Box flexDirection="column">
         <Text>

@@ -39,14 +39,14 @@ export function magentoCredentials({ consumerKey, consumerSecret, accessToken, a
 }
 
 /** Create (or, for the same store, update) the `magento` source, test it, start the first sync. */
-export function connectMagentoCatalog({ apiKey, storeUrl, storeCode, credentials, ...rest }) {
+export function connectMagentoCatalog({ apiKey, storeUrl, storeCode, categories, credentials, ...rest }) {
   return connectCatalog({
     apiKey,
     platform: "Magento",
     agent: "magento",
     label: storeUrl.replace(/^https?:\/\//, ""),
     matches: (s) => s.type === "magento" && s.config?.store_url === storeUrl,
-    source: { name: `Magento · ${storeUrl.replace(/^https?:\/\//, "")}`, type: "magento", product_type: magentoCatalogName(storeUrl), config: { store_url: storeUrl, ...(storeCode && storeCode !== "default" ? { store_code: storeCode } : {}) } },
+    source: { name: `Magento · ${storeUrl.replace(/^https?:\/\//, "")}`, type: "magento", product_type: magentoCatalogName(storeUrl), config: { store_url: storeUrl, ...(storeCode && storeCode !== "default" ? { store_code: storeCode } : {}), ...(categories?.length ? { categories } : {}) } },
     credentials,
     ...rest,
   });
@@ -775,19 +775,28 @@ export function rememberMagentoCli(dir, cmd) {
  * { ok: true, storeUrl, storeCode, credentials } or { ok: false, error }. The credentials are
  * never passed to onLine.
  */
-export async function createMagentoIntegration({ dir, cli, run, onStep = () => {}, onLine = () => {}, integration = true, apiUrl = API_URL }) {
+function magentoRunner({ cli, run, onStep, onLine }) {
   const lines = [];
   const step = async (label, args, { quiet = false } = {}) => {
     onStep(label);
     lines.length = 0;
-    const ok = await run([...cli, ...args], (l) => {
+    return run([...cli, ...args], (l) => {
       lines.push(l);
       if (!quiet && !l.trim().startsWith("{")) onLine(l);
     });
-    return ok;
   };
   const tail = () => lines.filter((l) => !l.trim().startsWith("{")).slice(-3).join(" · ").slice(0, 300);
+  return { lines, step, tail };
+}
 
+/**
+ * Get the store ready, with bin/magento: refuse production mode, enable the LIKYLY module, flush
+ * the cache, then (unless `catalog: false`) read the products with `likyly:catalog`. Resolves to
+ * { ok: true, storeUrl, storeCode, items, mode: "push" | "pull" } - "push" when LIKYLY can't reach
+ * the store (see needsPush) - or { ok: false, error }.
+ */
+export async function prepareMagentoStore({ dir, cli, run, onStep = () => {}, onLine = () => {}, catalog = true, apiUrl = API_URL }) {
+  const { lines, step, tail } = magentoRunner({ cli, run, onStep, onLine });
   if (!(await step("Checking the store's mode", ["deploy:mode:show"]))) {
     return { ok: false, error: `bin/magento did not run (${tail() || "no output"})` };
   }
@@ -800,36 +809,76 @@ export async function createMagentoIntegration({ dir, cli, run, onStep = () => {
     if (!(await step("Updating the store (setup:upgrade, about a minute)", ["setup:upgrade", "--keep-generated"]))) return { ok: false, error: `setup:upgrade failed: ${tail()}` };
   }
   if (!(await step("Flushing the cache", ["cache:flush"]))) return { ok: false, error: `cache:flush failed: ${tail()}` };
-  if (!integration) {
-    rememberMagentoCli(dir, cli);
-    return { ok: true };
-  }
-  // A store on this computer, LIKYLY in the cloud: LIKYLY can't read it - send the products instead.
-  if (await step("Reading the store's address", ["likyly:catalog", "--store"], { quiet: true })) {
-    const store = jsonLines(lines)[0];
-    if (store?.store_url && needsPush(store.store_url, apiUrl)) {
-      if (!(await step(`Reading the ${store.count ?? ""} products`.replace("  ", " "), ["likyly:catalog"], { quiet: true }))) return { ok: false, error: `likyly:catalog failed: ${tail()}` };
-      const [, ...items] = jsonLines(lines);
-      rememberMagentoCli(dir, cli);
-      return { ok: true, mode: "push", storeUrl: normalizeStoreUrl(store.store_url), storeCode: store.store_code, items };
-    }
-  }
+  rememberMagentoCli(dir, cli);
+  if (!catalog) return { ok: true };
+  if (!(await step("Reading the store's products", ["likyly:catalog"], { quiet: true }))) return { ok: false, error: `likyly:catalog failed: ${tail()}` };
+  const [store, ...items] = jsonLines(lines);
+  const storeUrl = normalizeStoreUrl(store?.store_url);
+  if (!storeUrl) return { ok: false, error: "likyly:catalog gave no store address" };
+  return { ok: true, storeUrl, storeCode: store.store_code, items, mode: needsPush(storeUrl, apiUrl) ? "push" : "pull" };
+}
+
+/** `bin/magento likyly:integration`: the read-only Integration's credentials (never on screen). */
+export async function createIntegration({ cli, run, onStep = () => {} }) {
+  const { lines, step, tail } = magentoRunner({ cli, run, onStep, onLine: () => {} });
   if (!(await step("Creating the read-only LIKYLY Integration", ["likyly:integration"], { quiet: true }))) {
     return { ok: false, error: `likyly:integration failed: ${tail()}` };
   }
-  let data;
-  try {
-    data = JSON.parse([...lines].reverse().find((l) => l.trim().startsWith("{")));
-  } catch {
-    return { ok: false, error: "likyly:integration gave no credentials" };
-  }
+  const data = jsonLines(lines).at(-1);
+  if (!data) return { ok: false, error: "likyly:integration gave no credentials" };
   const { store_url: url, store_code: storeCode, ...credentials } = data;
   const storeUrl = normalizeStoreUrl(url);
   if (!storeUrl || !magentoCredentials({ consumerKey: credentials.consumer_key, consumerSecret: credentials.consumer_secret, accessToken: credentials.access_token, accessTokenSecret: credentials.access_token_secret })) {
     return { ok: false, error: "likyly:integration gave incomplete credentials" };
   }
-  rememberMagentoCli(dir, cli);
-  return { ok: true, mode: "pull", storeUrl, storeCode, credentials };
+  return { ok: true, storeUrl, storeCode, credentials };
+}
+
+/**
+ * Both steps at once (no plan check between them): the store ready and its products read, then
+ * for a store LIKYLY reads itself the Integration's credentials. `integration: false` stops once
+ * the module is enabled (a store already connected to LIKYLY).
+ */
+export async function createMagentoIntegration({ dir, cli, run, onStep = () => {}, onLine = () => {}, integration = true, apiUrl = API_URL }) {
+  const prepared = await prepareMagentoStore({ dir, cli, run, onStep, onLine, apiUrl, catalog: integration });
+  if (!prepared.ok || !integration || prepared.mode === "push") return prepared;
+  const made = await createIntegration({ cli, run, onStep });
+  return made.ok ? { ...prepared, ...made, mode: "pull" } : made;
+}
+
+// --- The plan: does the store fit? ------------------------------------------------------------
+
+/**
+ * Room left for products in the account (GET /analytics/plan): { plan, planName, room, limit,
+ * upgradeUrl }, room null when the plan has no cap; null when LIKYLY can't say. `inCatalog`: items
+ * the target catalog already has (sent again, they take no new room).
+ */
+export async function productRoom({ apiKey, inCatalog = 0, fetchImpl = fetch }) {
+  try {
+    const res = await fetchImpl(`${API_URL}/analytics/plan`, { headers: { "X-API-Key": apiKey }, signal: AbortSignal.timeout(20000) });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const limit = data.usage?.product_limit ?? data.limits?.product_limit ?? null;
+    const used = data.usage?.product_count ?? 0;
+    return { plan: data.plan, planName: data.plan_name ?? data.plan, limit, room: limit === null ? null : Math.max(0, limit - used + inCatalog), upgradeUrl: data.upgrade_url };
+  } catch {
+    return null;
+  }
+}
+
+/** [{ name, count }] - how many products each category holds, biggest first. */
+export function categoryCounts(items) {
+  const counts = new Map();
+  for (const item of items) for (const c of new Set(item.categories ?? [])) counts.set(c, (counts.get(c) ?? 0) + 1);
+  const none = items.filter((i) => !(i.categories ?? []).length).length;
+  const list = [...counts].map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+  return none ? [...list, { name: null, count: none }] : list;
+}
+
+/** The products in at least one of these categories (`null` = products without a category). */
+export function itemsInCategories(items, names) {
+  const wanted = new Set(names);
+  return items.filter((i) => ((i.categories ?? []).length ? i.categories.some((c) => wanted.has(c)) : wanted.has(null)));
 }
 
 /** The JSON lines of a command's output (other lines - warnings, notices - skipped). */

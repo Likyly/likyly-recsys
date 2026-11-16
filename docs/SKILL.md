@@ -145,6 +145,11 @@ URL, or call the push endpoint from their own code when products change.
    - "never show the current product" -> `business_rules.exclude_current_item: true` (this is
      already the default - only set it explicitly if the developer wants to confirm it, or set
      it `false` if they explicitly want the opposite).
+   - A product page whose product LIKYLY doesn't have (not synced, beyond the plan's product
+     limit) shows nothing by default (`business_rules.unknown_current_item: "empty"`,
+     `strategy_used: "none"`) - say so if a preview with a real id comes back empty, and check
+     that the product is in the catalog (`get_catalog_stats`, the sync's rejected items); set
+     `"popular"` only if the developer prefers popular items there.
    - "exclude out-of-stock" -> `filters.in_stock_only: true`.
    - "exclude what's in the cart" -> `signals.optional` includes `"cart_item_ids"`,
      `business_rules.exclude_cart_items: true`.
