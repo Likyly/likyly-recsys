@@ -25,6 +25,8 @@ ${blue("Commands")}
   mcp add        only connect your AI assistant (signs you in first if needed)
   shopify        connect a Shopify store's catalog: you type the app's credentials here,
                  they go straight to LIKYLY (encrypted), never to your assistant
+  magento        connect a Magento / Adobe Commerce store's catalog, the same way: the
+                 store's address and an Integration's four values, typed here
   preview        start the site's local preview (shopify theme dev, or the dev script) to
                  see LIKYLY's changes live; run by an AI assistant, it opens a new terminal
                  window, where a store password can be typed
@@ -96,6 +98,7 @@ export function parseArgs(argv) {
       opts.placement = positional[2] ?? opts.placement;
     } else if (cmd === "mcp add" || cmd === "mcp") opts.command = "mcp";
     else if (cmd === "shopify") opts.command = "shopify";
+    else if (cmd === "magento") opts.command = "magento";
     else if (cmd === "preview") opts.command = "preview";
     else if (cmd === "detect") opts.command = "detect";
     else if (cmd === "inventory") opts.command = "inventory";

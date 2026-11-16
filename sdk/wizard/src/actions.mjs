@@ -59,7 +59,7 @@ export function applyKey(opts, project, key) {
   if (project.id === "shopify-app") return [info("The public key goes in the app's own settings (the merchant pastes it in the app's admin)")];
   if (project.keyFile) {
     if (!key) return [warn(`Add it later: put your public key (pk_...) alone in ${project.keyFile}`)];
-    const res = writeKeyFile(opts.dir, project.keyFile, key, { dryRun: opts.dryRun });
+    const res = writeKeyFile(opts.dir, project.keyFile, key, { dryRun: opts.dryRun, format: project.keyFormat });
     if (res.status === "same") return [info(`${project.keyFile} already holds this key`)];
     return [ok(`Public key → ${project.keyFile}${res.status === "updated" ? " (updated)" : ""}`)];
   }
@@ -77,7 +77,10 @@ export function applyStarter(opts, project) {
   const starter = writeStarter(opts.dir, project.starter, { dryRun: opts.dryRun });
   if (!starter) return [];
   const rel = relative(opts.dir, starter.path);
-  return starter.status === "created" ? [ok(`Starter file ${rel}`)] : [info(`${rel} already in place, left as is`)];
+  const what = project.starter.template === "magento-module" ? "Module" : "Starter file";
+  if (starter.status === "created") return [ok(`${what} ${rel}`)];
+  if (starter.status === "completed") return [ok(`${what} ${rel}: missing files added, the others left as is`)];
+  return [info(`${rel} already in place, left as is`)];
 }
 
 /** Connect each chosen AI assistant to the LIKYLY MCP server, and give it the LIKYLY skill. */

@@ -7,7 +7,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { detectProject, EDITORS } from "./frameworks.mjs";
 import { SKILL_DIRS, configPath, hasLikylyServer } from "./mcp.mjs";
-import { CLAUDE_COMMANDS, starterContent } from "./setup.mjs";
+import { CLAUDE_COMMANDS, starterFiles } from "./setup.mjs";
 
 const ENV_FILES = [".env", ".env.local", ".env.development", ".env.production"];
 const KEY_VAR = /^\s*((?:NEXT_PUBLIC_|VITE_|PUBLIC_|NUXT_PUBLIC_|REACT_APP_)?LIKYLY_[A-Z_]*)\s*=/;
@@ -83,7 +83,7 @@ export function takeInventory(dir) {
   if (project?.starter) {
     const path = join(dir, project.starter.path);
     if (existsSync(path)) {
-      const untouched = readFileSync(path, "utf8") === starterContent(project.starter);
+      const untouched = starterFiles(project.starter).every((f) => existsSync(join(dir, f.path)) && readFileSync(join(dir, f.path), "utf8") === f.content);
       setup.push({ what: "provider", path: project.starter.path, note: untouched ? "as the wizard wrote it" : "edited since the wizard wrote it" });
     }
   }

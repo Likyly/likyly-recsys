@@ -729,3 +729,128 @@ test("preview command: nothing known is a clear error, not a hang", () => {
   assert.match(res.stderr, /No preview command known/);
   assert.equal(parseArgs(["preview", "--store", "x", "--new-window"]).newWindow, true);
 });
+
+// --- Magento: a module written by the wizard, the catalog read through an Integration ----------
+
+import { connectMagentoCatalog, magentoCatalogName, magentoCredentials, normalizeStoreUrl } from "../src/magento.mjs";
+import { planUninstall } from "../src/uninstall.mjs";
+
+const magentoStore = (require = { "magento/product-community-edition": "2.4.9" }) =>
+  project({ "composer.json": { name: "magento/project-community-edition", require: { ...require, "symfony/console": "^6" } }, "bin/magento": "", "app/etc/di.xml": "<config/>", "app/code/": "" });
+
+test("detects Magento Open Source, Adobe Commerce and a magento2 clone, before generic PHP", () => {
+  const open = detectProject(magentoStore());
+  assert.equal(open.id, "magento");
+  assert.equal(open.label, "Magento Open Source");
+  assert.equal(open.install, null, "nothing for Composer: the module is written in app/code");
+  assert.equal(open.starter.path, "app/code/Likyly/Recommendations");
+  assert.equal(open.keyFile, "app/code/Likyly/Recommendations/etc/config.xml");
+  assert.equal(detectProject(magentoStore({ "magento/product-enterprise-edition": "2.4.9" })).label, "Adobe Commerce");
+  const clone = project({ "composer.json": { name: "magento/magento2ce", require: { php: "~8.3" } }, "bin/magento": "", "app/etc/di.xml": "" });
+  assert.equal(detectProject(clone).id, "magento");
+  assert.equal(detectProject(project({ "composer.json": { require: { php: "8" } }, "bin/magento": "" })).id, "php", "bin/magento alone is not enough");
+});
+
+test("end to end: a Magento store gets the module and its key, nothing installed", () => {
+  const dir = magentoStore();
+  const res = runCli(["--yes", "--public-key", "pk_test_mage", "--dir", dir], dir);
+  assert.equal(res.status, 0, res.stderr);
+  assert.match(res.stdout, /Magento Open Source/);
+  assert.match(res.stdout, /bin\/magento module:enable Likyly_Recommendations/);
+  const mod = join(dir, "app/code/Likyly/Recommendations");
+  for (const f of ["registration.php", "etc/module.xml", "etc/config.xml", "etc/widget.xml", "etc/adminhtml/system.xml", "Block/Recommendations.php", "view/frontend/templates/recommendations.phtml"]) {
+    assert.ok(existsSync(join(mod, f)), f);
+  }
+  const config = readFileSync(join(mod, "etc/config.xml"), "utf8");
+  assert.match(config, /<public_key>pk_test_mage<\/public_key>/);
+  assert.doesNotMatch(config, /api_url/, "production: no API address written");
+  // The storefront script is valid JavaScript once taken out of the template.
+  const phtml = readFileSync(join(mod, "view/frontend/templates/recommendations.phtml"), "utf8");
+  const script = phtml.match(/<<<'JS'\n([\s\S]*?)\nJS;/)[1].replace(/^\s*import .*$/m, "");
+  const check = spawnSync(process.execPath, ["--input-type=module", "--check"], { input: script, encoding: "utf8" });
+  assert.equal(check.status, 0, check.stderr);
+  assert.match(phtml, /data-likyly-placement=/);
+  assert.match(phtml, /li\.dataset\.likylyItemId/);
+  // PHP files parse, when PHP is around.
+  if (spawnSync("php", ["-v"]).status === 0) {
+    for (const f of ["registration.php", "Block/Recommendations.php", "view/frontend/templates/recommendations.phtml"]) {
+      const lint = spawnSync("php", ["-l", join(mod, f)], { encoding: "utf8" });
+      assert.equal(lint.status, 0, lint.stdout + lint.stderr);
+    }
+  }
+
+  // A new key rewrites config.xml only; a local API address is written next to it.
+  const again = spawnSync(process.execPath, [BIN, "--yes", "--public-key", "pk_test_new", "--dir", dir], { cwd: dir, encoding: "utf8", env: { ...process.env, LIKYLY_API_URL: "http://127.0.0.1:6061", CI: "1" } });
+  assert.equal(again.status, 0, again.stderr);
+  const updated = readFileSync(join(mod, "etc/config.xml"), "utf8");
+  assert.match(updated, /pk_test_new/);
+  assert.match(updated, /<api_url>http:\/\/127\.0\.0\.1:6061<\/api_url>/);
+
+  // Uninstall takes the whole module out (the key file with it), as long as nobody edited it.
+  const plan = planUninstall(dir);
+  assert.ok(plan.steps.some((s) => s.label === "Delete app/code/Likyly/Recommendations"));
+  assert.ok(!plan.steps.some((s) => /etc\/config\.xml/.test(s.label)), "the key file goes with the module");
+  assert.deepEqual(plan.code, []);
+  writeFileSync(join(mod, "Block/Recommendations.php"), "<?php // edited\n");
+  const kept = planUninstall(dir);
+  assert.ok(kept.kept.some((k) => /Recommendations \(edited/.test(k)));
+});
+
+test("Magento: store address, catalog name and the Integration's four values", () => {
+  assert.equal(normalizeStoreUrl("shop.example.com"), "https://shop.example.com");
+  assert.equal(normalizeStoreUrl("https://shop.example.com/admin/catalog/product/"), "https://shop.example.com");
+  assert.equal(normalizeStoreUrl("http://localhost:8896/"), "http://localhost:8896");
+  assert.equal(normalizeStoreUrl("localhost:8896"), "http://localhost:8896");
+  assert.equal(normalizeStoreUrl("https://example.com/fr/rest/V1/products"), "https://example.com/fr");
+  assert.equal(normalizeStoreUrl("not a url"), null);
+  assert.equal(magentoCatalogName("https://www.shop.example.com"), "shop-example-com");
+  assert.equal(magentoCatalogName("http://localhost:8896"), "magento");
+  assert.deepEqual(magentoCredentials({ consumerKey: " a ", consumerSecret: "b", accessToken: "c", accessTokenSecret: "d" }), { consumer_key: "a", consumer_secret: "b", access_token: "c", access_token_secret: "d" });
+  assert.equal(magentoCredentials({ consumerKey: "a", consumerSecret: "b", accessToken: "c" }), null);
+});
+
+test("Magento: a new source is created, tested and synced; a refusal deletes it and asks again", async () => {
+  const credentials = { consumer_key: "a", consumer_secret: "b", access_token: "c", access_token_secret: "d" };
+  const { calls, fetchImpl } = fakeApi({
+    "GET /data-sources": [200, []],
+    "POST /data-sources": [201, { id: 9, type: "magento", product_type: "shop-example-com", config: { store_url: "https://shop.example.com" } }],
+    "POST /data-sources/9/test": [200, { ok: true, message: "Connected to https://shop.example.com - 120 product(s) listed (signed requests (OAuth))" }],
+    "POST /data-sources/9/sync": [202, { id: 2, status: "running" }],
+    "GET /data-sources/9/syncs": [200, [{ id: 2, status: "success", items_fetched: 120, items_upserted: 120, items_failed: 0 }]],
+  });
+  const results = await connectMagentoCatalog({ apiKey: "lk_dev", storeUrl: "https://shop.example.com", credentials, fetchImpl, wait: async () => {} });
+  assert.ok(results.every((r) => r.level !== "fail"), JSON.stringify(results));
+  assert.ok(results.some((r) => r.text === "120 product(s) synced to LIKYLY"));
+  assert.deepEqual(calls.find((c) => c.method === "POST" && c.path === "/data-sources").body, {
+    name: "Magento · shop.example.com", type: "magento", product_type: "shop-example-com", config: { store_url: "https://shop.example.com" }, credentials,
+  });
+  assert.doesNotMatch(JSON.stringify(results), /"b"|"d"/, "the secrets are never echoed");
+
+  const refused = fakeApi({
+    "GET /data-sources": [200, []],
+    "POST /data-sources": [201, { id: 4, type: "magento", product_type: "m", config: { store_url: "https://m.example.com" } }],
+    "POST /data-sources/4/test": [200, { ok: false, message: "Magento refused the Integration's credentials (unauthorized)" }],
+    "DELETE /data-sources/4": [200, {}],
+  });
+  const r = await connectMagentoCatalog({ apiKey: "lk", storeUrl: "https://m.example.com", credentials, fetchImpl: refused.fetchImpl });
+  assert.equal(r[0].retry, true);
+  assert.match(r[0].text, /^Magento refused the connection: /);
+  assert.ok(refused.calls.some((c) => c.method === "DELETE" && c.path === "/data-sources/4"));
+});
+
+test("catalog step: the store already connected is found first, with its product count", async () => {
+  const { findConnectedSource, describeSource } = await import("../src/catalog.mjs");
+  const { calls, fetchImpl } = fakeApi({
+    "GET /data-sources": [200, [{ id: 2, type: "webhook", product_type: "x" }, { id: 5, type: "shopify", product_type: "likyly-sandbox", status: "connected", config: { shop_domain: "likyly-sandbox.myshopify.com" } }]],
+    "GET /data-sources/5/stats": [200, { item_count: 50 }],
+  });
+  const found = await findConnectedSource({ apiKey: "lk", type: "shopify", fetchImpl });
+  assert.equal(found.id, 5);
+  assert.equal(describeSource(found.config.shop_domain, found), "likyly-sandbox.myshopify.com → catalog likyly-sandbox · 50 product(s)");
+  assert.ok(calls.every((c) => c.method === "GET"), "only reads");
+  assert.equal(await findConnectedSource({ apiKey: "lk", type: "magento", fetchImpl }), null);
+  const down = async () => {
+    throw new Error("offline");
+  };
+  assert.equal(await findConnectedSource({ apiKey: "lk", type: "shopify", fetchImpl: down }), null, "LIKYLY unreachable: just ask for the store");
+});

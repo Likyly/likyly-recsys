@@ -275,11 +275,50 @@ function detectShopifyApp(dir) {
   };
 }
 
+const MAGENTO_PACKAGES = {
+  "magento/product-community-edition": "Magento Open Source",
+  "mage-os/product-community-edition": "Mage-OS",
+  "magento/product-enterprise-edition": "Adobe Commerce",
+  "magento/magento-cloud-metapackage": "Adobe Commerce Cloud",
+};
+export const MAGENTO_MODULE = "app/code/Likyly/Recommendations";
+
+/**
+ * A Magento 2 store (Open Source, Mage-OS or Adobe Commerce): its composer.json requires the
+ * product metapackage, or it is a clone of the magento2 repository (bin/magento + app/etc/di.xml).
+ * No package to install: the wizard writes a small module (block, template, widget) that loads the
+ * SDK from jsDelivr, with the public key in its etc/config.xml; the catalog is read by LIKYLY
+ * through the store's REST API (the wizard asks for an Integration's credentials).
+ */
+function detectMagento(dir) {
+  const composer = readJson(join(dir, "composer.json"));
+  const req = { ...composer?.require, ...composer?.["require-dev"] };
+  const edition = Object.keys(MAGENTO_PACKAGES).find((p) => req[p]);
+  if (!edition && !(has(dir, "bin/magento") && has(dir, "app/etc/di.xml"))) return null;
+  return {
+    id: "magento",
+    label: edition ? MAGENTO_PACKAGES[edition] : "Magento",
+    language: "php",
+    sdkDocs: "typescript",
+    packages: [],
+    install: null,
+    envFile: null,
+    envVar: null,
+    keyFile: `${MAGENTO_MODULE}/etc/config.xml`,
+    keyFormat: "magento-config",
+    starter: { path: MAGENTO_MODULE, template: "magento-module" },
+    next: "bin/magento module:enable Likyly_Recommendations && bin/magento setup:upgrade && bin/magento cache:flush",
+  };
+}
+
 /** Detect the project in `dir`. Returns `null` when nothing recognisable is found. */
 export function detectProject(dir) {
   // A Shopify theme or app first: their tooling adds a package.json, they are still Shopify.
   const shopify = detectShopify(dir) ?? detectShopifyApp(dir);
   if (shopify) return shopify;
+  // Magento before the generic PHP rules (it ships Symfony and Laminas components, not a framework bundle).
+  const magento = detectMagento(dir);
+  if (magento) return magento;
   // WordPress next: a WP install often ships a package.json for its theme tooling.
   const wp = has(dir, "wp-config.php", "wp-config-sample.php", "wp-content") ? detectPhp(dir) : null;
   // A PHP framework next to a package.json (Laravel ships Vite, Symfony may ship Encore) is a PHP

@@ -12,7 +12,7 @@ An interactive terminal UI (built with [Ink](https://github.com/vadimdemedes/ink
 
 1. **Detect your project**: the framework from the project's own files (`package.json`,
    `composer.json`, `pyproject.toml`, `Gemfile`, `go.mod`, `Cargo.toml`, `*.csproj`, `pom.xml`,
-   `wp-config.php`, a Shopify theme's `layout/theme.liquid`) and the package manager already in
+   `wp-config.php`, a Shopify theme's `layout/theme.liquid`, a Magento store's `composer.json`) and the package manager already in
    use (npm, pnpm, yarn, bun, composer, uv, poetry, bundler…). Nothing recognised: it says so and
    stops.
 2. **Review the plan**: every command it will run and every file it will write, before anything
@@ -105,6 +105,25 @@ In a Shopify **app** project (`shopify.app.toml`), the wizard installs and write
 assistant's config: an app calls LIKYLY from its server with the secret key and shows
 recommendations through a theme app extension (that is what
 [LIKYLY for Shopify](https://github.com/Likyly/likyly-shopify) does).
+
+## Magento / Adobe Commerce
+
+Run it at the root of a Magento 2 store (Open Source, Mage-OS or Adobe Commerce: its
+`composer.json` requires the product metapackage). Nothing goes through Composer: the wizard
+writes a small module, `app/code/Likyly/Recommendations` - a block and its template (the SDK comes
+from jsDelivr; it sends the product view, shows the recommended products with their image, price
+and link, and tracks impressions and clicks), a widget (*Content → Widgets → LIKYLY
+recommendations*) and settings (*Stores → Configuration → Catalog → LIKYLY*) - with the public key
+in its `etc/config.xml`. Your assistant then places the block with one layout file per page;
+enable the module with `bin/magento module:enable Likyly_Recommendations && bin/magento
+setup:upgrade && bin/magento cache:flush`.
+
+Right after you sign in, the wizard connects the store's catalog: you type the store's address and
+the four values of an active Integration (*System → Extensions → Integrations*, with access to
+Catalog → Products and Categories, Stores → All Stores and Inventory), the secrets masked; they go
+straight to LIKYLY, encrypted. LIKYLY reads the products through the store's REST API (signed
+requests, nothing to change in the store's settings). Later, or for another store:
+`npx @likyly/wizard magento`.
 
 ## What it looks like
 

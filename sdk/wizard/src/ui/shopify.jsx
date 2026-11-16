@@ -7,10 +7,18 @@ import Spinner from "ink-spinner";
 import TextInput from "ink-text-input";
 import { C } from "./theme.jsx";
 import { connectShopifyCatalog, normalizeShopDomain, shopifyCredentials } from "../shopify.mjs";
+import { describeSource } from "../catalog.mjs";
+import { Checking, ExistingSource, Intro, useConnectedSource } from "./catalog.jsx";
+
+const INTRO = [
+  "LIKYLY recommends from your store's products: it reads them through a Shopify app that has read_products.",
+  "You'll give 1. the store's address · 2. the app's Client ID · 3. its secret",
+  "Shopify Dev Dashboard → your app → Settings. The app must be installed on the store.",
+];
 
 const LATER = "npx @likyly/wizard shopify";
 
-function Field({ label, hint, placeholder, mask, error, initial = "", onSubmit }) {
+export function Field({ label, hint, placeholder, mask, error, initial = "", onSubmit }) {
   const [value, setValue] = useState(initial);
   return (
     <Box flexDirection="column">
@@ -27,8 +35,9 @@ function Field({ label, hint, placeholder, mask, error, initial = "", onSubmit }
   );
 }
 
-export function ShopifyCatalogStep({ apiKey, onDone }) {
-  const [stage, setStage] = useState("shop");
+export function ShopifyCatalogStep({ apiKey, onDone, standalone = false }) {
+  const [stage, setStage] = useState("check");
+  const [existing, setExisting] = useState(null); // the store already connected, if any
   const [shop, setShop] = useState(null);
   const [first, setFirst] = useState("");
   const [error, setError] = useState(null);
@@ -53,14 +62,43 @@ export function ShopifyCatalogStep({ apiKey, onDone }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- runs once, when the fields are filled
   }, [stage]);
 
+  // First, what is already connected: shown before anything is asked.
+  useConnectedSource({
+    apiKey,
+    type: "shopify",
+    onResult: (source) => {
+      setExisting(source);
+      setStage(source ? "existing" : "shop");
+    },
+  });
+
   // No developer key (sign-in skipped): LIKYLY cannot be asked to create the source.
   useEffect(() => {
     if (!apiKey) onDone([{ level: "warn", text: "No developer key: sign in first, then connect the catalog:", hint: LATER }], "skipped");
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once
   }, []);
   if (!apiKey) return null;
+  if (stage === "check") return <Checking platform="Shopify" />;
+  if (stage === "existing") {
+    const label = existing.config?.shop_domain ?? existing.name;
+    return (
+      <ExistingSource
+        platform="Shopify"
+        label={label}
+        source={existing}
+        standalone={standalone}
+        onChoice={(choice) => {
+          if (choice === "keep") return onDone([{ level: "ok", text: `Already connected: ${describeSource(label, existing)}` }], label);
+          setShop(choice === "credentials" ? label : null);
+          setStage(choice === "credentials" ? "id" : "shop");
+        }}
+      />
+    );
+  }
   if (stage === "shop")
     return (
+      <>
+      {existing ? null : <Intro lines={INTRO} />}
       <Field
         key="shop"
         label="Your store's address"
@@ -77,6 +115,7 @@ export function ShopifyCatalogStep({ apiKey, onDone }) {
           setStage("id");
         }}
       />
+      </>
     );
   if (stage === "id")
     return (

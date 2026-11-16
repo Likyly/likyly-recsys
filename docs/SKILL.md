@@ -108,6 +108,12 @@ URL, or call the push endpoint from their own code when products change.
    to LIKYLY, encrypted - then continue with `get_sync_status`. If they paste credentials in the
    conversation anyway, don't use them: point them to the command, and suggest rotating the
    secret in Shopify's Dev Dashboard since it was shared.
+   **Magento / Adobe Commerce: same rule.** `list_data_sources` first: a `magento` source for
+   the store means the wizard already connected it. Without one, ask the developer to run
+   `npx @likyly/wizard magento` in a terminal: it asks for the store's address and the four
+   values of an active Integration (System → Extensions → Integrations; resource access:
+   Catalog → Products and Categories, Stores → All Stores, Stores → Inventory), the secrets
+   masked, and sends them straight to LIKYLY. Never ask for them in the conversation.
 3. `test_data_source` - confirms LIKYLY can actually reach it. Fix the config/credentials and
    retry if it fails; don't move on with a broken connection.
 4. `preview_data_source` - a small real sample plus a suggested field mapping.
@@ -195,6 +201,25 @@ commit only the files you changed (not their pending work), push the branch and 
      product ids and it needs the handle in `url`: the `shopify` source's default mapping gives
      exactly that. Publishing is `shopify theme push` (the developer's call); the preview is in
      Phase 4.
+   - A Magento store (`bin/magento`, `app/code/Likyly/Recommendations` written by the wizard,
+     with the public key in its `etc/config.xml`): write no new block code - the module's block
+     loads the SDK, sends the product view, renders the cards from LIKYLY (title, image, price
+     and link come from the `magento` source) and tracks impressions and clicks. Place it with a
+     layout file **inside that module**, one per page type, the placement slug as argument:
+     `view/frontend/layout/catalog_product_view.xml` (product page: `<referenceContainer
+     name="content.aside">`, where Magento puts related products), `cms_index_index.xml` (home:
+     `content`), `checkout_cart_index.xml` (cart: `content`):
+     `<block class="Likyly\Recommendations\Block\Recommendations" name="likyly.product"
+     before="-"><arguments><argument name="placement" xsi:type="string">the-slug</argument>
+     <argument name="heading" xsi:type="string">You may also like</argument></arguments></block>`.
+     On a product page the block sends the product's SKU: the `magento` source's item id. Then
+     the module has to be enabled - give the developer (don't run it unless they ask: it touches
+     their store) `bin/magento module:enable Likyly_Recommendations && bin/magento
+     setup:upgrade && bin/magento cache:flush` (in Docker, inside the PHP container as the web
+     server user; in production mode, `setup:di:compile` and `setup:static-content:deploy` too).
+     A merchant can also add it from the admin: Content → Widgets → "LIKYLY recommendations".
+     Purchases: an observer on `checkout_onepage_controller_success_action` calling LIKYLY's
+     purchase event server-side with the secret key - only if the developer asks.
    - Anything else: `likyly.recommend({ placement, context })`, render the items yourself,
      call `likyly.events.recommendationImpression`/`recommendationClick` for the events
      `<LikylyRecommendations>` would have handled automatically.
@@ -230,6 +255,8 @@ commit only the files you changed (not their pending work), push the branch and 
    `http://127.0.0.1:9292/products/<a real handle>`) and say to view it and click a
    recommendation, so step 4 has real events to check. If the command says no terminal window
    could be opened, give the developer the command it printed to run in their own terminal.
+   A Magento store has no preview command: once the module is enabled and the cache flushed,
+   give the product page to open (`<store>/<url_key>.html`, from the item's `url`).
 4. For anything not `ok`: `get_recent_integration_events` if you need to see the actual rows
    behind a count, then fix the real cause (a missing call, a wrong `data_product_type`, a
    context key never sent) and validate again. A freshly-added event may need one real

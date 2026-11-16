@@ -9,6 +9,7 @@ import { Box, Static, Text, render, useApp, useStdout, useWindowSize } from "ink
 import { EDITORS, detectEditors, detectProject, installedEditors } from "../frameworks.mjs";
 import { KEY_ENV, hasDeveloperKey, readDeveloperKey } from "../mcp.mjs";
 import { ShopifyCatalogStep } from "./shopify.jsx";
+import { MagentoCatalogStep } from "./magento.jsx";
 import { openInNewTerminal, previewPlan } from "../preview.mjs";
 import { commandExists, wizardInvocation } from "../setup.mjs";
 import { checkCompat, describeCompat } from "../compat.mjs";
@@ -46,8 +47,11 @@ const ACCOUNT_STEP = ["key", "Connect your LIKYLY account"];
 // `mcp add` without a developer key: sign in first, or the assistant cannot reach LIKYLY.
 const MCP_STEPS_SIGN_IN = [ACCOUNT_STEP, ...MCP_STEPS];
 const CATALOG_STEP = ["catalog", "Connect your Shopify catalog"];
-// `npx @likyly/wizard shopify`: (re)connect a store's catalog, nothing else.
+const MAGENTO_CATALOG_STEP = ["catalog", "Connect your Magento catalog"];
+// `npx @likyly/wizard shopify` / `magento`: (re)connect a store's catalog, nothing else.
 const SHOPIFY_STEPS = [CATALOG_STEP];
+const MAGENTO_STEPS = [MAGENTO_CATALOG_STEP];
+const CATALOG_COMMANDS = ["shopify", "magento"];
 
 // Below this, Ink can no longer redraw the live step in place (it would repeat on screen).
 const MIN_COLUMNS = 64;
@@ -233,8 +237,11 @@ function App({ opts: initialOpts, result }) {
     const signedIn = hasDeveloperKey(opts.dir) || opts.dryRun;
     if (opts.command === "mcp") return signedIn ? MCP_STEPS : MCP_STEPS_SIGN_IN;
     if (opts.command === "shopify") return signedIn ? SHOPIFY_STEPS : [ACCOUNT_STEP, ...SHOPIFY_STEPS];
-    // A Shopify theme: its catalog is connected here, in the terminal, never through the assistant.
+    if (opts.command === "magento") return signedIn ? MAGENTO_STEPS : [ACCOUNT_STEP, ...MAGENTO_STEPS];
+    // A Shopify theme or a Magento store: its catalog is connected here, in the terminal, never
+    // through the assistant (the credentials would end up in the conversation).
     if (project?.id === "shopify") return INSTALL_STEPS.flatMap((s) => (s[0] === "key" ? [s, CATALOG_STEP] : [s]));
+    if (project?.id === "magento") return INSTALL_STEPS.flatMap((s) => (s[0] === "key" ? [s, MAGENTO_CATALOG_STEP] : [s]));
     return INSTALL_STEPS;
   });
   /** The phase after `id`, or "end" after the last one. */
@@ -323,7 +330,7 @@ function App({ opts: initialOpts, result }) {
       setPhase(after("key"));
     }
     if (phase === "mcp" && opts.editors) connect(opts.editors);
-    if (phase === "end" && opts.command === "shopify") end(steps.catalog?.status === "fail" ? 1 : 0);
+    if (phase === "end" && CATALOG_COMMANDS.includes(opts.command)) end(steps.catalog?.status === "fail" ? 1 : 0);
     if (phase === "verify") {
       verifyInstall(opts, project, { ...keys.current, editors: chosenEditors }).then((r) => {
         const level = failed || r.some((x) => x.level === "fail") ? "fail" : r.some((x) => x.level === "warn") ? "warn" : "ok";
@@ -443,30 +450,37 @@ function App({ opts: initialOpts, result }) {
           }}
         />
       ) : null,
-    catalog: () => (
-      <ShopifyCatalogStep
-        apiKey={keys.current.devKey || readDeveloperKey(opts.dir)}
-        onDone={(results, summary) => {
-          // The standalone command ends here: say what comes next, whatever happened.
-          if (opts.command === "shopify") {
-            const failedHere = results.some((r) => r.level === "fail");
-            results = failedHere
-              ? [...results, { level: "info", text: "Fix the cause above, then run again:", hint: "npx @likyly/wizard shopify" }]
-              : summary === "skipped"
-                ? results
-                : [
-                    ...results,
-                    { level: "info", text: "Next, ask your AI assistant:", hint: '"The Shopify catalog is connected: add LIKYLY recommendations to my product page."' },
-                    { level: "info", text: "Assistant not connected to LIKYLY yet? First:", hint: "npx @likyly/wizard mcp add" },
-                    { level: "info", text: "See the changes live while it works:", hint: "npx @likyly/wizard preview" },
-                  ];
-          }
-          if (results.some((r) => r.level === "ok")) shopRef.current = summary;
-          finish("catalog", results, summary);
-          setPhase(after("catalog"));
-        }}
-      />
-    ),
+    catalog: () => {
+      const magento = opts.command === "magento" || (opts.command !== "shopify" && project?.id === "magento");
+      const command = magento ? "npx @likyly/wizard magento" : "npx @likyly/wizard shopify";
+      const platform = magento ? "Magento" : "Shopify";
+      const Step = magento ? MagentoCatalogStep : ShopifyCatalogStep;
+      return (
+        <Step
+          apiKey={keys.current.devKey || readDeveloperKey(opts.dir)}
+          standalone={CATALOG_COMMANDS.includes(opts.command)}
+          onDone={(results, summary) => {
+            // The standalone command ends here: say what comes next, whatever happened.
+            if (CATALOG_COMMANDS.includes(opts.command)) {
+              const failedHere = results.some((r) => r.level === "fail");
+              results = failedHere
+                ? [...results, { level: "info", text: "Fix the cause above, then run again:", hint: command }]
+                : summary === "skipped"
+                  ? results
+                  : [
+                      ...results,
+                      { level: "info", text: "Next, ask your AI assistant:", hint: `"The ${platform} catalog is connected: add LIKYLY recommendations to my product page."` },
+                      { level: "info", text: "Assistant not connected to LIKYLY yet? First:", hint: "npx @likyly/wizard mcp add" },
+                      ...(magento ? [] : [{ level: "info", text: "See the changes live while it works:", hint: "npx @likyly/wizard preview" }]),
+                    ];
+            }
+            if (!magento && results.some((r) => r.level === "ok")) shopRef.current = summary;
+            finish("catalog", results, summary);
+            setPhase(after("catalog"));
+          }}
+        />
+      );
+    },
     mcp: () =>
       opts.editors ? null : (
         <>

@@ -50,8 +50,8 @@ export async function main(argv = process.argv.slice(2)) {
     return 0;
   }
   const interactive = !opts.yes && process.stdin.isTTY && process.stdout.isTTY && !process.env.CI;
-  if (!interactive && opts.command === "shopify") {
-    console.error("npx @likyly/wizard shopify asks for the store's credentials: run it in a terminal (not with --yes or in CI).");
+  if (!interactive && (opts.command === "shopify" || opts.command === "magento")) {
+    console.error(`npx @likyly/wizard ${opts.command} asks for the store's credentials: run it in a terminal (not with --yes or in CI).`);
     return 1;
   }
   if (!interactive) return runPlain(opts);

@@ -6,7 +6,7 @@ import { existsSync, readFileSync, readdirSync, rmSync, statSync, unlinkSync, wr
 import { join, relative } from "node:path";
 import { detectProject, EDITORS } from "./frameworks.mjs";
 import { SKILL_DIRS, configPath, removalStep, unapproveStep } from "./mcp.mjs";
-import { CLAUDE_COMMANDS, commandExists, runAsync, starterContent } from "./setup.mjs";
+import { CLAUDE_COMMANDS, commandExists, runAsync, starterFiles } from "./setup.mjs";
 
 const ENV_FILES = [".env", ".env.local"];
 const KEY_LINE = /^\s*(NEXT_PUBLIC_|VITE_|PUBLIC_|NUXT_PUBLIC_|REACT_APP_)?LIKYLY_KEY\s*=.*$/;
@@ -14,7 +14,7 @@ const KEY_COMMENT = "# LIKYLY public key (safe in the browser)";
 const SKIP_DIRS = new Set(["node_modules", ".git", ".next", "dist", "build", ".likyly", ".claude", "vendor", ".venv"]);
 
 /** Source files that still import or call LIKYLY (reported, never edited). */
-function codeUsingLikyly(dir, keep) {
+function codeUsingLikyly(dir, keep, skip = new Set()) {
   const found = [];
   const walk = (folder, depth) => {
     if (depth > 6 || found.length >= 20) return;
@@ -25,8 +25,8 @@ function codeUsingLikyly(dir, keep) {
       return;
     }
     for (const name of entries) {
-      if (SKIP_DIRS.has(name)) continue;
       const path = join(folder, name);
+      if (SKIP_DIRS.has(name) || skip.has(path)) continue;
       let st;
       try {
         st = statSync(path);
@@ -34,8 +34,8 @@ function codeUsingLikyly(dir, keep) {
         continue;
       }
       if (st.isDirectory()) walk(path, depth + 1);
-      else if (/\.(m?[jt]sx?|vue|svelte|astro|php|py|rb)$/.test(name) && st.size < 512_000 && !keep.has(path)) {
-        if (/@likyly\/|from ["']likyly|LikylyProvider|likyly\.recommend/.test(readFileSync(path, "utf8"))) found.push(relative(dir, path));
+      else if (/\.(m?[jt]sx?|vue|svelte|astro|php|phtml|xml|py|rb)$/.test(name) && st.size < 512_000 && !keep.has(path)) {
+        if (/@likyly\/|from ["']likyly|LikylyProvider|likyly\.recommend|Likyly\\Recommendations/.test(readFileSync(path, "utf8"))) found.push(relative(dir, path));
       }
     }
   };
@@ -79,21 +79,29 @@ export function planUninstall(dir) {
     }
   }
 
-  // The starter file, only if nobody changed it.
+  // The starter file(s), only if nobody changed them. A module folder goes as a whole, with its
+  // key file, when every file is as the wizard wrote it.
   const keepFiles = new Set();
+  const removed = new Set();
+  let keyFileGone = false;
   if (project?.starter) {
-    const path = join(dir, project.starter.path);
-    if (existsSync(path)) {
-      if (readFileSync(path, "utf8") === starterContent(project.starter)) steps.push({ label: `Delete ${project.starter.path}`, run: () => unlinkSync(path) });
-      else {
-        kept.push(`${project.starter.path} (edited since the wizard wrote it)`);
-        keepFiles.add(path);
-      }
+    const files = starterFiles(project.starter).filter((f) => existsSync(join(dir, f.path)));
+    const edited = files.filter((f) => readFileSync(join(dir, f.path), "utf8") !== f.content);
+    const folder = files.length > 1 || project.starter.template === "magento-module";
+    if (files.length && !edited.length) {
+      const path = join(dir, project.starter.path);
+      steps.push({ label: `Delete ${project.starter.path}`, run: () => (folder ? rmSync(path, { recursive: true, force: true }) : unlinkSync(path)) });
+      removed.add(path);
+      keyFileGone = folder && project.keyFile?.startsWith(`${project.starter.path}/`);
+    } else if (edited.length) {
+      kept.push(`${project.starter.path} (edited since the wizard wrote it)`);
+      for (const f of files) keepFiles.add(join(dir, f.path));
     }
   }
 
-  // The public key snippet of a Shopify theme: written by the wizard, holds nothing else.
-  if (project?.keyFile && existsSync(join(dir, project.keyFile))) {
+  // The public key file (a Shopify theme's snippet, a Magento module's etc/config.xml): written by
+  // the wizard, holds nothing else.
+  if (project?.keyFile && !keyFileGone && existsSync(join(dir, project.keyFile))) {
     const path = join(dir, project.keyFile);
     steps.push({ label: `Delete ${project.keyFile}`, run: () => unlinkSync(path) });
   }
@@ -114,7 +122,7 @@ export function planUninstall(dir) {
     if (existsSync(path)) steps.push({ label: `Delete ${rel}${rel === ".likyly" ? " (your developer key for this project)" : ""}`, run: () => rmSync(path, { recursive: true, force: true }) });
   }
 
-  return { steps, kept, code: codeUsingLikyly(dir, keepFiles) };
+  return { steps, kept, code: codeUsingLikyly(dir, keepFiles, removed) };
 }
 
 /** Run the plan. Returns [{ ok, label }]. */
