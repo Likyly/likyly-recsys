@@ -7,6 +7,7 @@ import { join, relative } from "node:path";
 import { detectProject, EDITORS } from "./frameworks.mjs";
 import { SKILL_DIRS, configPath, removalStep, unapproveStep } from "./mcp.mjs";
 import { CLAUDE_COMMANDS, commandExists, runAsync, starterFiles } from "./setup.mjs";
+import { detectMagentoCli, splitCommand } from "./magento.mjs";
 
 const ENV_FILES = [".env", ".env.local"];
 const KEY_LINE = /^\s*(NEXT_PUBLIC_|VITE_|PUBLIC_|NUXT_PUBLIC_|REACT_APP_)?LIKYLY_KEY\s*=.*$/;
@@ -122,6 +123,11 @@ export function planUninstall(dir) {
     if (existsSync(path)) steps.push({ label: `Delete ${rel}${rel === ".likyly" ? " (your developer key for this project)" : ""}`, run: () => rmSync(path, { recursive: true, force: true }) });
   }
 
+  // Magento: a module still enabled whose files vanish breaks bin/magento and the store (its
+  // generated code and cached config still point at them). Disable it first, with the bin/magento
+  // the wizard used; without one, keep the module and say what to run.
+  if (project?.id === "magento") magentoSteps(dir, project, steps, kept, removed);
+
   return { steps, kept, code: codeUsingLikyly(dir, keepFiles, removed) };
 }
 
@@ -131,12 +137,13 @@ export async function runUninstall(dir, plan, onLine) {
   for (const step of plan.steps) {
     try {
       if (step.cmd) {
-        if (!commandExists(step.cmd[0])) {
-          results.push({ ok: false, label: `${step.cmd[0]} not found: run ${step.cmd.join(" ")} yourself` });
-          continue;
+        const ok = commandExists(step.cmd[0]) && (await runAsync(dir, step.cmd, onLine));
+        results.push({ ok, label: ok ? step.label : `${step.label} failed: run ${step.cmd.join(" ")} yourself` });
+        // A step the rest depends on (disabling the Magento module before its files go): stop.
+        if (!ok && step.stopOnFail) {
+          results.push({ ok: false, label: "Stopped: nothing else was removed. Fix the cause above, then run the uninstall again." });
+          break;
         }
-        const ok = await runAsync(dir, step.cmd, onLine);
-        results.push({ ok, label: ok ? step.label : `${step.label} failed: run ${step.cmd.join(" ")}` });
       } else {
         step.run();
         results.push({ ok: true, label: step.label });
@@ -146,4 +153,48 @@ export async function runUninstall(dir, plan, onLine) {
     }
   }
   return results;
+}
+
+function magentoSteps(dir, project, steps, kept, removed) {
+  const moduleDir = join(dir, project.starter.path);
+  let config = "";
+  try {
+    config = readFileSync(join(dir, "app/etc/config.php"), "utf8");
+  } catch {
+    // no config.php: Magento not installed, nothing enabled
+  }
+  const enabled = /['"]Likyly_Recommendations['"]\s*=>\s*1/.test(config);
+  if (enabled && removed.has(moduleDir)) {
+    let cli = null;
+    try {
+      cli = splitCommand(readFileSync(join(dir, ".likyly/bin-magento"), "utf8").trim());
+    } catch {
+      cli = detectMagentoCli(dir, { commandExists })?.cmd ?? null;
+    }
+    if (cli?.length) {
+      steps.unshift(
+        { label: "Disable the LIKYLY module (bin/magento module:disable Likyly_Recommendations)", cmd: [...cli, "module:disable", "Likyly_Recommendations"], stopOnFail: true },
+        { label: "Update the store (bin/magento setup:upgrade)", cmd: [...cli, "setup:upgrade", "--keep-generated"], stopOnFail: true },
+        { label: "Flush the cache (bin/magento cache:flush)", cmd: [...cli, "cache:flush"] },
+      );
+      // Once the files are gone: no empty app/code/Likyly, no disabled entry left in config.php.
+      const del = steps.find((s) => s.label === `Delete ${project.starter.path}`);
+      const removeFiles = del.run;
+      del.run = () => {
+        removeFiles();
+        const vendorDir = join(moduleDir, "..");
+        if (existsSync(vendorDir) && !readdirSync(vendorDir).length) rmSync(vendorDir, { recursive: true, force: true });
+        const configPath = join(dir, "app/etc/config.php");
+        const current = readFileSync(configPath, "utf8");
+        const cleaned = current.replace(/^[ \t]*['"]Likyly_Recommendations['"]\s*=>\s*0,?[ \t]*\r?\n/m, "");
+        if (cleaned !== current) writeFileSync(configPath, cleaned);
+      };
+    } else {
+      const i = steps.findIndex((s) => s.label === `Delete ${project.starter.path}`);
+      if (i >= 0) steps.splice(i, 1);
+      removed.delete(moduleDir);
+      kept.push(`${project.starter.path}: the module is enabled - run bin/magento module:disable Likyly_Recommendations && bin/magento setup:upgrade, then uninstall again`);
+    }
+  }
+  kept.push('The read-only Integration "LIKYLY" in Magento: revoke it in System → Extensions → Integrations if you no longer need it');
 }

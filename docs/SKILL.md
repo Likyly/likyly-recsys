@@ -110,10 +110,10 @@ URL, or call the push endpoint from their own code when products change.
    secret in Shopify's Dev Dashboard since it was shared.
    **Magento / Adobe Commerce: same rule.** `list_data_sources` first: a `magento` source for
    the store means the wizard already connected it. Without one, ask the developer to run
-   `npx @likyly/wizard magento` in a terminal: it asks for the store's address and the four
-   values of an active Integration (System → Extensions → Integrations; resource access:
-   Catalog → Products and Categories, Stores → All Stores, Stores → Inventory), the secrets
-   masked, and sends them straight to LIKYLY. Never ask for them in the conversation.
+   `npx @likyly/wizard magento` in a terminal: it enables the LIKYLY module and creates a
+   read-only Integration itself with bin/magento (nothing to do in the Magento admin), and sends
+   its credentials straight to LIKYLY. Never ask for credentials in the conversation, and never
+   run `bin/magento likyly:integration` yourself: its output is secret.
 3. `test_data_source` - confirms LIKYLY can actually reach it. Fix the config/credentials and
    retry if it fails; don't move on with a broken connection.
 4. `preview_data_source` - a small real sample plus a suggested field mapping.
@@ -200,7 +200,10 @@ commit only the files you changed (not their pending work), push the branch and 
      key in `order` right after the main product section. The ids it sends are Shopify's numeric
      product ids and it needs the handle in `url`: the `shopify` source's default mapping gives
      exactly that. Publishing is `shopify theme push` (the developer's call); the preview is in
-     Phase 4.
+     Phase 4. Purchases (and so the revenue) come from Shopify's checkout, where no theme code
+     runs: tell the developer to run `npx @likyly/wizard pixel` and paste the pixel it prints in
+     the admin (*Settings → Customer events → Add custom pixel*) - never write purchase tracking
+     in the theme yourself, and never paste it in the admin for them.
    - A Magento store (`bin/magento`, `app/code/Likyly/Recommendations` written by the wizard,
      with the public key in its `etc/config.xml`): write no new block code - the module's block
      loads the SDK, sends the product view, renders the cards from LIKYLY (title, image, price
@@ -212,11 +215,12 @@ commit only the files you changed (not their pending work), push the branch and 
      `<block class="Likyly\Recommendations\Block\Recommendations" name="likyly.product"
      before="-"><arguments><argument name="placement" xsi:type="string">the-slug</argument>
      <argument name="heading" xsi:type="string">You may also like</argument></arguments></block>`.
-     On a product page the block sends the product's SKU: the `magento` source's item id. Then
-     the module has to be enabled - give the developer (don't run it unless they ask: it touches
-     their store) `bin/magento module:enable Likyly_Recommendations && bin/magento
-     setup:upgrade && bin/magento cache:flush` (in Docker, inside the PHP container as the web
-     server user; in production mode, `setup:di:compile` and `setup:static-content:deploy` too).
+     On a product page the block sends the product's SKU: the `magento` source's item id. The
+     wizard already enabled the module; a new layout file shows up once the cache is flushed: run
+     `$(cat .likyly/bin-magento) cache:flush` (the bin/magento command the wizard found for this
+     project - Docker, DDEV, Warden or php). No `.likyly/bin-magento`: give the developer
+     `bin/magento module:enable Likyly_Recommendations && bin/magento setup:upgrade && bin/magento
+     cache:flush` (in production mode, `setup:di:compile` and `setup:static-content:deploy` too).
      A merchant can also add it from the admin: Content → Widgets → "LIKYLY recommendations".
      Purchases: an observer on `checkout_onepage_controller_success_action` calling LIKYLY's
      purchase event server-side with the secret key - only if the developer asks.

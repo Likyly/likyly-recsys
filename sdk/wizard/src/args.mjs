@@ -36,6 +36,9 @@ ${blue("Commands")}
   pages          where to see LIKYLY: one example URL per kind of page with a recommendation
                  block (a product, a category, the cart...), locally and in production
                  (uses your developer key; --json for data)
+  pixel          Shopify theme: the pixel to paste in the admin (Settings → Customer events)
+                 so add to cart and purchases reach LIKYLY with the recommendation they came
+                 from - the revenue in impact and in the console; copied to the clipboard
   impact [days]  what the recommendations bring: served, seen, clicked, the purchases and
                  revenue they led to (uses your developer key; Free: 7 days, Pro: up to 90
                  days with the daily trend and the top products; --json for data)
@@ -120,6 +123,7 @@ export function parseArgs(argv) {
     else if (cmd === "magento") opts.command = "magento";
     else if (cmd === "preview") opts.command = "preview";
     else if (cmd === "pages") opts.command = "pages";
+    else if (cmd === "pixel") opts.command = "pixel";
     else if (cmd === "detect") opts.command = "detect";
     else if (cmd === "inventory") opts.command = "inventory";
     else if (cmd === "uninstall") opts.command = "uninstall";

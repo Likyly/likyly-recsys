@@ -145,6 +145,14 @@ const TEMPLATES = {
         price.textContent = money(product.price);
         link.append(title, price);
         link.addEventListener("click", (event) => {
+          // Which recommendation this product came from, kept for the purchase: the LIKYLY pixel
+          // (npx @likyly/wizard pixel, in Settings → Customer events) reads it at the checkout.
+          try {
+            const kept = JSON.parse(localStorage.getItem("likyly_rec") || "{}");
+            kept[item.itemId] = [recs.recommendationId, placement, Date.now()];
+            const recent = Object.entries(kept).sort((a, b) => b[1][2] - a[1][2]).slice(0, 50);
+            localStorage.setItem("likyly_rec", JSON.stringify(Object.fromEntries(recent)));
+          } catch (error) {}
           if (event.metaKey || event.ctrlKey || event.shiftKey) return;
           event.preventDefault();
           const click = likyly.events.click({ ...who, itemId: item.itemId, recommendationId: recs.recommendationId, placement }).catch(unrecorded("click"));

@@ -119,7 +119,7 @@ function signals({ totals, placements }) {
     if (p.served && !p.impressions) out.push({ level: "fail", text: `${p.placement}: served ${p.served} time(s) but never seen - the page does not send impressions (or LIKYLY refuses them).` });
     else if (p.impressions && !p.clicks) out.push({ level: "info", text: `${p.placement}: seen but not clicked yet.` });
   }
-  if (totals.clicks && !totals.purchases) out.push({ level: "info", text: "No purchase attributed yet: purchases count when the site sends them with the recommendationId they came from." });
+  if (totals.clicks && !totals.purchases) out.push({ level: "info", text: "No purchase attributed yet: purchases count when the site sends them with the recommendationId they came from (a Shopify theme: npx @likyly/wizard pixel)." });
   return out;
 }
 

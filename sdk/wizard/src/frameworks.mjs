@@ -288,7 +288,8 @@ export const MAGENTO_MODULE = "app/code/Likyly/Recommendations";
  * product metapackage, or it is a clone of the magento2 repository (bin/magento + app/etc/di.xml).
  * No package to install: the wizard writes a small module (block, template, widget) that loads the
  * SDK from jsDelivr, with the public key in its etc/config.xml; the catalog is read by LIKYLY
- * through the store's REST API (the wizard asks for an Integration's credentials).
+ * through the store's REST API, with a read-only Integration the wizard creates through the
+ * module's `bin/magento likyly:integration` command.
  */
 function detectMagento(dir) {
   const composer = readJson(join(dir, "composer.json"));
@@ -307,7 +308,9 @@ function detectMagento(dir) {
     keyFile: `${MAGENTO_MODULE}/etc/config.xml`,
     keyFormat: "magento-config",
     starter: { path: MAGENTO_MODULE, template: "magento-module" },
-    next: "bin/magento module:enable Likyly_Recommendations && bin/magento setup:upgrade && bin/magento cache:flush",
+    notes: [
+      "Nothing to install: the wizard writes a module in app/code, then enables it with bin/magento when it connects your catalog (no admin step).",
+    ],
   };
 }
 

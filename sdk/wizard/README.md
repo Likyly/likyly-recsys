@@ -111,7 +111,13 @@ theme editor (*Add section → LIKYLY recommendations*) or let your assistant pu
 `shopify theme dev --store <your store>` right here, in your terminal, where you type the
 storefront password; Ctrl+C gives you your terminal back; `--new-window` runs it in a separate
 window. A preview of this theme already running: it just gives its address - another theme's
-preview on 9292 is told apart, this one takes the next port) and publish with `shopify theme push`. Right after you sign in, the wizard connects the store's catalog itself:
+preview on 9292 is told apart, this one takes the next port) and publish with `shopify theme push`. Purchases happen on Shopify's checkout, where no theme
+code runs: `npx @likyly/wizard pixel` prints (and copies) a pixel to paste once in the admin,
+*Settings → Customer events → Add custom pixel*. It sends add to cart and purchases, with their
+price and the recommendation the product was clicked in (the section keeps that click in the
+browser), so impact and the console show the revenue. Test it from the store's own address (or
+the preview link `shopify theme dev` prints), not 127.0.0.1: the click and the checkout must
+happen on the same domain. Right after you sign in, the wizard connects the store's catalog itself:
 you type the store address and the app's Client ID and secret (the secret is masked) in the
 terminal, and they go straight to LIKYLY, encrypted - never to your AI assistant, never to a file.
 The app is one from Shopify's Dev Dashboard installed on the store with `read_products` (or, on
@@ -130,16 +136,20 @@ writes a small module, `app/code/Likyly/Recommendations` - a block and its templ
 from jsDelivr; it sends the product view, shows the recommended products with their image, price
 and link, and tracks impressions and clicks), a widget (*Content → Widgets → LIKYLY
 recommendations*) and settings (*Stores → Configuration → Catalog → LIKYLY*) - with the public key
-in its `etc/config.xml`. Your assistant then places the block with one layout file per page;
-enable the module with `bin/magento module:enable Likyly_Recommendations && bin/magento
-setup:upgrade && bin/magento cache:flush`.
+in its `etc/config.xml`. Your assistant then places the block with one layout file per page and
+flushes the cache.
 
-Right after you sign in, the wizard connects the store's catalog: you type the store's address and
-the four values of an active Integration (*System → Extensions → Integrations*, with access to
-Catalog → Products and Categories, Stores → All Stores and Inventory), the secrets masked; they go
-straight to LIKYLY, encrypted. LIKYLY reads the products through the store's REST API (signed
-requests, nothing to change in the store's settings). Later, or for another store:
-`npx @likyly/wizard magento`.
+Right after you sign in, the wizard connects the store's catalog, with nothing to do in the Magento
+admin: it finds how bin/magento runs in this project (DDEV, Warden, the Docker Compose service
+mounting the store, or `php`), enables the module (`module:enable`, `setup:upgrade`,
+`cache:flush`) and runs the module's `bin/magento likyly:integration`, which creates a read-only
+Integration "LIKYLY" (catalog, stores, stock) and hands its credentials to the wizard - they go
+straight to LIKYLY, encrypted, never on screen. LIKYLY then reads the products through the
+store's REST API (signed requests). A store in production mode is left alone (a module there
+needs a full deploy). Other ways, from the same step: type the bin/magento command yourself, or
+give an Integration's four values made in the admin. Later, or for another store:
+`npx @likyly/wizard magento`. `npx @likyly/wizard uninstall` disables the module with
+bin/magento before removing its files (a module that vanishes while enabled breaks Magento).
 
 ## What it looks like
 

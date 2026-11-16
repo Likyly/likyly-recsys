@@ -60,8 +60,10 @@ export function applyKey(opts, project, key) {
   if (project.keyFile) {
     if (!key) return [warn(`Add it later: put your public key (pk_...) alone in ${project.keyFile}`)];
     const res = writeKeyFile(opts.dir, project.keyFile, key, { dryRun: opts.dryRun, format: project.keyFormat });
-    if (res.status === "same") return [info(`${project.keyFile} already holds this key`)];
-    return [ok(`Public key → ${project.keyFile}${res.status === "updated" ? " (updated)" : ""}`)];
+    // A theme's checkout is Shopify's page: purchases need the pixel, pasted once in the admin.
+    const purchases = project.id === "shopify" ? [info("Purchases and revenue: paste the LIKYLY pixel in Shopify admin → Settings → Customer events", "npx @likyly/wizard pixel")] : [];
+    if (res.status === "same") return [info(`${project.keyFile} already holds this key`), ...purchases];
+    return [ok(`Public key → ${project.keyFile}${res.status === "updated" ? " (updated)" : ""}`), ...purchases];
   }
   if (!project.envFile || !project.envVar) return [warn("Add your public key to the app configuration.", DOCS_URL)];
   if (!key) return [warn(`Add it later to ${project.envFile}:`, `${project.envVar}=pk_...`)];

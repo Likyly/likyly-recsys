@@ -56,6 +56,34 @@ export async function main(argv = process.argv.slice(2)) {
     console.log(opts.json ? JSON.stringify(r.report, null, 2) : formatPages(r.report));
     return 0;
   }
+  if (opts.command === "pixel") {
+    const { pixelFor } = await import("./pixel.mjs");
+    const { copyToClipboard } = await import("./ui/system.mjs");
+    const r = await pixelFor(opts.dir, { store: opts.store });
+    if (!r.ok) {
+      console.error(`✗ ${r.text}${r.hint ? `\n  ${r.hint}` : ""}`);
+      return 1;
+    }
+    if (opts.json) {
+      console.log(JSON.stringify({ code: r.code, url: r.url }, null, 2));
+      return 0;
+    }
+    const copied = process.stdout.isTTY && copyToClipboard(r.code);
+    console.log(r.code);
+    console.log(
+      [
+        "LIKYLY · Purchases from Shopify's checkout",
+        `  ${copied ? "✓ The code above is in your clipboard." : "· Copy the code above."}`,
+        `  1. Open ${r.url}`,
+        "  2. Add custom pixel → name it LIKYLY → paste the code → Save → Connect.",
+        "  3. Customer privacy: \"Not required\" to test right away; \"Required\" sends only for visitors who accept analytics.",
+        `  4. Test from the store's address (${r.store ? `https://${r.store}` : "<store>.myshopify.com"}, or the preview link shopify theme dev prints),`,
+        "     not 127.0.0.1: the click is kept in the browser of that address, and the checkout runs there.",
+        "  Then: click a recommended product, buy it, and npx @likyly/wizard impact shows the purchase and its revenue.",
+      ].join("\n"),
+    );
+    return 0;
+  }
   if (opts.command === "impact") {
     const { readImpact, formatImpact } = await import("./impact.mjs");
     const r = await readImpact({ dir: opts.dir, days: opts.days });

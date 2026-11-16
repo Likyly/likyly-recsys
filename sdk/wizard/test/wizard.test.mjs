@@ -781,9 +781,9 @@ test("end to end: a Magento store gets the module and its key, nothing installed
   const res = runCli(["--yes", "--public-key", "pk_test_mage", "--dir", dir], dir);
   assert.equal(res.status, 0, res.stderr);
   assert.match(res.stdout, /Magento Open Source/);
-  assert.match(res.stdout, /bin\/magento module:enable Likyly_Recommendations/);
+  assert.match(res.stdout, /enables it with bin\/magento when it connects your catalog/);
   const mod = join(dir, "app/code/Likyly/Recommendations");
-  for (const f of ["registration.php", "etc/module.xml", "etc/config.xml", "etc/widget.xml", "etc/adminhtml/system.xml", "Block/Recommendations.php", "view/frontend/templates/recommendations.phtml"]) {
+  for (const f of ["registration.php", "etc/module.xml", "etc/config.xml", "etc/widget.xml", "etc/di.xml", "etc/adminhtml/system.xml", "Block/Recommendations.php", "Console/Command/IntegrationCommand.php", "view/frontend/templates/recommendations.phtml"]) {
     assert.ok(existsSync(join(mod, f)), f);
   }
   const config = readFileSync(join(mod, "etc/config.xml"), "utf8");
@@ -798,7 +798,7 @@ test("end to end: a Magento store gets the module and its key, nothing installed
   assert.match(phtml, /li\.dataset\.likylyItemId/);
   // PHP files parse, when PHP is around.
   if (spawnSync("php", ["-v"]).status === 0) {
-    for (const f of ["registration.php", "Block/Recommendations.php", "view/frontend/templates/recommendations.phtml"]) {
+    for (const f of ["registration.php", "Block/Recommendations.php", "Console/Command/IntegrationCommand.php", "view/frontend/templates/recommendations.phtml"]) {
       const lint = spawnSync("php", ["-l", join(mod, f)], { encoding: "utf8" });
       assert.equal(lint.status, 0, lint.stdout + lint.stderr);
     }
@@ -1139,4 +1139,184 @@ test("the Shopify section says why it shows nothing, but only in the theme edito
   const script = section.split('<script type="module">')[1].split("</script>")[0].replace("{{ section.id }}", "x");
   const checked = spawnSync(process.execPath, ["--input-type=module", "--check"], { input: script.replace(/^\s*import .*$/m, "") });
   assert.equal(checked.status, 0, String(checked.stderr));
+});
+
+// --- Magento: the wizard runs bin/magento itself (no admin step) -------------------------------
+
+import { composeServiceFor, createMagentoIntegration, detectMagentoCli, splitCommand } from "../src/magento.mjs";
+
+test("Magento: how bin/magento runs - DDEV, Warden, the Compose service mounting the store, or PHP", () => {
+  const ddev = project({ ".ddev/config.yaml": "name: shop\n" });
+  assert.deepEqual(detectMagentoCli(ddev).cmd, ["ddev", "magento"]);
+  const warden = project({ ".env": "WARDEN_ENV_NAME=shop\nWARDEN_ENV_TYPE=magento2\n" });
+  assert.equal(detectMagentoCli(warden).cmd[0], "warden");
+
+  // The sandbox layout: compose file next to ./site, which holds the store.
+  const root = project({
+    "docker-compose.yml": "name: x\nservices:\n  db:\n    image: mariadb\n    volumes:\n      - db_data:/var/lib/mysql\n  magento:\n    build: ./docker\n    volumes:\n      - ./site:/var/www/magento\n      - vendor:/var/www/magento/vendor\n      - ./scripts:/scripts:ro\nvolumes:\n  db_data:\n",
+    "site/": "",
+  });
+  const site = join(root, "site");
+  const found = composeServiceFor(site);
+  assert.equal(found.service, "magento");
+  assert.equal(found.path, "/var/www/magento");
+  const cli = detectMagentoCli(site, { commandExists: () => false });
+  assert.ok(cli.cmd.includes("magento") && cli.cmd.at(-1) === "bin/magento" && cli.cmd.includes("/var/www/magento"));
+  assert.match(cli.label, /docker compose exec -u www-data magento bin\/magento/);
+
+  assert.deepEqual(detectMagentoCli(project({}), { commandExists: (c) => c === "php" }).cmd, ["php", "bin/magento"]);
+  assert.equal(detectMagentoCli(project({}), { commandExists: () => false }), null);
+  assert.deepEqual(splitCommand(`docker compose exec -T -u www-data 'php fpm' bin/magento`), ["docker", "compose", "exec", "-T", "-u", "www-data", "php fpm", "bin/magento"]);
+});
+
+function fakeMagento(outputs) {
+  const calls = [];
+  const run = async (cmd, onLine) => {
+    const args = cmd.slice(2).join(" ");
+    calls.push(args);
+    const [ok, lines] = outputs[args] ?? [true, []];
+    for (const l of lines) onLine(l);
+    return ok;
+  };
+  return { calls, run };
+}
+
+const CREDS = { store_url: "http://localhost:8896/", store_code: "default", consumer_key: "ck", consumer_secret: "cs", access_token: "at", access_token_secret: "ats" };
+
+test("Magento: the module is enabled and the Integration created by bin/magento; its secrets never reach the screen", async () => {
+  const dir = project({});
+  const { calls, run } = fakeMagento({
+    "deploy:mode:show": [true, ["Current application mode: developer."]],
+    "module:status Likyly_Recommendations": [true, ["Module is disabled"]],
+    "likyly:integration": [true, [JSON.stringify(CREDS)]],
+  });
+  const shown = [];
+  const r = await createMagentoIntegration({ dir, cli: ["php", "bin/magento"], run, onLine: (l) => shown.push(l) });
+  assert.equal(r.ok, true, r.error);
+  assert.equal(r.storeUrl, "http://localhost:8896");
+  assert.deepEqual(r.credentials, { consumer_key: "ck", consumer_secret: "cs", access_token: "at", access_token_secret: "ats" });
+  assert.deepEqual(calls, ["deploy:mode:show", "module:status Likyly_Recommendations", "module:enable Likyly_Recommendations", "setup:upgrade --keep-generated", "cache:flush", "likyly:integration"]);
+  assert.doesNotMatch(shown.join("\n"), /ats|"cs"/);
+  assert.equal(readFileSync(join(dir, ".likyly/bin-magento"), "utf8"), "php bin/magento\n");
+
+  // Already enabled: no setup:upgrade again.
+  const again = fakeMagento({ "module:status Likyly_Recommendations": [true, ["Module is enabled"]], "likyly:integration": [true, [JSON.stringify(CREDS)]] });
+  await createMagentoIntegration({ dir, cli: ["php", "bin/magento"], run: again.run });
+  assert.ok(!again.calls.some((c) => c.startsWith("setup:upgrade")));
+});
+
+test("Magento: production mode and a failing bin/magento stop with a reason, nothing created", async () => {
+  const prod = fakeMagento({ "deploy:mode:show": [true, ["Current application mode: production. (Note: Environment variables may override this value.)"]] });
+  const r1 = await createMagentoIntegration({ dir: project({}), cli: ["php", "bin/magento"], run: prod.run });
+  assert.equal(r1.ok, false);
+  assert.match(r1.error, /production mode/);
+  assert.deepEqual(prod.calls, ["deploy:mode:show"]);
+
+  const broken = fakeMagento({ "deploy:mode:show": [false, ["SQLSTATE[HY000] [2002] Connection refused"]] });
+  const r2 = await createMagentoIntegration({ dir: project({}), cli: ["php", "bin/magento"], run: broken.run });
+  assert.match(r2.error, /bin\/magento did not run \(SQLSTATE/);
+});
+
+test("Magento uninstall: an enabled module is disabled with bin/magento before its files go; without bin/magento it stays", async () => {
+  const dir = magentoStore();
+  runCli(["--yes", "--public-key", "pk_test_mage", "--dir", dir], dir);
+  writeFileSync(join(dir, "app/etc/config.php"), "<?php\nreturn ['modules' => ['Magento_Store' => 1, 'Likyly_Recommendations' => 1]];\n");
+  mkdirSync(join(dir, ".likyly"), { recursive: true });
+  writeFileSync(join(dir, ".likyly/bin-magento"), "docker compose exec -T magento bin/magento\n");
+  const plan = planUninstall(dir);
+  assert.deepEqual(plan.steps.slice(0, 3).map((s) => s.cmd.slice(-2).join(" ")), ["module:disable Likyly_Recommendations", "setup:upgrade --keep-generated", "bin/magento cache:flush"]);
+  assert.equal(plan.steps[0].cmd[0], "docker");
+  assert.ok(plan.steps.some((s) => s.label === "Delete app/code/Likyly/Recommendations"));
+  assert.ok(plan.kept.some((k) => /Integration "LIKYLY"/.test(k)));
+
+  // A failing module:disable stops everything: the module files stay.
+  const { runUninstall } = await import("../src/uninstall.mjs");
+  const results = await runUninstall(dir, { steps: [{ ...plan.steps[0], cmd: ["false"] }, { label: "Delete x", run: () => assert.fail("must not run") }] });
+  assert.equal(results.at(-1).ok, false);
+  assert.match(results.at(-1).label, /Stopped/);
+
+  // No way to run bin/magento: the module is kept, with what to run.
+  const bare = magentoStore();
+  runCli(["--yes", "--public-key", "pk_test_mage", "--dir", bare], bare);
+  writeFileSync(join(bare, "app/etc/config.php"), "<?php\nreturn ['modules' => ['Likyly_Recommendations' => 1]];\n");
+  const PATH = process.env.PATH;
+  process.env.PATH = "/nonexistent";
+  try {
+    const p2 = planUninstall(bare);
+    assert.ok(!p2.steps.some((s) => s.label === "Delete app/code/Likyly/Recommendations"));
+    assert.ok(p2.kept.some((k) => /module is enabled - run bin\/magento module:disable/.test(k)));
+  } finally {
+    process.env.PATH = PATH;
+  }
+});
+
+test("Magento: a store already connected only gets its module enabled, no new Integration", async () => {
+  const { calls, run } = fakeMagento({ "module:status Likyly_Recommendations": [true, ["Module is disabled"]] });
+  const r = await createMagentoIntegration({ dir: project({}), cli: ["php", "bin/magento"], run, integration: false });
+  assert.equal(r.ok, true);
+  assert.ok(calls.includes("module:enable Likyly_Recommendations"));
+  assert.ok(!calls.includes("likyly:integration"));
+});
+
+test("pixel: the Shopify custom pixel sends the purchase with its price and the recommendation it was clicked in", async () => {
+  const { shopifyCustomPixel } = await import("../src/pixel.mjs");
+  const vm = await import("node:vm");
+  const handlers = {};
+  const sent = [];
+  const storage = {
+    likyly_anonymous_id: "anon_1",
+    likyly_rec: JSON.stringify({ 111: ["rec_A", "pdp-you-may-also-like", Date.now()], 333: ["rec_old", "pdp", Date.now() - 40 * 864e5] }),
+  };
+  const sandbox = {
+    analytics: { subscribe: (name, fn) => (handlers[name] = fn) },
+    browser: { localStorage: { getItem: async (k) => storage[k] ?? null } },
+    init: { data: { customer: null } },
+    fetch: async (url, init) => (sent.push({ url, headers: init.headers, body: JSON.parse(init.body) }), { ok: true }),
+    Date, JSON, Number, Math, Object, String, Array,
+  };
+  vm.runInNewContext(shopifyCustomPixel("pk_test_1", "https://api.example"), sandbox);
+  assert.deepEqual(Object.keys(handlers).sort(), ["checkout_completed", "product_added_to_cart"]);
+
+  await handlers.checkout_completed({
+    id: "e1",
+    timestamp: "2026-11-16T15:00:00Z",
+    data: {
+      checkout: {
+        currencyCode: "USD",
+        order: { id: "gid://shopify/Order/9001" },
+        lineItems: [
+          { quantity: 1, finalLinePrice: { amount: 599 }, variant: { price: { amount: 599 }, product: { id: "gid://shopify/Product/111" } } },
+          { quantity: 2, finalLinePrice: { amount: 60 }, variant: { price: { amount: 30 }, product: { id: "gid://shopify/Product/222" } } },
+          { quantity: 1, finalLinePrice: { amount: 10 }, variant: { price: { amount: 10 }, product: { id: "gid://shopify/Product/333" } } },
+        ],
+      },
+    },
+  });
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].url, "https://api.example/events/batch");
+  assert.equal(sent[0].headers["X-API-Key"], "pk_test_1");
+  const [clicked, notClicked, tooOld] = sent[0].body.events;
+  assert.deepEqual(clicked, {
+    event_type: "purchase", item_id: "111", quantity: 1, event_id: "purchase_9001_111", occurred_at: "2026-11-16T15:00:00Z",
+    properties: { order_id: "9001", price: 599, revenue: 599, currency: "USD" },
+    session_id: "anon_1", recommendation_id: "rec_A", placement: "pdp-you-may-also-like",
+  });
+  assert.equal(notClicked.recommendation_id, undefined, "bought without a click in a block: not attributed");
+  assert.deepEqual([notClicked.quantity, notClicked.properties.price, notClicked.properties.revenue], [2, 30, 60]);
+  assert.equal(tooOld.recommendation_id, undefined, "a click older than 30 days no longer counts");
+
+  await handlers.product_added_to_cart({ id: "e2", timestamp: "t", data: { cartLine: { quantity: 1, merchandise: { price: { amount: 599, currencyCode: "USD" }, product: { id: "gid://shopify/Product/111" } } } } });
+  assert.equal(sent[1].body.events[0].event_type, "add_to_cart");
+  assert.equal(sent[1].body.events[0].recommendation_id, "rec_A");
+});
+
+test("pixel: the section keeps the click for the pixel, and the command needs the theme's key", () => {
+  const section = starterContent({ template: "shopify-section" });
+  assert.match(section, /localStorage\.setItem\("likyly_rec"/);
+  assert.match(section, /kept\[item\.itemId\] = \[recs\.recommendationId, placement, Date\.now\(\)\]/);
+  assert.equal(parseArgs(["pixel"]).command, "pixel");
+  const empty = mkdtempSync(join(tmpdir(), "likyly-nopixel-"));
+  const res = runCli(["pixel", "--dir", empty], empty);
+  assert.equal(res.status, 1);
+  assert.match(res.stderr, /No public key in snippets\/likyly-key\.liquid/);
 });

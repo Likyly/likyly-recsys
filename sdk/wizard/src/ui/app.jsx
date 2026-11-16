@@ -457,6 +457,7 @@ function App({ opts: initialOpts, result }) {
         <Step
           apiKey={keys.current.devKey || readDeveloperKey(opts.dir)}
           standalone={CATALOG_COMMANDS.includes(opts.command)}
+          dir={opts.dir}
           onDone={(results, summary) => {
             // The standalone command ends here: say what comes next, whatever happened.
             if (CATALOG_COMMANDS.includes(opts.command)) {
