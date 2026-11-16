@@ -1065,6 +1065,12 @@
       "AnalyticsDetailOut": {
         "description": "Pro-only - the depth Free's summary doesn't include. `placement` (when given) narrows\ntotals, previous and timeseries; by_placement and top_items always cover every placement.",
         "properties": {
+          "admin_view": {
+            "default": false,
+            "description": "True when the workspace's plan does not include this and it is shown because the signed-in user is a LIKYLY admin.",
+            "title": "Admin View",
+            "type": "boolean"
+          },
           "by_placement": {
             "items": {
               "$ref": "#/components/schemas/AnalyticsDetailPlacementRow"
@@ -10259,7 +10265,7 @@
     },
     "/clients/me/analytics/detail": {
       "get": {
-        "description": "The depth behind the summary - totals with attributed purchases and revenue, the same\ntotals over the period just before (same length) to compare, a day-by-day trend, a\nper-placement breakdown with revenue, and the items recommendations worked best on.\nRevenue = purchases that carry a recommendation_id. Pro only: 403 on Free, same\nplan_limit_message wording as every other gated feature.",
+        "description": "The depth behind the summary - totals with attributed purchases and revenue, the same\ntotals over the period just before (same length) to compare, a day-by-day trend, a\nper-placement breakdown with revenue, and the items recommendations worked best on.\nRevenue = purchases that carry a recommendation_id. Pro only: 403 on Free, same\nplan_limit_message wording as every other gated feature - except for a LIKYLY admin, who\ngets the real figures with `admin_view: true` (see _analytics_plan).",
         "operationId": "get_my_analytics_detail",
         "parameters": [
           {
@@ -10421,7 +10427,7 @@
     },
     "/clients/me/analytics/summary": {
       "get": {
-        "description": "Recommendations served, impressions, clicks and CTR - the \"Performance\" page's summary\ncards, always available on any plan. The [start, end] range is server-clamped to this\nworkspace's plan (Free: 7-day span, Pro: 90) regardless of what was asked for - never trust\nthe client's requested range beyond the plan's own cap, same principle as every other limit\nhere.",
+        "description": "Recommendations served, impressions, clicks and CTR - the \"Performance\" page's summary\ncards, always available on any plan. The [start, end] range is server-clamped to this\nworkspace's plan (Free: 7-day span, Pro: 90) regardless of what was asked for - never trust\nthe client's requested range beyond the plan's own cap, same principle as every other limit\nhere. A LIKYLY admin gets Pro's window (see _analytics_plan).",
         "operationId": "get_my_analytics_summary",
         "parameters": [
           {

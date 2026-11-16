@@ -1399,6 +1399,7 @@ class AnalyticsDetailOut(BaseModel):
     by_placement: List[AnalyticsDetailPlacementRow]
     revenue: AnalyticsRevenue
     top_items: List["AnalyticsTopItem"]
+    admin_view: bool = Field(default=False, description="True when the workspace's plan does not include this and it is shown because the signed-in user is a LIKYLY admin.")
 
 
 # ---------------------------------------------------------------------------

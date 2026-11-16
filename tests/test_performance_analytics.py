@@ -204,3 +204,29 @@ def test_unattributed_purchases_are_excluded_from_revenue(http, workspace):
 def test_requires_a_session(http):
     assert http.get("/clients/me/analytics/summary").status_code == 401
     assert http.get("/clients/me/analytics/detail").status_code == 401
+
+
+def test_an_admin_sees_the_real_pro_detail_of_a_free_workspace(http, workspace, monkeypatch):
+    """Free workspaces get example figures in the console (the page's job); a LIKYLY admin
+    (app_metadata.is_admin) gets the real figures with Pro's depth, purchases and revenue
+    included, flagged admin_view - and Pro's window on the summary."""
+    _create_placement(http, workspace["secret"])
+    _seed_activity(http, workspace["public"], "pdp-related")
+    assert db.get_client_plan(workspace["client_id"]) == "free"
+    uid = app_module._decode_supabase_jwt("Bearer fake")["sub"]
+    monkeypatch.setattr(app_module, "_decode_supabase_jwt", lambda authorization: {"sub": uid, "email": "analytics@example.com", "app_metadata": {"is_admin": True}})
+
+    detail = http.get("/clients/me/analytics/detail", headers=workspace["auth"])
+    assert detail.status_code == 200, detail.text
+    body = detail.json()
+    assert body["admin_view"] is True
+    assert body["revenue"] == {"purchases": 1, "revenue": 29.9}
+
+    today = date.today()
+    summary = http.get("/clients/me/analytics/summary", headers=workspace["auth"], params={"start": (today - timedelta(days=59)).isoformat(), "end": today.isoformat()}).json()
+    assert summary["start"] == (today - timedelta(days=59)).isoformat(), "Pro's 90-day window, not Free's 7"
+
+
+def test_a_pro_workspace_is_not_an_admin_view(http, workspace):
+    db.set_client_plan(workspace["client_id"], "pro")
+    assert http.get("/clients/me/analytics/detail", headers=workspace["auth"]).json()["admin_view"] is False

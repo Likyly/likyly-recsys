@@ -507,6 +507,21 @@ async def get_current_supabase_profile(authorization: Optional[str] = Header(Non
     return payload["sub"], payload.get("email"), locale if isinstance(locale, str) else None
 
 
+def _analytics_plan(client_id: int, authorization: Optional[str]) -> tuple[str, bool]:
+    """(plan the console's analytics use, shown to an admin beyond the workspace's plan). A
+    LIKYLY admin (app_metadata.is_admin, set only through Supabase's Admin API) sees every
+    workspace's analytics with Pro's depth - the real figures, purchases and revenue included -
+    whatever its plan; everyone else gets their workspace's plan."""
+    plan = get_client_plan(client_id)
+    if get_plan_limits(plan)["analytics_detail"]:
+        return plan, False
+    try:
+        admin = bool(_decode_supabase_jwt(authorization).get("app_metadata", {}).get("is_admin"))
+    except HTTPException:
+        admin = False
+    return (PLAN_PRO, True) if admin else (plan, False)
+
+
 async def get_current_admin_user_id(authorization: Optional[str] = Header(None)) -> str:
     """Same JWT verification as get_current_supabase_user_id, plus an app_metadata.
     is_admin check - app_metadata (unlike user_metadata) can only be set via Supabase's
@@ -979,14 +994,15 @@ async def get_my_analytics_summary(
     start: Optional[date] = Query(None, description="Inclusive start date (YYYY-MM-DD). Defaults to 7 days before `end`."),
     end: Optional[date] = Query(None, description="Inclusive end date (YYYY-MM-DD). Defaults to today."),
     supabase_user_id: str = Depends(get_current_supabase_user_id), x_workspace_id: WorkspaceIdHeader = None,
+    authorization: Optional[str] = Header(None),
 ):
     """Recommendations served, impressions, clicks and CTR - the "Performance" page's summary
     cards, always available on any plan. The [start, end] range is server-clamped to this
     workspace's plan (Free: 7-day span, Pro: 90) regardless of what was asked for - never trust
     the client's requested range beyond the plan's own cap, same principle as every other limit
-    here."""
+    here. A LIKYLY admin gets Pro's window (see _analytics_plan)."""
     client_id = await _resolve_my_client_id(supabase_user_id, x_workspace_id)
-    plan = get_client_plan(client_id)
+    plan, _ = _analytics_plan(client_id, authorization)
     since, until, start_date, end_date = _resolve_analytics_window(plan, start, end, default_days=7)
     summary = recommendation_performance_summary(client_id, since, until=until)
     return {"start": start_date.isoformat(), "end": end_date.isoformat(), **summary}
@@ -1007,14 +1023,16 @@ async def get_my_analytics_detail(
     end: Optional[date] = Query(None, description="Inclusive end date (YYYY-MM-DD). Defaults to today."),
     placement: Optional[str] = Query(None, description="Only this placement (slug) for the totals, the comparison and the trend. The by-placement breakdown and the top items always cover every placement."),
     supabase_user_id: str = Depends(get_current_supabase_user_id), x_workspace_id: WorkspaceIdHeader = None,
+    authorization: Optional[str] = Header(None),
 ):
     """The depth behind the summary - totals with attributed purchases and revenue, the same
     totals over the period just before (same length) to compare, a day-by-day trend, a
     per-placement breakdown with revenue, and the items recommendations worked best on.
     Revenue = purchases that carry a recommendation_id. Pro only: 403 on Free, same
-    plan_limit_message wording as every other gated feature."""
+    plan_limit_message wording as every other gated feature - except for a LIKYLY admin, who
+    gets the real figures with `admin_view: true` (see _analytics_plan)."""
     client_id = await _resolve_my_client_id(supabase_user_id, x_workspace_id)
-    plan = get_client_plan(client_id)
+    plan, admin_view = _analytics_plan(client_id, authorization)
     limits = get_plan_limits(plan)
     if not limits["analytics_detail"]:
         raise HTTPException(status_code=403, detail=plan_limit_message(plan, "detailed performance data (trend, by placement, revenue)"))
@@ -1045,6 +1063,7 @@ async def get_my_analytics_detail(
         "by_placement": recommendation_performance_by_placement_with_revenue(client_id, since, until),
         "revenue": {"purchases": totals["purchases"], "revenue": totals["revenue"]},
         "top_items": recommendation_top_items(client_id, since, until, limit=10),
+        "admin_view": admin_view,
     }
 
 @app.post("/clients/me/regenerate-secret-key", tags=["selfServiceClient"], response_model=ClientSelf, summary="Regenerate my secret key", responses=_errors(401, 404))
