@@ -10,12 +10,12 @@ import { Select } from "./widgets.jsx";
 import { describeSource, findConnectedSource } from "../catalog.mjs";
 
 /** Runs the check once; `onResult(source | null)`. */
-export function useConnectedSource({ apiKey, type, onResult }) {
+export function useConnectedSource({ apiKey, type, matches, onResult }) {
   const [checking, setChecking] = useState(Boolean(apiKey));
   useEffect(() => {
     if (!apiKey) return;
     let live = true;
-    findConnectedSource({ apiKey, type }).then((source) => {
+    findConnectedSource({ apiKey, type, ...(matches ? { matches } : {}) }).then((source) => {
       if (!live) return;
       setChecking(false);
       onResult(source);

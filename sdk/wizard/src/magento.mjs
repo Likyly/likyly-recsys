@@ -4,7 +4,8 @@
 
 import { existsSync as exists, mkdirSync as mkdir, readFileSync as read, realpathSync, writeFileSync as write } from "node:fs";
 import { dirname as parentOf, join as joinPath, resolve as resolvePath } from "node:path";
-import { connectCatalog } from "./catalog.mjs";
+import { connectCatalog, pushCatalog } from "./catalog.mjs";
+import { API_URL } from "./verify.mjs";
 
 /** "shop.example.com", "https://shop.example.com/admin/..." -> "https://shop.example.com". */
 export function normalizeStoreUrl(input) {
@@ -47,6 +48,60 @@ export function connectMagentoCatalog({ apiKey, storeUrl, storeCode, credentials
     matches: (s) => s.type === "magento" && s.config?.store_url === storeUrl,
     source: { name: `Magento · ${storeUrl.replace(/^https?:\/\//, "")}`, type: "magento", product_type: magentoCatalogName(storeUrl), config: { store_url: storeUrl, ...(storeCode && storeCode !== "default" ? { store_code: storeCode } : {}) } },
     credentials,
+    ...rest,
+  });
+}
+
+/**
+ * A URL only this computer (or its network) reaches: localhost, a private address, or a local
+ * development domain (.test, .local, .localhost, DDEV, Lando, Warden).
+ */
+export function isLocalUrl(url) {
+  let host;
+  try {
+    host = new URL(url).hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  } catch {
+    return false;
+  }
+  if (!host.includes(".") || host === "::1") return true;
+  if (/^(127\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.)/.test(host)) return true;
+  return /\.(localhost|local|test|internal|lan|ddev\.site|lndo\.site)$/.test(host);
+}
+
+/**
+ * LIKYLY reads a store itself (pull) unless the store is local and LIKYLY isn't.
+ * LIKYLY_MAGENTO_PUSH=1 forces sending (a store behind a VPN or a password, whose address looks
+ * public), =0 forces reading.
+ */
+export function needsPush(storeUrl, apiUrl = API_URL, env = process.env) {
+  if (env.LIKYLY_MAGENTO_PUSH === "1") return true;
+  if (env.LIKYLY_MAGENTO_PUSH === "0") return false;
+  return isLocalUrl(storeUrl) && !isLocalUrl(apiUrl);
+}
+
+/** How a pushed Magento item (bin/magento likyly:catalog) maps to a LIKYLY item. */
+export const MAGENTO_PUSH_MAPPING = { external_id: "id", title: "title", description: "description", category: "categories", price: "price", image: "image", url: "url", stock: "stock" };
+
+/** A push source (webhook) the wizard filled for this Magento store. */
+export const isMagentoPushSource = (s, storeUrl) => s.type === "webhook" && s.config?.platform === "magento" && (!storeUrl || s.config?.store_url === storeUrl);
+
+/** Send a local store's products (from bin/magento likyly:catalog) to LIKYLY's push source for it. */
+export function pushMagentoCatalog({ apiKey, storeUrl, items, ...rest }) {
+  const label = storeUrl.replace(/^https?:\/\//, "");
+  return pushCatalog({
+    apiKey,
+    platform: "Magento",
+    agent: "magento",
+    label,
+    matches: (s) => isMagentoPushSource(s, storeUrl),
+    source: {
+      name: `Magento · ${label} (sent by the wizard)`,
+      type: "webhook",
+      product_type: magentoCatalogName(storeUrl),
+      config: { platform: "magento", store_url: storeUrl, sample: items.slice(0, 3) },
+      field_mapping: MAGENTO_PUSH_MAPPING,
+    },
+    items,
     ...rest,
   });
 }
@@ -368,6 +423,7 @@ const DI_XML = xml(
         <arguments>
             <argument name="commands" xsi:type="array">
                 <item name="likyly_integration" xsi:type="object">Likyly\\Recommendations\\Console\\Command\\IntegrationCommand</item>
+                <item name="likyly_catalog" xsi:type="object">Likyly\\Recommendations\\Console\\Command\\CatalogCommand</item>
             </argument>
         </arguments>
     </type>
@@ -379,6 +435,16 @@ const DI_XML = xml(
             <argument name="oauth" xsi:type="object">Magento\\Integration\\Api\\OauthServiceInterface\\Proxy</argument>
             <argument name="authorization" xsi:type="object">Magento\\Integration\\Api\\AuthorizationServiceInterface\\Proxy</argument>
             <argument name="storeManager" xsi:type="object">Magento\\Store\\Model\\StoreManagerInterface\\Proxy</argument>
+        </arguments>
+    </type>
+    <type name="Likyly\\Recommendations\\Console\\Command\\CatalogCommand">
+        <arguments>
+            <argument name="state" xsi:type="object">Magento\\Framework\\App\\State\\Proxy</argument>
+            <argument name="products" xsi:type="object">Magento\\Catalog\\Model\\ResourceModel\\Product\\CollectionFactory\\Proxy</argument>
+            <argument name="categories" xsi:type="object">Magento\\Catalog\\Model\\ResourceModel\\Category\\CollectionFactory\\Proxy</argument>
+            <argument name="stockRegistry" xsi:type="object">Magento\\CatalogInventory\\Api\\StockRegistryInterface\\Proxy</argument>
+            <argument name="storeManager" xsi:type="object">Magento\\Store\\Model\\StoreManagerInterface\\Proxy</argument>
+            <argument name="scopeConfig" xsi:type="object">Magento\\Framework\\App\\Config\\ScopeConfigInterface\\Proxy</argument>
         </arguments>
     </type>`,
   "urn:magento:framework:ObjectManager/etc/config.xsd",
@@ -487,6 +553,126 @@ class IntegrationCommand extends Command
 }
 `;
 
+// `bin/magento likyly:catalog`: the store's products as LIKYLY items, one JSON line each, for a
+// store LIKYLY's servers can't reach (on the developer's computer): the wizard sends them itself.
+// `--store` prints only the store's address. No Integration needed for that.
+const CATALOG_PHP = String.raw`<?php
+declare(strict_types=1);
+
+namespace Likyly\Recommendations\Console\Command;
+
+use Magento\Catalog\Model\Product\Visibility;
+use Magento\Catalog\Model\ResourceModel\Category\CollectionFactory as CategoryCollectionFactory;
+use Magento\Catalog\Model\ResourceModel\Product\CollectionFactory as ProductCollectionFactory;
+use Magento\CatalogInventory\Api\StockRegistryInterface;
+use Magento\Framework\App\Area;
+use Magento\Framework\App\Config\ScopeConfigInterface;
+use Magento\Framework\App\State;
+use Magento\Framework\Exception\LocalizedException;
+use Magento\Framework\UrlInterface;
+use Magento\Store\Model\ScopeInterface;
+use Magento\Store\Model\StoreManagerInterface;
+use Symfony\Component\Console\Command\Command;
+use Symfony\Component\Console\Input\InputInterface;
+use Symfony\Component\Console\Input\InputOption;
+use Symfony\Component\Console\Output\OutputInterface;
+
+/**
+ * Generated by @likyly/wizard. Prints the default store's address as a first JSON line
+ * ({"store_url", "store_code", "count"}), then one JSON line per enabled, visible product:
+ * {"id" (SKU), "title", "description", "categories", "price", "image", "url", "stock"}.
+ * Read-only. Run by npx @likyly/wizard when the store runs on the developer's computer.
+ */
+class CatalogCommand extends Command
+{
+    public function __construct(
+        private readonly State $state,
+        private readonly ProductCollectionFactory $products,
+        private readonly CategoryCollectionFactory $categories,
+        private readonly StockRegistryInterface $stockRegistry,
+        private readonly StoreManagerInterface $storeManager,
+        private readonly ScopeConfigInterface $scopeConfig
+    ) {
+        parent::__construct();
+    }
+
+    protected function configure(): void
+    {
+        $this->setName('likyly:catalog')
+            ->setDescription('Print the store and its products as JSON lines, for npx @likyly/wizard (read-only)')
+            ->addOption('store', null, InputOption::VALUE_NONE, 'Print only the store line');
+        parent::configure();
+    }
+
+    protected function execute(InputInterface $input, OutputInterface $output): int
+    {
+        try {
+            $this->state->setAreaCode(Area::AREA_FRONTEND);
+        } catch (LocalizedException $e) {
+            // area already set
+        }
+        $store = $this->storeManager->getDefaultStoreView();
+        if (!$store) {
+            $output->writeln('No default store view');
+            return Command::FAILURE;
+        }
+        $storeId = (int) $store->getId();
+        $secure = $store->isFrontUrlSecure();
+        $base = $store->getBaseUrl(UrlInterface::URL_TYPE_WEB, $secure);
+        $collection = $this->products->create()
+            ->setStoreId($storeId)
+            ->addStoreFilter($storeId)
+            ->addAttributeToSelect(['name', 'description', 'short_description', 'price', 'image', 'small_image', 'url_key'])
+            ->addAttributeToFilter('status', 1)
+            ->addAttributeToFilter('visibility', ['in' => [Visibility::VISIBILITY_IN_CATALOG, Visibility::VISIBILITY_IN_SEARCH, Visibility::VISIBILITY_BOTH]]);
+        $output->writeln((string) json_encode(['store_url' => rtrim($base, '/'), 'store_code' => $store->getCode(), 'count' => $collection->getSize()], JSON_UNESCAPED_SLASHES));
+        if ($input->getOption('store')) {
+            return Command::SUCCESS;
+        }
+
+        $media = $store->getBaseUrl(UrlInterface::URL_TYPE_MEDIA, $secure) . 'catalog/product';
+        $suffix = (string) $this->scopeConfig->getValue('catalog/seo/product_url_suffix', ScopeInterface::SCOPE_STORE, $storeId);
+        $names = [];
+        foreach ($this->categories->create()->setStoreId($storeId)->addAttributeToSelect('name')->addAttributeToFilter('level', ['gteq' => 2]) as $category) {
+            $names[(int) $category->getId()] = (string) $category->getName();
+        }
+
+        $collection->setPageSize(500);
+        $pages = $collection->getLastPageNumber();
+        for ($page = 1; $page <= $pages; $page++) {
+            $collection->setCurPage($page)->clear();
+            foreach ($collection as $product) {
+                $image = (string) ($product->getData('image') ?: $product->getData('small_image'));
+                $stockItem = $this->stockRegistry->getStockItem((int) $product->getId());
+                $stock = null;
+                if ($stockItem->getManageStock()) {
+                    $qty = (int) $stockItem->getQty();
+                    $stock = !$stockItem->getIsInStock() ? 0 : ($qty > 0 ? $qty : null);
+                }
+                $categories = [];
+                foreach ($product->getCategoryIds() as $id) {
+                    if (isset($names[(int) $id])) {
+                        $categories[] = $names[(int) $id];
+                    }
+                }
+                $urlKey = (string) $product->getData('url_key');
+                $output->writeln((string) json_encode([
+                    'id' => (string) $product->getSku(),
+                    'title' => (string) $product->getName(),
+                    'description' => (string) ($product->getData('description') ?: $product->getData('short_description')),
+                    'categories' => $categories,
+                    'price' => $product->getData('price') === null ? null : (float) $product->getData('price'),
+                    'image' => $image && $image !== 'no_selection' ? $media . '/' . ltrim($image, '/') : null,
+                    'url' => $urlKey !== '' ? $base . $urlKey . $suffix : null,
+                    'stock' => $stock,
+                ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+            }
+        }
+        return Command::SUCCESS;
+    }
+}
+`;
+
 /** The module's files, relative to app/code/Likyly/Recommendations (etc/config.xml is the key file). */
 export const MAGENTO_MODULE_FILES = {
   "registration.php": REGISTRATION,
@@ -496,6 +682,7 @@ export const MAGENTO_MODULE_FILES = {
   "etc/csp_whitelist.xml": CSP_XML,
   "etc/di.xml": DI_XML,
   "Console/Command/IntegrationCommand.php": COMMAND_PHP,
+  "Console/Command/CatalogCommand.php": CATALOG_PHP,
   "Block/Recommendations.php": BLOCK_PHP,
   "view/frontend/templates/recommendations.phtml": TEMPLATE_PHTML,
 };
@@ -582,11 +769,13 @@ export function rememberMagentoCli(dir, cmd) {
  * Enable the LIKYLY module and create its read-only Integration with bin/magento - what a merchant
  * would do in the admin. Refuses a store in production mode (a module there needs a full deploy).
  * `integration: false` stops once the module is enabled (a store already connected to LIKYLY).
+ * A store on this computer while LIKYLY runs in the cloud: no Integration (LIKYLY could not use
+ * it); the products are read with `likyly:catalog` instead - { ok, mode: "push", storeUrl, items }.
  * `run(cmd, onLine)` resolves to true on success (setup.runAsync). Resolves to
  * { ok: true, storeUrl, storeCode, credentials } or { ok: false, error }. The credentials are
  * never passed to onLine.
  */
-export async function createMagentoIntegration({ dir, cli, run, onStep = () => {}, onLine = () => {}, integration = true }) {
+export async function createMagentoIntegration({ dir, cli, run, onStep = () => {}, onLine = () => {}, integration = true, apiUrl = API_URL }) {
   const lines = [];
   const step = async (label, args, { quiet = false } = {}) => {
     onStep(label);
@@ -615,6 +804,16 @@ export async function createMagentoIntegration({ dir, cli, run, onStep = () => {
     rememberMagentoCli(dir, cli);
     return { ok: true };
   }
+  // A store on this computer, LIKYLY in the cloud: LIKYLY can't read it - send the products instead.
+  if (await step("Reading the store's address", ["likyly:catalog", "--store"], { quiet: true })) {
+    const store = jsonLines(lines)[0];
+    if (store?.store_url && needsPush(store.store_url, apiUrl)) {
+      if (!(await step(`Reading the ${store.count ?? ""} products`.replace("  ", " "), ["likyly:catalog"], { quiet: true }))) return { ok: false, error: `likyly:catalog failed: ${tail()}` };
+      const [, ...items] = jsonLines(lines);
+      rememberMagentoCli(dir, cli);
+      return { ok: true, mode: "push", storeUrl: normalizeStoreUrl(store.store_url), storeCode: store.store_code, items };
+    }
+  }
   if (!(await step("Creating the read-only LIKYLY Integration", ["likyly:integration"], { quiet: true }))) {
     return { ok: false, error: `likyly:integration failed: ${tail()}` };
   }
@@ -630,5 +829,19 @@ export async function createMagentoIntegration({ dir, cli, run, onStep = () => {
     return { ok: false, error: "likyly:integration gave incomplete credentials" };
   }
   rememberMagentoCli(dir, cli);
-  return { ok: true, storeUrl, storeCode, credentials };
+  return { ok: true, mode: "pull", storeUrl, storeCode, credentials };
+}
+
+/** The JSON lines of a command's output (other lines - warnings, notices - skipped). */
+function jsonLines(lines) {
+  const out = [];
+  for (const l of lines) {
+    if (!l.trim().startsWith("{")) continue;
+    try {
+      out.push(JSON.parse(l));
+    } catch {
+      // a line cut by the terminal: skipped
+    }
+  }
+  return out;
 }

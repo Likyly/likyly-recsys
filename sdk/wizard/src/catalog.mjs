@@ -124,11 +124,11 @@ export async function connectCatalog({ apiKey, platform, agent, label, matches, 
  * what the catalog step shows before asking for anything. null when there is none, or when
  * LIKYLY can't be asked (the step then simply asks for the store).
  */
-export async function findConnectedSource({ apiKey, type, agent = type, fetchImpl = fetch }) {
+export async function findConnectedSource({ apiKey, type, agent = type, matches = (s) => s.type === type, fetchImpl = fetch }) {
   const api = client(apiKey, fetchImpl, agent);
   try {
     const list = await api("GET", "/data-sources");
-    const source = list.ok ? (list.data ?? []).find((s) => s.type === type) : null;
+    const source = list.ok ? (list.data ?? []).find(matches) : null;
     if (!source) return null;
     const stats = await api("GET", `/data-sources/${source.id}/stats`);
     return { ...source, itemCount: stats.ok ? (stats.data?.item_count ?? null) : null };
@@ -141,4 +141,64 @@ export async function findConnectedSource({ apiKey, type, agent = type, fetchImp
 export function describeSource(label, source) {
   const count = source.itemCount === null || source.itemCount === undefined ? "" : ` · ${source.itemCount} product(s)`;
   return `${label} → catalog ${source.product_type}${count}`;
+}
+
+/**
+ * A store LIKYLY's servers can't reach (on the developer's computer): the wizard sends the products
+ * itself to a push source (`webhook`), created for this store or found again (`matches`), whose
+ * push secret is rotated each time (it is shown only once, and never kept). `items` are already
+ * LIKYLY-shaped; `source` is the POST /data-sources body. Batches of 1000.
+ */
+export async function pushCatalog({ apiKey, platform, agent, label, matches, source: body, items, fetchImpl = fetch, onProgress }) {
+  const api = client(apiKey, fetchImpl, agent);
+  try {
+    const list = await api("GET", "/data-sources");
+    if (!list.ok) return [fail(`LIKYLY refused to list your sources: ${detail(list)}`)];
+    let source = (list.data ?? []).find(matches);
+    let secret;
+    if (source) {
+      const rotated = await api("POST", `/data-sources/${source.id}/push-secret/rotate`);
+      if (!rotated.ok) return [fail(`LIKYLY could not open the ${label} source: ${detail(rotated)}`)];
+      secret = rotated.data?.push_secret;
+    } else {
+      const made = await api("POST", "/data-sources", body);
+      if (!made.ok) return [fail(`LIKYLY could not create the ${platform} source: ${detail(made)}`)];
+      source = made.data;
+      secret = made.data?.push_secret;
+    }
+    if (!secret) return [fail("LIKYLY gave no push secret for the source")];
+
+    let upserted = 0;
+    let failed = 0;
+    for (let i = 0; i < items.length; i += 1000) {
+      const res = await fetchImpl(`${API_URL}/data-sources/${source.id}/push`, {
+        method: "POST",
+        headers: { "X-Push-Secret": secret, "Content-Type": "application/json", "User-Agent": wizardUserAgent(agent) },
+        body: JSON.stringify({ items: items.slice(i, i + 1000) }),
+        signal: AbortSignal.timeout(120000),
+      });
+      let data = null;
+      try {
+        data = await res.json();
+      } catch {
+        // empty or non-JSON body
+      }
+      if (!res.ok) return [fail(`LIKYLY refused the products: ${typeof data?.detail === "string" ? data.detail : `HTTP ${res.status}`}`)];
+      upserted += data?.upserted ?? 0;
+      failed += data?.failed ?? 0;
+      onProgress?.(Math.min(i + 1000, items.length));
+    }
+
+    let why = null;
+    if (failed) {
+      const runs = await api("GET", `/data-sources/${source.id}/syncs`);
+      why = runs.ok ? firstError((runs.data ?? [])[0] ?? {}) : null;
+    }
+    if (!upserted && items.length) return [fail(`No product saved in LIKYLY${failed ? ` (${failed} rejected)` : ""}: ${why ?? "the push failed"}`)];
+    const results = [ok(`Connected ${label} → catalog ${source.product_type}`, "(products sent from this computer)"), ok(`${upserted} product(s) sent to LIKYLY`)];
+    if (failed) results.push(warn(`${failed} product(s) rejected: ${why}`));
+    return results;
+  } catch (error) {
+    return [fail(`Could not reach the LIKYLY API (${API_URL}): ${error.message}`)];
+  }
 }

@@ -16,6 +16,8 @@ import { Field } from "./shopify.jsx";
 import {
   connectMagentoCatalog,
   createMagentoIntegration,
+  isMagentoPushSource,
+  pushMagentoCatalog,
   detectMagentoCli,
   magentoCredentials,
   normalizeStoreUrl,
@@ -27,8 +29,9 @@ import { describeSource } from "../catalog.mjs";
 import { Checking, ExistingSource, Intro, useConnectedSource } from "./catalog.jsx";
 
 const AUTO_INTRO = [
-  "LIKYLY recommends from your store's products: it reads them through the store's REST API, with a read-only Integration.",
-  "Nothing to do in the Magento admin: the wizard enables the LIKYLY module and creates that Integration with bin/magento.",
+  "LIKYLY recommends from your store's products. Nothing to do in the Magento admin: the wizard enables the LIKYLY module with bin/magento, then",
+  "· a store online: creates a read-only Integration, and LIKYLY reads the products through the store's REST API;",
+  "· a store on this computer (localhost, .test, DDEV…): sends the products to LIKYLY itself, no Integration.",
 ];
 const MANUAL_INTRO = [
   "LIKYLY recommends from your store's products: it reads them through the store's REST API, with an Integration.",
@@ -111,9 +114,9 @@ export function MagentoCatalogStep({ apiKey, dir, onDone, standalone = false }) 
         setError(r.error);
         return setStage("how");
       }
-      auto.current = { storeCode: r.storeCode, credentials: r.credentials };
+      auto.current = { mode: r.mode, storeCode: r.storeCode, credentials: r.credentials, items: r.items };
       setStoreUrl(r.storeUrl);
-      setStage("running");
+      setStage(r.mode === "push" ? "pushing" : "running");
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- runs once per attempt
   }, [stage]);
@@ -137,9 +140,31 @@ export function MagentoCatalogStep({ apiKey, dir, onDone, standalone = false }) 
     // eslint-disable-next-line react-hooks/exhaustive-deps -- runs once, when the store and credentials are known
   }, [stage]);
 
+  // A store on this computer: the wizard sends its products (LIKYLY's servers can't read it).
+  useEffect(() => {
+    if (stage !== "pushing") return;
+    pushMagentoCatalog({ apiKey, storeUrl, items: auto.current.items, onProgress: setFetched }).then((results) => {
+      const failed = results.some((r) => r.level === "fail");
+      onDone(
+        [
+          { level: "ok", text: "LIKYLY module enabled", hint: `(${cli.label})` },
+          ...results,
+          ...(failed
+            ? []
+            : [
+                { level: "info", text: "Your store runs on this computer, out of LIKYLY's reach: the wizard sent its products, no Integration needed. After a catalog change, send it again:", hint: LATER },
+              ]),
+        ],
+        failed ? "not connected" : storeUrl.replace(/^https?:\/\//, ""),
+      );
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs once
+  }, [stage]);
+
   useConnectedSource({
     apiKey,
     type: "magento",
+    matches: (s) => s.type === "magento" || isMagentoPushSource(s),
     onResult: (source) => {
       setExisting(source);
       setStage(source ? "existing" : firstStage);
@@ -162,6 +187,8 @@ export function MagentoCatalogStep({ apiKey, dir, onDone, standalone = false }) 
         standalone={standalone}
         onChoice={(choice) => {
           if (choice === "keep") {
+            // Products sent by the wizard: keeping the store means sending them again, up to date.
+            if (canRun && cli && isMagentoPushSource(existing)) return setStage("creating");
             if (canRun && cli && !moduleEnabled(dir)) return setStage("enabling");
             return onDone([{ level: "ok", text: `Already connected: ${describeSource(label, existing)}` }], label);
           }
@@ -290,7 +317,11 @@ export function MagentoCatalogStep({ apiKey, dir, onDone, standalone = false }) 
       <Text color={C.blue}>
         <Spinner type="dots" />
       </Text>{" "}
-      {fetched ? `Syncing ${storeUrl}: ${fetched} product(s) read so far…` : `Connecting ${storeUrl} to LIKYLY and syncing its products (about a minute)…`}
+      {stage === "pushing"
+        ? `Sending the products of ${storeUrl} to LIKYLY${fetched ? `: ${fetched}/${auto.current?.items?.length ?? "?"}` : "…"}`
+        : fetched
+          ? `Syncing ${storeUrl}: ${fetched} product(s) read so far…`
+          : `Connecting ${storeUrl} to LIKYLY and syncing its products (about a minute)…`}
     </Text>
   );
 }

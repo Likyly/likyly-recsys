@@ -113,7 +113,10 @@ URL, or call the push endpoint from their own code when products change.
    `npx @likyly/wizard magento` in a terminal: it enables the LIKYLY module and creates a
    read-only Integration itself with bin/magento (nothing to do in the Magento admin), and sends
    its credentials straight to LIKYLY. Never ask for credentials in the conversation, and never
-   run `bin/magento likyly:integration` yourself: its output is secret.
+   run `bin/magento likyly:integration` yourself: its output is secret. A store on the
+   developer's computer (localhost, .test, DDEV…) can't be read by LIKYLY: the wizard sends its
+   products itself, to a `webhook` source with `config.platform: "magento"` - that source is the
+   catalog, and `npx @likyly/wizard magento` sends the products again after a catalog change.
 3. `test_data_source` - confirms LIKYLY can actually reach it. Fix the config/credentials and
    retry if it fails; don't move on with a broken connection.
 4. `preview_data_source` - a small real sample plus a suggested field mapping.

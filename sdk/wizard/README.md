@@ -145,7 +145,11 @@ mounting the store, or `php`), enables the module (`module:enable`, `setup:upgra
 `cache:flush`) and runs the module's `bin/magento likyly:integration`, which creates a read-only
 Integration "LIKYLY" (catalog, stores, stock) and hands its credentials to the wizard - they go
 straight to LIKYLY, encrypted, never on screen. LIKYLY then reads the products through the
-store's REST API (signed requests). A store in production mode is left alone (a module there
+store's REST API (signed requests). A store on your computer (localhost, `.test`, DDEV, a
+private address) is out of LIKYLY's reach: the wizard reads its products with the module's
+`bin/magento likyly:catalog` and sends them itself - no Integration then; run
+`npx @likyly/wizard magento` again after a catalog change (`LIKYLY_MAGENTO_PUSH=1` forces this
+for a store behind a VPN or a password, `=0` forces reading). A store in production mode is left alone (a module there
 needs a full deploy). Other ways, from the same step: type the bin/magento command yourself, or
 give an Integration's four values made in the admin. Later, or for another store:
 `npx @likyly/wizard magento`. `npx @likyly/wizard uninstall` disables the module with

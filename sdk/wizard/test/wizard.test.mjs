@@ -1191,11 +1191,12 @@ test("Magento: the module is enabled and the Integration created by bin/magento;
     "likyly:integration": [true, [JSON.stringify(CREDS)]],
   });
   const shown = [];
-  const r = await createMagentoIntegration({ dir, cli: ["php", "bin/magento"], run, onLine: (l) => shown.push(l) });
+  const r = await createMagentoIntegration({ dir, cli: ["php", "bin/magento"], run, onLine: (l) => shown.push(l), apiUrl: "http://127.0.0.1:6161" });
   assert.equal(r.ok, true, r.error);
+  assert.equal(r.mode, "pull");
   assert.equal(r.storeUrl, "http://localhost:8896");
   assert.deepEqual(r.credentials, { consumer_key: "ck", consumer_secret: "cs", access_token: "at", access_token_secret: "ats" });
-  assert.deepEqual(calls, ["deploy:mode:show", "module:status Likyly_Recommendations", "module:enable Likyly_Recommendations", "setup:upgrade --keep-generated", "cache:flush", "likyly:integration"]);
+  assert.deepEqual(calls, ["deploy:mode:show", "module:status Likyly_Recommendations", "module:enable Likyly_Recommendations", "setup:upgrade --keep-generated", "cache:flush", "likyly:catalog --store", "likyly:integration"]);
   assert.doesNotMatch(shown.join("\n"), /ats|"cs"/);
   assert.equal(readFileSync(join(dir, ".likyly/bin-magento"), "utf8"), "php bin/magento\n");
 
@@ -1319,4 +1320,71 @@ test("pixel: the section keeps the click for the pixel, and the command needs th
   const res = runCli(["pixel", "--dir", empty], empty);
   assert.equal(res.status, 1);
   assert.match(res.stderr, /No public key in snippets\/likyly-key\.liquid/);
+});
+
+// --- Magento on the developer's computer: the wizard sends the products ---------------------------
+
+import { isLocalUrl, needsPush, pushMagentoCatalog } from "../src/magento.mjs";
+
+test("Magento: a store LIKYLY can't reach is local - localhost, private addresses, dev domains", () => {
+  for (const u of ["http://localhost:8896", "http://127.0.0.1", "https://shop.ddev.site", "http://magento.test", "http://192.168.1.20", "http://172.20.0.3", "http://shop.lndo.site", "http://app.local"]) assert.ok(isLocalUrl(u), u);
+  for (const u of ["https://shop.example.com", "http://172.32.0.1", "https://www.likyly.com"]) assert.ok(!isLocalUrl(u), u);
+  assert.ok(needsPush("http://localhost:8896", "https://api.likyly.com", {}));
+  assert.ok(!needsPush("http://localhost:8896", "http://127.0.0.1:6161", {}), "a local LIKYLY reads a local store");
+  assert.ok(!needsPush("https://shop.example.com", "https://api.likyly.com", {}));
+  assert.ok(needsPush("https://shop.example.com", "https://api.likyly.com", { LIKYLY_MAGENTO_PUSH: "1" }), "behind a VPN");
+  assert.ok(!needsPush("http://localhost:8896", "https://api.likyly.com", { LIKYLY_MAGENTO_PUSH: "0" }));
+});
+
+const STORE_LINE = JSON.stringify({ store_url: "http://localhost:8896", store_code: "default", count: 2 });
+const ITEMS = [
+  { id: "RUN-001", title: "Swift", description: "<p>x</p>", categories: ["Running shoes"], price: 259, image: "http://localhost:8896/media/catalog/product/r/u/run-001.jpg", url: "http://localhost:8896/run-001.html", stock: 0 },
+  { id: "RUN-002", title: "Glide", description: "", categories: [], price: 189, image: null, url: "http://localhost:8896/run-002.html", stock: 4 },
+];
+
+test("Magento: a local store with LIKYLY in the cloud - products read with likyly:catalog, no Integration created", async () => {
+  const dir = project({});
+  const { calls, run } = fakeMagento({
+    "module:status Likyly_Recommendations": [true, ["Module is enabled"]],
+    "likyly:catalog --store": [true, [STORE_LINE]],
+    "likyly:catalog": [true, ["Some PHP notice", STORE_LINE, ...ITEMS.map((i) => JSON.stringify(i))]],
+  });
+  const r = await createMagentoIntegration({ dir, cli: ["php", "bin/magento"], run, apiUrl: "https://api.likyly.com" });
+  assert.equal(r.ok, true, r.error);
+  assert.equal(r.mode, "push");
+  assert.equal(r.storeUrl, "http://localhost:8896");
+  assert.deepEqual(r.items, ITEMS);
+  assert.ok(!calls.includes("likyly:integration"), "no Integration for a store LIKYLY can't use it with");
+});
+
+test("Magento: the products go to a push source - created the first time, its secret rotated the next", async () => {
+  const pushes = [];
+  const routes = {
+    "GET /data-sources": [200, []],
+    "POST /data-sources": [201, { id: 11, type: "webhook", product_type: "magento", push_secret: "ps_new", config: { platform: "magento", store_url: "http://localhost:8896" } }],
+  };
+  const fetchImpl = async (url, init) => {
+    const path = url.replace(/^https?:\/\/[^/]+/, "");
+    if (path.endsWith("/push")) {
+      const body = JSON.parse(init.body);
+      pushes.push({ path, secret: init.headers["X-Push-Secret"], count: body.items.length, key: init.headers["X-API-Key"] });
+      return { ok: true, status: 200, json: async () => ({ received: body.items.length, upserted: body.items.length, failed: 0 }) };
+    }
+    const [status, data] = routes[`${init.method} ${path}`] ?? [404, { detail: "not found" }];
+    return { status, ok: status < 300, json: async () => data, body: init.body };
+  };
+  const many = Array.from({ length: 1500 }, (_, i) => ({ ...ITEMS[1], id: `P-${i}` }));
+  const r1 = await pushMagentoCatalog({ apiKey: "lk", storeUrl: "http://localhost:8896", items: many, fetchImpl });
+  assert.ok(r1.every((x) => x.level !== "fail"), JSON.stringify(r1));
+  assert.ok(r1.some((x) => x.text === "1500 product(s) sent to LIKYLY"));
+  assert.deepEqual(pushes.map((p) => [p.path, p.secret, p.count, p.key]), [["/data-sources/11/push", "ps_new", 1000, undefined], ["/data-sources/11/push", "ps_new", 500, undefined]]);
+
+  // Next time: the same source, a fresh secret (the first one was shown once and never kept).
+  pushes.length = 0;
+  routes["GET /data-sources"] = [200, [{ id: 11, type: "webhook", product_type: "magento", config: { platform: "magento", store_url: "http://localhost:8896" } }]];
+  routes["POST /data-sources/11/push-secret/rotate"] = [200, { push_secret: "ps_rotated" }];
+  delete routes["POST /data-sources"];
+  const r2 = await pushMagentoCatalog({ apiKey: "lk", storeUrl: "http://localhost:8896", items: ITEMS, fetchImpl });
+  assert.ok(r2.some((x) => x.text === "2 product(s) sent to LIKYLY"), JSON.stringify(r2));
+  assert.deepEqual(pushes.map((p) => p.secret), ["ps_rotated"]);
 });
