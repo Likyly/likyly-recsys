@@ -281,6 +281,29 @@ def _check(name: str, count: int, *, required: Optional[bool] = None) -> dict[st
     return {"name": name, "status": status, "count": 0, "message": "not received in the window"}
 
 
+def _public_key_rotated_check(client_id: int, last_call_at) -> Optional[dict[str, Any]]:
+    """Calls came in, then the public key was regenerated and none came since: the site still
+    sends the old key, every call (recommend and events) gets a 401 that no workspace can be
+    credited with, so the counts above keep looking fine for the rest of the window while the
+    block is gone from the site. Only reported in that case - a placement whose calls carry on
+    after a rotation (new key in place, or a server calling with the secret key) is fine."""
+    if last_call_at is None:
+        return None
+    client = db.get_client_self_by_id(client_id) or {}
+    rotated_at = client.get("public_key_rotated_at")
+    if rotated_at is None or rotated_at <= last_call_at:
+        return None
+    return {
+        "name": "public_key_rotated",
+        "status": "missing",
+        "count": 0,
+        "message": (
+            f"public key regenerated at {rotated_at:%Y-%m-%d %H:%M} UTC, no recommendation call since "
+            f"(last one at {last_call_at:%Y-%m-%d %H:%M} UTC): a site still using the previous key gets 401 - put the new key in it"
+        ),
+    }
+
+
 def get_health(client_id: int, slug: str, window_hours: int = 24) -> dict[str, Any]:
     placement = _require(client_id, slug)
     since = db.utcnow() - timedelta(hours=window_hours)
@@ -290,6 +313,9 @@ def get_health(client_id: int, slug: str, window_hours: int = 24) -> dict[str, A
 
     rec_stats = db.count_recent_recommendation_calls(client_id, slug, since)
     checks = [_check("recommendations_requested", rec_stats["total"])]
+    rotated = _public_key_rotated_check(client_id, rec_stats["last_at"])
+    if rotated:
+        checks.append(rotated)
 
     if {"current_item_id"} & relevant_signals:
         checks.append(_check("current_item_supplied", rec_stats["with_item"], required="current_item_id" in required_signals))

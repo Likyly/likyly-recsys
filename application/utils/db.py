@@ -2354,9 +2354,10 @@ def link_session_to_user(client_id: int, product_type: str, session_id: str, int
 
 def count_recent_recommendation_calls(client_id: int, placement: str, since) -> dict[str, int]:
     """total / with an item_id / with a session_id, for get_placement_health's "recommendations
-    requested" / "current item supplied" / "anonymous session supplied" checks."""
+    requested" / "current item supplied" / "anonymous session supplied" checks - and the last
+    call's time (None without any), for its "public key regenerated since" check."""
     with SessionLocal() as session:
-        rows = session.query(RecommendationModel.item_id, RecommendationModel.session_id).filter(
+        rows = session.query(RecommendationModel.item_id, RecommendationModel.session_id, RecommendationModel.created_at).filter(
             RecommendationModel.client_id == client_id, RecommendationModel.placement == placement,
             RecommendationModel.created_at >= since,
         ).all()
@@ -2364,6 +2365,7 @@ def count_recent_recommendation_calls(client_id: int, placement: str, since) -> 
             "total": len(rows),
             "with_item": sum(1 for r in rows if r.item_id is not None),
             "with_session": sum(1 for r in rows if r.session_id is not None),
+            "last_at": max((r.created_at for r in rows), default=None),
         }
 
 

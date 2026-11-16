@@ -1,6 +1,7 @@
 """get_placement_health / get_tracking_requirements / get_recent_integration_events - the
 integration validator's backend (application/api/placement_service.py's get_health/
 get_tracking_requirements/get_recent_events)."""
+import db
 from conftest import Q
 
 SLUG = "pdp-related"
@@ -108,6 +109,32 @@ def test_health_reflects_real_activity(http, seeded):
     assert statuses["add_to_cart_received"] == "warning"  # still never received
     assert health["overall"] == "warning"  # worst remaining check
 
+
+def test_health_flags_a_public_key_regenerated_after_the_last_call(http, seeded):
+    """The site worked, then the public key was regenerated (the wizard run for another
+    project, the console's "regenerate"): the site's calls now get 401s nobody is credited
+    with, so the window's counts still read fine. The health check has to say it."""
+    create_placement(http, seeded)
+    context = {"context": {"current_item_id": "SKU-NIKE-001", "session_id": "sess_1"}}
+    assert http.post(f"/placements/{SLUG}/recommend", headers=seeded.public, json=context).status_code == 200
+
+    def checks():
+        return {c["name"]: c for c in http.get(f"/placements/{SLUG}/health", headers=seeded.secret).json()["checks"]}
+
+    assert "public_key_rotated" not in checks()
+
+    new_key = db.regenerate_public_key(seeded.client_id)
+    assert http.post(f"/placements/{SLUG}/recommend", headers=seeded.public, json=context).status_code == 401
+    rotated = checks()
+    assert rotated["recommendations_requested"]["status"] == "ok"  # the call before the rotation still counts
+    assert rotated["public_key_rotated"]["status"] == "missing"
+    assert "regenerated" in rotated["public_key_rotated"]["message"]
+    health = http.get(f"/placements/{SLUG}/health", headers=seeded.secret).json()
+    assert health["overall"] == "missing"
+
+    # The new key in place: calls come in again and the check goes away.
+    assert http.post(f"/placements/{SLUG}/recommend", headers={"X-API-Key": new_key}, json=context).status_code == 200
+    assert "public_key_rotated" not in checks()
 
 def test_health_omits_irrelevant_signal_checks(http, seeded):
     """A homepage placement that declares no context signals shouldn't be told it's missing
