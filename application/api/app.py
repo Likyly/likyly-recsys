@@ -322,6 +322,11 @@ async def get_client_id_catalog_read(
     return await _resolve_client_id(background_tasks, api_key, "secret")
 
 
+# Documented like the scoped routers (x-required-key "scope:catalog:read" - the secret key or a
+# developer key with that scope; sources:read is accepted too, see CATALOG_READ_SCOPES).
+get_client_id_catalog_read.likyly_required_scope = "catalog:read"
+
+
 async def get_current_client_id_public_ok(
     background_tasks: BackgroundTasks, api_key: Optional[str] = Security(api_key_header),
 ) -> int:

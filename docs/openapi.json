@@ -17836,7 +17836,8 @@
         "summary": "List items",
         "tags": [
           "items"
-        ]
+        ],
+        "x-required-key": "scope:catalog:read"
       }
     },
     "/items/delete": {
