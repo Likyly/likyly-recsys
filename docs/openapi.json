@@ -1063,11 +1063,11 @@
         "type": "object"
       },
       "AnalyticsDetailOut": {
-        "description": "Pro-only - the depth Free's summary doesn't include.",
+        "description": "Pro-only - the depth Free's summary doesn't include. `placement` (when given) narrows\ntotals, previous and timeseries; by_placement and top_items always cover every placement.",
         "properties": {
           "by_placement": {
             "items": {
-              "$ref": "#/components/schemas/AnalyticsPlacementRow"
+              "$ref": "#/components/schemas/AnalyticsDetailPlacementRow"
             },
             "title": "By Placement",
             "type": "array"
@@ -1075,6 +1075,20 @@
           "end": {
             "title": "End",
             "type": "string"
+          },
+          "placement": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Placement"
+          },
+          "previous": {
+            "$ref": "#/components/schemas/AnalyticsPreviousTotals"
           },
           "revenue": {
             "$ref": "#/components/schemas/AnalyticsRevenue"
@@ -1085,20 +1099,119 @@
           },
           "timeseries": {
             "items": {
-              "$ref": "#/components/schemas/AnalyticsTimeseriesPoint"
+              "$ref": "#/components/schemas/AnalyticsDetailTimeseriesPoint"
             },
             "title": "Timeseries",
             "type": "array"
+          },
+          "top_items": {
+            "items": {
+              "$ref": "#/components/schemas/AnalyticsTopItem"
+            },
+            "title": "Top Items",
+            "type": "array"
+          },
+          "totals": {
+            "$ref": "#/components/schemas/AnalyticsTotals"
           }
         },
         "required": [
           "start",
           "end",
+          "totals",
+          "previous",
           "timeseries",
           "by_placement",
-          "revenue"
+          "revenue",
+          "top_items"
         ],
         "title": "AnalyticsDetailOut",
+        "type": "object"
+      },
+      "AnalyticsDetailPlacementRow": {
+        "properties": {
+          "clicks": {
+            "title": "Clicks",
+            "type": "integer"
+          },
+          "ctr": {
+            "title": "Ctr",
+            "type": "number"
+          },
+          "impressions": {
+            "title": "Impressions",
+            "type": "integer"
+          },
+          "placement": {
+            "title": "Placement",
+            "type": "string"
+          },
+          "purchases": {
+            "default": 0,
+            "title": "Purchases",
+            "type": "integer"
+          },
+          "recommendations_served": {
+            "title": "Recommendations Served",
+            "type": "integer"
+          },
+          "revenue": {
+            "default": 0.0,
+            "title": "Revenue",
+            "type": "number"
+          }
+        },
+        "required": [
+          "placement",
+          "recommendations_served",
+          "impressions",
+          "clicks",
+          "ctr"
+        ],
+        "title": "AnalyticsDetailPlacementRow",
+        "type": "object"
+      },
+      "AnalyticsDetailTimeseriesPoint": {
+        "properties": {
+          "clicks": {
+            "title": "Clicks",
+            "type": "integer"
+          },
+          "ctr": {
+            "title": "Ctr",
+            "type": "number"
+          },
+          "date": {
+            "title": "Date",
+            "type": "string"
+          },
+          "impressions": {
+            "title": "Impressions",
+            "type": "integer"
+          },
+          "purchases": {
+            "default": 0,
+            "title": "Purchases",
+            "type": "integer"
+          },
+          "recommendations_served": {
+            "title": "Recommendations Served",
+            "type": "integer"
+          },
+          "revenue": {
+            "default": 0.0,
+            "title": "Revenue",
+            "type": "number"
+          }
+        },
+        "required": [
+          "date",
+          "recommendations_served",
+          "impressions",
+          "clicks",
+          "ctr"
+        ],
+        "title": "AnalyticsDetailTimeseriesPoint",
         "type": "object"
       },
       "AnalyticsItemsOut": {
@@ -1373,39 +1486,6 @@
         "title": "AnalyticsPlacementPerformanceRow",
         "type": "object"
       },
-      "AnalyticsPlacementRow": {
-        "properties": {
-          "clicks": {
-            "title": "Clicks",
-            "type": "integer"
-          },
-          "ctr": {
-            "title": "Ctr",
-            "type": "number"
-          },
-          "impressions": {
-            "title": "Impressions",
-            "type": "integer"
-          },
-          "placement": {
-            "title": "Placement",
-            "type": "string"
-          },
-          "recommendations_served": {
-            "title": "Recommendations Served",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "placement",
-          "recommendations_served",
-          "impressions",
-          "clicks",
-          "ctr"
-        ],
-        "title": "AnalyticsPlacementRow",
-        "type": "object"
-      },
       "AnalyticsPlacementsOut": {
         "description": "Per-placement breakdown - available on every plan.",
         "properties": {
@@ -1518,6 +1598,55 @@
           "upgrade_url"
         ],
         "title": "AnalyticsPlanOut",
+        "type": "object"
+      },
+      "AnalyticsPreviousTotals": {
+        "description": "The same totals over the period just before, of the same length.",
+        "properties": {
+          "clicks": {
+            "title": "Clicks",
+            "type": "integer"
+          },
+          "ctr": {
+            "title": "Ctr",
+            "type": "number"
+          },
+          "end": {
+            "title": "End",
+            "type": "string"
+          },
+          "impressions": {
+            "title": "Impressions",
+            "type": "integer"
+          },
+          "purchases": {
+            "title": "Purchases",
+            "type": "integer"
+          },
+          "recommendations_served": {
+            "title": "Recommendations Served",
+            "type": "integer"
+          },
+          "revenue": {
+            "title": "Revenue",
+            "type": "number"
+          },
+          "start": {
+            "title": "Start",
+            "type": "string"
+          }
+        },
+        "required": [
+          "recommendations_served",
+          "impressions",
+          "clicks",
+          "ctr",
+          "purchases",
+          "revenue",
+          "start",
+          "end"
+        ],
+        "title": "AnalyticsPreviousTotals",
         "type": "object"
       },
       "AnalyticsRevenue": {
@@ -1686,6 +1815,45 @@
           "revenue"
         ],
         "title": "AnalyticsTopItem",
+        "type": "object"
+      },
+      "AnalyticsTotals": {
+        "description": "Totals over a window, with the purchases and revenue attributed to recommendations.",
+        "properties": {
+          "clicks": {
+            "title": "Clicks",
+            "type": "integer"
+          },
+          "ctr": {
+            "title": "Ctr",
+            "type": "number"
+          },
+          "impressions": {
+            "title": "Impressions",
+            "type": "integer"
+          },
+          "purchases": {
+            "title": "Purchases",
+            "type": "integer"
+          },
+          "recommendations_served": {
+            "title": "Recommendations Served",
+            "type": "integer"
+          },
+          "revenue": {
+            "title": "Revenue",
+            "type": "number"
+          }
+        },
+        "required": [
+          "recommendations_served",
+          "impressions",
+          "clicks",
+          "ctr",
+          "purchases",
+          "revenue"
+        ],
+        "title": "AnalyticsTotals",
         "type": "object"
       },
       "BatchItemError": {
@@ -10091,7 +10259,7 @@
     },
     "/clients/me/analytics/detail": {
       "get": {
-        "description": "The depth behind the summary - a day-by-day trend, a per-placement breakdown, and\nrevenue attributed to a recommendation (purchases that carry a recommendation_id).\nPro only: 403 on Free, same plan_limit_message wording as every other gated feature.",
+        "description": "The depth behind the summary - totals with attributed purchases and revenue, the same\ntotals over the period just before (same length) to compare, a day-by-day trend, a\nper-placement breakdown with revenue, and the items recommendations worked best on.\nRevenue = purchases that carry a recommendation_id. Pro only: 403 on Free, same\nplan_limit_message wording as every other gated feature.",
         "operationId": "get_my_analytics_detail",
         "parameters": [
           {
@@ -10130,6 +10298,24 @@
               ],
               "description": "Inclusive end date (YYYY-MM-DD). Defaults to today.",
               "title": "End"
+            }
+          },
+          {
+            "description": "Only this placement (slug) for the totals, the comparison and the trend. The by-placement breakdown and the top items always cover every placement.",
+            "in": "query",
+            "name": "placement",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only this placement (slug) for the totals, the comparison and the trend. The by-placement breakdown and the top items always cover every placement.",
+              "title": "Placement"
             }
           },
           {
@@ -10227,7 +10413,7 @@
             "bearerAuth": []
           }
         ],
-        "summary": "Recommendation performance - trend, by placement, revenue",
+        "summary": "Recommendation performance - trend, comparison, by placement, revenue, top items",
         "tags": [
           "selfServiceClient"
         ]

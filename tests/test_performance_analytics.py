@@ -137,11 +137,54 @@ def test_detail_reports_timeseries_by_placement_and_revenue_on_pro(http, workspa
     today = body["timeseries"][0]
     assert (today["recommendations_served"], today["impressions"], today["clicks"]) == (1, 1, 1)
 
+    assert (today["purchases"], today["revenue"]) == (1, 29.9)
+
     assert body["by_placement"] == [
-        {"placement": "pdp-related", "recommendations_served": 1, "impressions": 1, "clicks": 1, "ctr": 1.0}
+        {"placement": "pdp-related", "recommendations_served": 1, "impressions": 1, "clicks": 1, "ctr": 1.0, "purchases": 1, "revenue": 29.9}
     ]
 
     assert body["revenue"] == {"purchases": 1, "revenue": 29.9}
+    assert body["totals"] == {"recommendations_served": 1, "impressions": 1, "clicks": 1, "ctr": 1.0, "purchases": 1, "revenue": 29.9}
+    assert body["placement"] is None
+
+    [item] = body["top_items"]
+    assert (item["item_id"], item["title"], item["clicks"], item["purchases"]) == ("sku-1", "Chaussure", 1, 1)
+
+
+def test_detail_previous_period_is_the_same_length_just_before(http, workspace):
+    db.set_client_plan(workspace["client_id"], db.PLAN_PRO)
+    _create_placement(http, workspace["secret"])
+    _seed_activity(http, workspace["public"], "pdp-related")
+    today = date.today()
+
+    # This week: the activity is in it, the week before is empty.
+    body = http.get("/clients/me/analytics/detail", params={"start": (today - timedelta(days=6)).isoformat(), "end": today.isoformat()}, headers=workspace["auth"]).json()
+    assert (body["previous"]["start"], body["previous"]["end"]) == ((today - timedelta(days=13)).isoformat(), (today - timedelta(days=7)).isoformat())
+    assert body["previous"]["clicks"] == 0 and body["totals"]["clicks"] == 1
+
+    # Last week, seen from next week: the activity moves to "previous".
+    later = today + timedelta(days=7)
+    body = http.get("/clients/me/analytics/detail", params={"start": (later - timedelta(days=6)).isoformat(), "end": later.isoformat()}, headers=workspace["auth"]).json()
+    assert body["previous"]["clicks"] == 1 and body["previous"]["revenue"] == 29.9
+    assert body["totals"]["clicks"] == 0
+
+
+def test_detail_placement_filter_narrows_totals_and_trend_not_the_breakdown(http, workspace):
+    db.set_client_plan(workspace["client_id"], db.PLAN_PRO)
+    _create_placement(http, workspace["secret"])
+    _create_placement(http, workspace["secret"], slug="cart-cross-sell", context_type="cart")
+    _seed_activity(http, workspace["public"], "pdp-related")
+    _seed_activity(http, workspace["public"], "cart-cross-sell")
+
+    every = http.get("/clients/me/analytics/detail", headers=workspace["auth"]).json()
+    assert every["totals"]["purchases"] == 2
+
+    body = http.get("/clients/me/analytics/detail", params={"placement": "cart-cross-sell"}, headers=workspace["auth"]).json()
+    assert body["placement"] == "cart-cross-sell"
+    assert (body["totals"]["recommendations_served"], body["totals"]["clicks"], body["totals"]["purchases"]) == (1, 1, 1)
+    assert body["revenue"] == {"purchases": 1, "revenue": 29.9}
+    assert sum(p["clicks"] for p in body["timeseries"]) == 1
+    assert {row["placement"] for row in body["by_placement"]} == {"pdp-related", "cart-cross-sell"}
 
 
 def test_unattributed_purchases_are_excluded_from_revenue(http, workspace):

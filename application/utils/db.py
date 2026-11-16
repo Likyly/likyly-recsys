@@ -2768,6 +2768,31 @@ def recommendation_performance_by_placement_with_revenue(client_id: int, since, 
     return result
 
 
+def recommendation_attributed_revenue_by_day(client_id: int, since, until, placement: Optional[str] = None) -> dict[str, dict[str, Any]]:
+    """ISO day -> {"purchases", "revenue"} for purchases carrying a recommendation_id in
+    [since, until] - the revenue line of the Pro trend. With `placement`, only purchases credited
+    to that placement, by the same rule as recommendation_attributed_revenue_by_placement (the
+    recommendation's placement, else the purchase's own), so a filtered view adds up to that
+    placement's row of the breakdown."""
+    placement_clause = "AND COALESCE(r.placement, i.placement) = :placement " if placement is not None else ""
+    sql = text(
+        "SELECT date_trunc('day', i.occurred_at) AS day, COUNT(*) AS purchases, "
+        f"COALESCE(SUM({_ATTRIBUTED_PRICE_SQL}), 0) AS revenue "
+        "FROM interactions i "
+        "LEFT JOIN recommendations r ON r.recommendation_id = i.recommendation_id AND r.client_id = i.client_id "
+        "WHERE i.client_id = :client_id AND i.event_type = 'purchase' AND i.recommendation_id IS NOT NULL "
+        "AND i.occurred_at >= :since AND i.occurred_at <= :until "
+        f"{placement_clause}"
+        "GROUP BY 1"
+    )
+    params: dict[str, Any] = {"client_id": client_id, "since": since, "until": until}
+    if placement is not None:
+        params["placement"] = placement
+    with SessionLocal() as session:
+        rows = session.execute(sql, params).all()
+    return {row.day.date().isoformat(): {"purchases": int(row.purchases), "revenue": round(float(row.revenue), 2)} for row in rows}
+
+
 def recommendation_top_items(client_id: int, since, until, limit: int = 10) -> list[dict[str, Any]]:
     """The items recommendations performed best on in [since, until], aggregated in the
     database: per (catalog, item), how many recommendation responses included it

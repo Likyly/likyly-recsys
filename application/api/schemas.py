@@ -1361,13 +1361,44 @@ class AnalyticsRevenue(BaseModel):
     revenue: float
 
 
-class AnalyticsDetailOut(BaseModel):
-    """Pro-only - the depth Free's summary doesn't include."""
+class AnalyticsTotals(BaseModel):
+    """Totals over a window, with the purchases and revenue attributed to recommendations."""
+    recommendations_served: int
+    impressions: int
+    clicks: int
+    ctr: float
+    purchases: int
+    revenue: float
+
+
+class AnalyticsPreviousTotals(AnalyticsTotals):
+    """The same totals over the period just before, of the same length."""
     start: str
     end: str
-    timeseries: List[AnalyticsTimeseriesPoint]
-    by_placement: List[AnalyticsPlacementRow]
+
+
+class AnalyticsDetailTimeseriesPoint(AnalyticsTimeseriesPoint):
+    purchases: int = 0
+    revenue: float = 0.0
+
+
+class AnalyticsDetailPlacementRow(AnalyticsPlacementRow):
+    purchases: int = 0
+    revenue: float = 0.0
+
+
+class AnalyticsDetailOut(BaseModel):
+    """Pro-only - the depth Free's summary doesn't include. `placement` (when given) narrows
+    totals, previous and timeseries; by_placement and top_items always cover every placement."""
+    start: str
+    end: str
+    placement: Optional[str] = None
+    totals: AnalyticsTotals
+    previous: AnalyticsPreviousTotals
+    timeseries: List[AnalyticsDetailTimeseriesPoint]
+    by_placement: List[AnalyticsDetailPlacementRow]
     revenue: AnalyticsRevenue
+    top_items: List["AnalyticsTopItem"]
 
 
 # ---------------------------------------------------------------------------
@@ -1430,6 +1461,9 @@ class AnalyticsTopItem(BaseModel):
 class AnalyticsItemsOut(AnalyticsWindow):
     """Top recommended items, by clicks then purchases - Pro plan and above."""
     items: List[AnalyticsTopItem]
+
+
+AnalyticsDetailOut.model_rebuild()  # its top_items refers to AnalyticsTopItem, defined above
 
 
 class AnalyticsPlanOut(BaseModel):

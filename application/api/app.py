@@ -33,7 +33,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional, Annotated, Literal
 from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
 import json
@@ -102,8 +102,8 @@ from db import (
     create_site_public_key, list_site_public_keys, revoke_site_public_key, TooManyPublicKeysError,
     link_session_to_user,
     recommendation_performance_summary, recommendation_performance_timeseries,
-    recommendation_performance_by_placement, recommendation_attributed_revenue,
-    recommendation_performance_by_strategy,
+    recommendation_performance_by_strategy, recommendation_performance_by_placement_with_revenue,
+    recommendation_attributed_revenue_by_day, recommendation_top_items,
 )
 from ids import new_recommendation_id
 from observability import coerce_request_id, get_logger, log_event, request_id_var
@@ -991,26 +991,60 @@ async def get_my_analytics_summary(
     summary = recommendation_performance_summary(client_id, since, until=until)
     return {"start": start_date.isoformat(), "end": end_date.isoformat(), **summary}
 
-@app.get("/clients/me/analytics/detail", tags=["selfServiceClient"], response_model=AnalyticsDetailOut, summary="Recommendation performance - trend, by placement, revenue", responses=_errors(401, 403, 404))
+def _performance_totals(client_id: int, since, until, placement: Optional[str]) -> tuple[dict, dict[str, dict]]:
+    """Totals over [since, until] (served, impressions, clicks, CTR, attributed purchases and
+    revenue), optionally for one placement, plus the per-day revenue they were summed from."""
+    summary = recommendation_performance_summary(client_id, since, until=until, placement=placement)
+    revenue_by_day = recommendation_attributed_revenue_by_day(client_id, since, until, placement=placement)
+    purchases = sum(day["purchases"] for day in revenue_by_day.values())
+    revenue = round(sum(day["revenue"] for day in revenue_by_day.values()), 2)
+    return {**summary, "purchases": purchases, "revenue": revenue}, revenue_by_day
+
+
+@app.get("/clients/me/analytics/detail", tags=["selfServiceClient"], response_model=AnalyticsDetailOut, summary="Recommendation performance - trend, comparison, by placement, revenue, top items", responses=_errors(401, 403, 404))
 async def get_my_analytics_detail(
     start: Optional[date] = Query(None, description="Inclusive start date (YYYY-MM-DD). Defaults to 30 days before `end`."),
     end: Optional[date] = Query(None, description="Inclusive end date (YYYY-MM-DD). Defaults to today."),
+    placement: Optional[str] = Query(None, description="Only this placement (slug) for the totals, the comparison and the trend. The by-placement breakdown and the top items always cover every placement."),
     supabase_user_id: str = Depends(get_current_supabase_user_id), x_workspace_id: WorkspaceIdHeader = None,
 ):
-    """The depth behind the summary - a day-by-day trend, a per-placement breakdown, and
-    revenue attributed to a recommendation (purchases that carry a recommendation_id).
-    Pro only: 403 on Free, same plan_limit_message wording as every other gated feature."""
+    """The depth behind the summary - totals with attributed purchases and revenue, the same
+    totals over the period just before (same length) to compare, a day-by-day trend, a
+    per-placement breakdown with revenue, and the items recommendations worked best on.
+    Revenue = purchases that carry a recommendation_id. Pro only: 403 on Free, same
+    plan_limit_message wording as every other gated feature."""
     client_id = await _resolve_my_client_id(supabase_user_id, x_workspace_id)
     plan = get_client_plan(client_id)
     limits = get_plan_limits(plan)
     if not limits["analytics_detail"]:
         raise HTTPException(status_code=403, detail=plan_limit_message(plan, "detailed performance data (trend, by placement, revenue)"))
     since, until, start_date, end_date = _resolve_analytics_window(plan, start, end, default_days=30)
+
+    totals, revenue_by_day = _performance_totals(client_id, since, until, placement)
+
+    # The period just before, same number of days - what the deltas on the cards compare with.
+    span = end_date - start_date
+    prev_end_date = start_date - timedelta(days=1)
+    prev_start_date = prev_end_date - span
+    prev_since = datetime.combine(prev_start_date, datetime.min.time(), tzinfo=timezone.utc)
+    prev_until = datetime.combine(prev_end_date, datetime.max.time(), tzinfo=timezone.utc)
+    previous, _ = _performance_totals(client_id, prev_since, prev_until, placement)
+
+    points = {p["date"]: p for p in recommendation_performance_timeseries(client_id, since, until=until, placement=placement)}
+    timeseries = []
+    for day in sorted(set(points) | set(revenue_by_day)):
+        point = points.get(day) or {"date": day, "recommendations_served": 0, "impressions": 0, "clicks": 0, "ctr": 0.0}
+        money = revenue_by_day.get(day, {"purchases": 0, "revenue": 0.0})
+        timeseries.append({**point, "purchases": money["purchases"], "revenue": money["revenue"]})
+
     return {
-        "start": start_date.isoformat(), "end": end_date.isoformat(),
-        "timeseries": recommendation_performance_timeseries(client_id, since, until=until),
-        "by_placement": recommendation_performance_by_placement(client_id, since, until=until),
-        "revenue": recommendation_attributed_revenue(client_id, since, until=until),
+        "start": start_date.isoformat(), "end": end_date.isoformat(), "placement": placement,
+        "totals": totals,
+        "previous": {"start": prev_start_date.isoformat(), "end": prev_end_date.isoformat(), **previous},
+        "timeseries": timeseries,
+        "by_placement": recommendation_performance_by_placement_with_revenue(client_id, since, until),
+        "revenue": {"purchases": totals["purchases"], "revenue": totals["revenue"]},
+        "top_items": recommendation_top_items(client_id, since, until, limit=10),
     }
 
 @app.post("/clients/me/regenerate-secret-key", tags=["selfServiceClient"], response_model=ClientSelf, summary="Regenerate my secret key", responses=_errors(401, 404))
