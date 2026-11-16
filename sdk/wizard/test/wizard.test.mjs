@@ -692,7 +692,7 @@ test("preview: a Shopify theme previews against its store, found without asking"
   const plan = await previewPlan(detectProject(dir), dir, { fetchImpl, env: {} });
   assert.equal(plan.command, "shopify theme dev --store likyly-sandbox.myshopify.com");
   assert.equal(plan.requires, "shopify");
-  assert.ok(plan.notes.some((n) => /storefront password/.test(n)));
+  assert.ok(plan.notes.some((n) => n.includes("https://admin.shopify.com/store/likyly-sandbox/online_store/preferences") && /not the app's client secret/.test(n)));
   assert.match(seen[0][0], /\/data-sources$/);
   assert.equal(seen[0][1], "lk_dev");
 

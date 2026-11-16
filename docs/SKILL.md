@@ -222,7 +222,9 @@ commit only the files you changed (not their pending work), push the branch and 
    On yes, run `npx @likyly/wizard@latest preview` (in the background if your tool allows it):
    it starts the project's preview (`shopify theme dev --store <shop>` for a Shopify theme, the
    dev script otherwise) in a **new terminal window**, where the developer can answer its
-   prompts - a password-protected store asks for its storefront password there. Never run
+   prompts - a password-protected store (every development store) asks for its storefront
+   password there: it is in the store's admin, `https://admin.shopify.com/store/<handle>/online_store/preferences`
+   → Password protection - not the admin login, not the app's client secret. Never run
    `shopify theme dev` (or another interactive dev server) yourself: it stops on that prompt,
    which you can't answer. Then give the page to open (for a theme:
    `http://127.0.0.1:9292/products/<a real handle>`) and say to view it and click a
