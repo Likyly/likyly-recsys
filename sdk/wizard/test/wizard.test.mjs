@@ -182,6 +182,11 @@ test("end to end: mcp add for Claude Code installs the skill", () => {
   const inventory = readFileSync(join(dir, ".claude/commands/likyly-inventory.md"), "utf8");
   assert.match(inventory, /likyly-wizard\.mjs inventory`/);
   assert.match(inventory, /mcp__likyly__list_placements/);
+  assert.doesNotMatch(inventory, /Last 24 h|get_placement_health/, "traffic numbers are /likyly-impact's job");
+  assert.match(help, /\/likyly-impact \[days\]/);
+  const impact = readFileSync(join(dir, ".claude/commands/likyly-impact.md"), "utf8");
+  assert.match(impact, /likyly-wizard\.mjs impact --json \$ARGUMENTS`/);
+  assert.match(impact, /never estimate/);
   const model = readFileSync(join(dir, ".claude/commands/likyly-model.md"), "utf8");
   assert.match(model, /mcp__likyly__get_model_overview/);
   for (const text of [inventory, model]) assert.doesNotMatch(text, /LIKYLY_DEVELOPER_KEY/, "never reads the key line");
@@ -338,7 +343,7 @@ test("uninstall removes only what the wizard added, after a dry run that removes
   assert.equal(existsSync(join(dir, "components/likyly-provider.tsx")), false);
   assert.equal(existsSync(join(dir, ".mcp.json")), false, "only LIKYLY was in it");
   assert.deepEqual(JSON.parse(readFileSync(join(dir, ".cursor/mcp.json"), "utf8")), { mcpServers: { other: { command: "x" } } });
-  for (const gone of [".claude/skills/likyly", ".claude/commands/likyly-help.md", ".claude/commands/likyly-inventory.md", ".claude/commands/likyly-model.md", ".claude/commands/likyly-clear-cache.md", ".claude/commands/likyly-uninstall.md", ".likyly"]) {
+  for (const gone of [".claude/skills/likyly", ".claude/commands/likyly-help.md", ".claude/commands/likyly-inventory.md", ".claude/commands/likyly-impact.md", ".claude/commands/likyly-model.md", ".claude/commands/likyly-clear-cache.md", ".claude/commands/likyly-uninstall.md", ".likyly"]) {
     assert.equal(existsSync(join(dir, gone)), false, gone);
   }
   assert.equal(readFileSync(join(dir, "src/page.tsx"), "utf8"), 'import { LikylyRecommendations } from "@likyly/react";\n', "code is never edited");
@@ -927,4 +932,81 @@ test("preview command, end to end: with a preview already running it says so and
     await store.close();
   }
   assert.throws(() => parseArgs(["preview", "--port", "abc"]), /--port expects a port number/);
+});
+
+
+import { formatImpact, readImpact } from "../src/impact.mjs";
+
+/** The analytics API as LIKYLY answers it, for a plan. */
+function analyticsApi(plan) {
+  const pro = plan === "pro";
+  const calls = [];
+  const routes = {
+    "/analytics/plan": [200, { plan, plan_name: pro ? "Pro" : "Free", limits: { analytics_window_days: pro ? 90 : 7, analytics_detail: pro }, upgrade_url: "https://likyly.com/account/upgrade" }],
+    "/analytics/summary": [200, { start: "2026-11-10", end: "2026-11-16", window_days: 7, recommendations_served: 8, impressions: 40, clicks: 4, ctr: 0.1 }],
+    "/analytics/placements": [200, { placements: [
+      { placement: "pdp-you-may-also-like", recommendations_served: 4, impressions: 40, clicks: 4, ctr: 0.1, purchases: 1, revenue: 49.9 },
+      { placement: "pdp-related-2", recommendations_served: 4, impressions: 0, clicks: 0, ctr: 0, purchases: 0, revenue: 0 },
+    ] }],
+    "/analytics/detail": pro ? [200, { timeseries: [{ date: "2026-11-16", recommendations_served: 8 }], revenue: { purchases: 1, revenue: 49.9 } }] : [403, { detail: "Free plan limit reached" }],
+    "/analytics/items": pro ? [200, { items: [{ item_id: "1551", title: "2001", recommended: 3, impressions: 10, clicks: 2, ctr: 0.2, purchases: 1, revenue: 49.9 }] }] : [403, { detail: "Free plan limit reached" }],
+  };
+  const fetchImpl = async (url, init) => {
+    const { pathname, search } = new URL(url);
+    calls.push({ path: pathname, search, key: init.headers["X-API-Key"] });
+    const [status, data] = routes[pathname] ?? [404, {}];
+    return { status, ok: status < 300, json: async () => data };
+  };
+  return { calls, fetchImpl };
+}
+
+const KEYED = { ".likyly/credentials.env": "# Account: dev@example.com\nLIKYLY_DEVELOPER_KEY=lk_dev\n" };
+const NOW = new Date("2026-11-16T12:00:00Z");
+
+test("impact, Free plan: totals and blocks over 7 days, the Pro-only detail never asked", async () => {
+  const { calls, fetchImpl } = analyticsApi("free");
+  const r = await readImpact({ dir: project(KEYED), days: 30, fetchImpl, now: NOW });
+  assert.equal(r.ok, true, r.text);
+  const { report } = r;
+  assert.deepEqual(report.window, { start: "2026-11-10", end: "2026-11-16", days: 7, maxDays: 7, asked: 30 });
+  assert.ok(calls.every((c) => c.key === "lk_dev"));
+  assert.ok(calls.some((c) => c.path === "/analytics/summary" && c.search === "?start=2026-11-10&end=2026-11-16"), "the window is capped before asking");
+  assert.ok(!calls.some((c) => c.path === "/analytics/detail" || c.path === "/analytics/items"), "no 403 on purpose");
+  assert.deepEqual(report.totals, { served: 8, impressions: 40, clicks: 4, ctr: 0.1, purchases: 1, revenue: 49.9, clickToPurchase: 0.25 });
+  assert.equal(report.trend, undefined);
+  assert.ok(report.proExtras.includes("the day-by-day trend"));
+  assert.ok(report.signals.some((s) => s.level === "fail" && s.text.startsWith("pdp-related-2: served 4 time(s) but never seen")));
+  const text = formatImpact(report);
+  assert.match(text, /Clicked {17}4 · CTR 10 %/);
+  assert.match(text, /30 days asked: the Free plan shows 7/);
+  assert.match(text, /On Pro: up to 90 days of history/);
+});
+
+test("impact, Pro plan: 30 days by default, with the daily trend and the top products", async () => {
+  const { calls, fetchImpl } = analyticsApi("pro");
+  const { report } = await readImpact({ dir: project(KEYED), fetchImpl, now: NOW });
+  assert.ok(calls.some((c) => c.path === "/analytics/summary" && c.search === "?start=2026-10-18&end=2026-11-16"));
+  assert.equal(report.trend.length, 1);
+  assert.deepEqual(report.topItems[0], { itemId: "1551", title: "2001", recommended: 3, impressions: 10, clicks: 2, ctr: 0.2, purchases: 1, revenue: 49.9 });
+  assert.equal(report.proExtras, undefined);
+  assert.doesNotMatch(formatImpact(report), /On Pro/);
+});
+
+test("impact: no key, a key without the right, a bad argument - each said plainly", async () => {
+  const saved = process.env.LIKYLY_DEVELOPER_KEY;
+  delete process.env.LIKYLY_DEVELOPER_KEY;
+  try {
+    const none = await readImpact({ dir: project({}), fetchImpl: async () => assert.fail("no call without a key") });
+    assert.match(none.text, /No developer key/);
+  } finally {
+    if (saved !== undefined) process.env.LIKYLY_DEVELOPER_KEY = saved;
+  }
+  const refused = await readImpact({ dir: project(KEYED), fetchImpl: async () => ({ status: 403, ok: false, json: async () => ({}) }) });
+  assert.match(refused.text, /cannot read LIKYLY's analytics/);
+  assert.equal(parseArgs(["impact", "30"]).days, "30");
+  assert.equal(parseArgs(["impact", "--days", "14", "--json"]).days, "14");
+  assert.throws(() => parseArgs(["impact", "abc"]), /whole number of days/);
+  const res = runCli(["impact", "--json", "--dir", project({})], project({}));
+  assert.equal(res.status, 1);
+  assert.match(JSON.parse(res.stdout).error, /No developer key/);
 });

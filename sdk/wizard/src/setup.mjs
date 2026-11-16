@@ -372,7 +372,7 @@ export function wizardInvocation(argv1 = process.argv[1]) {
   return `node ${bin.includes(" ") ? JSON.stringify(bin) : bin}`;
 }
 
-export const CLAUDE_COMMANDS = ["likyly-help.md", "likyly-inventory.md", "likyly-model.md", "likyly-clear-cache.md", "likyly-uninstall.md"];
+export const CLAUDE_COMMANDS = ["likyly-help.md", "likyly-inventory.md", "likyly-impact.md", "likyly-model.md", "likyly-clear-cache.md", "likyly-uninstall.md"];
 
 // Claude Code slash command: the exact `cache clear` CLI, run by Claude Code itself (the `!`
 // line executes before the model sees the prompt), so the result is the API's, not a guess.
@@ -420,7 +420,7 @@ No diagnosis, nothing else.`;
 // to say which page shows which block, LIKYLY says how each block is configured and used.
 const inventoryCommand = (w) => `---
 description: List what LIKYLY added to this site - each recommendation block and its page, tracking, setup
-allowed-tools: Bash(${w} inventory:*), Bash(grep -E *), Read, Grep, Glob, mcp__likyly__list_placements, mcp__likyly__get_placement_health
+allowed-tools: Bash(${w} inventory:*), Bash(grep -E *), Read, Grep, Glob, mcp__likyly__list_placements
 ---
 !\`${w} inventory\`
 
@@ -433,8 +433,7 @@ and LIKYLY's own data.
    which placement each recommendation block uses - follow wrapper components and their default
    props (a \`placement = "pdp-related"\` default counts), and find the page each one is rendered on
    (Next.js app/ or pages/ path → URL route; otherwise the component and where it is imported).
-2. For each placement found in the code, call \`get_placement_health\` (window_hours 24).
-3. Tracking: list the events the code sends (product view, add to cart, purchase, identify,
+2. Tracking: list the events the code sends (product view, add to cart, purchase, identify,
    impressions/clicks sent by the SDK component) and where.
 
 Report, in the developer's language, with LIKYLY's marks (◆ done, ◇ not yet / not needed,
@@ -443,13 +442,13 @@ Report, in the developer's language, with LIKYLY's marks (◆ done, ◇ not yet 
 **◆ LIKYLY · On <project folder name>**
 
 **On your pages**
-| Page | Block | Shows | In LIKYLY | Last 24 h |
-|---|---|---|---|---|
-| \`/catalogs/[slug]/[id]\` · product page | You may also like · \`pdp-related\` | 4 products · similar items | ◆ Active | 12 requests · 40 shown · 2 clicks |
+| Page | Block | Shows | In LIKYLY |
+|---|---|---|---|
+| \`/catalogs/[slug]/[id]\` · product page | You may also like · \`pdp-related\` | 4 products · similar items | ◆ Active |
 
 "Shows": the placement's limit and strategy in plain words (similar items, for this visitor,
-recently viewed, popular, automatic). "In LIKYLY": ◆ Active, ◇ Disabled, ✕ Unknown to LIKYLY.
-"Last 24 h": counts from get_placement_health, or "nothing yet".
+recently viewed, popular, automatic). "In LIKYLY": ◆ Active, ◇ Disabled, ✕ Unknown to LIKYLY. No traffic numbers here: they are
+\`/likyly-impact\`'s job.
 
 **Tracking**
 | Event | Sent from |
@@ -470,6 +469,53 @@ and **In your code but unknown to LIKYLY** (✕, with the file). Last line: the 
 \`<Console>/account\` from the account lines above (https://www.likyly.com if none).
 
 ${NOT_CONNECTED}
+`;
+
+// What the recommendations bring: LIKYLY's own analytics, read by the wizard with the developer
+// key (exact numbers, never estimated), then laid out by Claude. The plan decides the depth.
+const impactCommand = (w) => `---
+description: What LIKYLY's recommendations bring - served, seen, clicked, purchases and revenue (Pro - longer history, daily trend, top products)
+argument-hint: [days]
+allowed-tools: Bash(${w} impact:*), Bash(grep -E *)
+---
+!\`${w} impact --json $ARGUMENTS\`
+
+LIKYLY account: !\`${ACCOUNT_LINES}\`
+
+Read-only: change nothing, call nothing else. Every number below comes from the JSON above -
+never estimate, round only percentages, never invent a benchmark. If the JSON has an "error",
+show it and its "hint" as is, and stop.
+
+Report, in the developer's language, with LIKYLY's marks (◆ good, ◇ not yet, ✕ problem) and
+nothing before the title:
+
+**◆ LIKYLY · Impact · <start> → <end>** (<days> days · <planName> plan)
+
+| | |
+|---|---|
+| Recommendations served | 8 |
+| Seen | 120 impressions |
+| Clicked | 6 · 5.0 % of what was seen (CTR) |
+| Purchases they led to | 1 · 1 in 6 clicks · 49.90 |
+
+**By block**
+| Block | Served | Seen | Clicks | CTR | Purchases | Revenue |
+|---|---|---|---|---|---|---|
+
+Then one short paragraph, **What it means**: the efficiency in plain words (out of 100 products
+seen, how many were clicked; out of the clicks, how many became a purchase), and the "signals"
+of the JSON as they are (a block served but never seen is ✕: the page doesn't send impressions -
+suggest asking "check my LIKYLY integration"). Few or no events yet: say it is too early to judge.
+Revenue is in the currency the site sends with its purchases: no symbol unless you know it.
+
+Only when the JSON has "trend": **Day by day** (date · served · seen · clicks · CTR), and when it
+has "topItems": **Products that work best** (title or id · seen · clicks · CTR · purchases ·
+revenue). When the JSON has "proExtras" instead: one last line, "On Pro: <proExtras> -
+<upgradeUrl>", and nothing more about plans. When window.asked > window.days, say the plan
+shows <days> days.
+
+Last line: the console link \`<Console>/account/performance\` from the account lines above
+(https://www.likyly.com if none).
 `;
 
 // The model: versions, which one serves production, when it was trained, how it performs.
@@ -539,6 +585,7 @@ Show the developer exactly this, nothing more:
 |---|---|
 | \`/likyly-help\` | This list |
 | \`/likyly-inventory\` | What LIKYLY added to this site: each recommendation block and its page, tracking, setup |
+| \`/likyly-impact [days]\` | What the recommendations bring: served, seen, clicked, purchases and revenue (Pro: longer history, daily trend, top products) |
 | \`/likyly-model [catalog] [days]\` | The recommendation model: versions, which one is live, training date, performance |
 | \`/likyly-clear-cache [placement]\` | Shows fresh recommendations right away (otherwise they refresh within the hour) |
 | \`/likyly-uninstall\` | Removes LIKYLY from this project: shows what it will remove, asks on which branch |
@@ -548,7 +595,7 @@ Show the developer exactly this, nothing more:
 - "Check my LIKYLY integration" - what works, what's missing
 - "Change the recommendations on my product page" - placement settings
 
-**In a terminal**: \`${w} inventory\` · \`${w} cache clear\` · \`${w} uninstall\` · \`${w} help\`
+**In a terminal**: \`${w} inventory\` · \`${w} impact\` · \`${w} cache clear\` · \`${w} uninstall\` · \`${w} help\`
 `;
 
 /** Install the /likyly-* commands for Claude Code (`.claude/commands/`). */
@@ -557,6 +604,7 @@ export function writeClaudeCommands(dir, { dryRun = false, invocation = wizardIn
   const files = {
     "likyly-help.md": helpCommand(invocation),
     "likyly-inventory.md": inventoryCommand(invocation),
+    "likyly-impact.md": impactCommand(invocation),
     "likyly-model.md": modelCommand(invocation),
     "likyly-clear-cache.md": clearCacheCommand(invocation),
     "likyly-uninstall.md": uninstallCommand(invocation),

@@ -33,6 +33,9 @@ ${blue("Commands")}
   detect         print what was detected, change nothing
   inventory      list what LIKYLY put in this project: packages, key variable, setup files,
                  and every source line that uses LIKYLY (read-only; --json for data)
+  impact [days]  what the recommendations bring: served, seen, clicked, the purchases and
+                 revenue they led to (uses your developer key; Free: 7 days, Pro: up to 90
+                 days with the daily trend and the top products; --json for data)
   cache clear [placement]
                  empty LIKYLY's recommendation cache: one placement, or all of them
                  (uses your developer key from .likyly/credentials.env)
@@ -47,7 +50,8 @@ ${blue("Options")}
   --placement <slug>     with cache clear: the placement to empty (default: all)
   --branch <new|current> with uninstall, in a git repository: work on a new branch
                          likyly/uninstall, or on the current one (asked otherwise)
-  --json                 with inventory: print JSON
+  --json                 with inventory or impact: print JSON
+  --days <n>             with impact: how many days back ${dim("(capped by your plan)")}
   --store <shop>         with preview: the Shopify store ${dim("(default: shopify.theme.toml, or your LIKYLY source)")}
   --here                 with preview: run it in this terminal instead of a new window
   --port <n>             with preview: the local port ${dim("(default: 9292 for a Shopify theme, the next free one if taken)")}
@@ -60,7 +64,7 @@ ${blue("Options")}
 `;
 
 export function parseArgs(argv) {
-  const opts = { command: "install", dir: process.cwd(), yes: false, dryRun: false, install: true, hosted: false, editors: null, publicKey: null, placement: null, branch: null, json: false, store: null, here: false, port: null };
+  const opts = { command: "install", dir: process.cwd(), yes: false, dryRun: false, install: true, hosted: false, editors: null, publicKey: null, placement: null, branch: null, json: false, store: null, here: false, port: null, days: null };
   const positional = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -77,6 +81,7 @@ export function parseArgs(argv) {
     else if (a === "--hosted") opts.hosted = true;
     else if (a === "--json") opts.json = true;
     else if (a === "--here") opts.here = true;
+    else if (a === "--days") opts.days = next();
     else if (a === "--port") {
       opts.port = Number(next());
       if (!Number.isInteger(opts.port) || opts.port < 1 || opts.port > 65535) throw new Error("--port expects a port number");
@@ -102,6 +107,11 @@ export function parseArgs(argv) {
       if (positional.length > 3) throw new Error(`cache clear takes one placement at most, got: ${positional.slice(2).join(" ")}`);
       opts.command = "cache-clear";
       opts.placement = positional[2] ?? opts.placement;
+    } else if (positional[0] === "impact") {
+      // impact [days]
+      if (positional.length > 2) throw new Error(`impact takes a number of days at most, got: ${positional.slice(1).join(" ")}`);
+      opts.command = "impact";
+      opts.days = positional[1] ?? opts.days;
     } else if (cmd === "mcp add" || cmd === "mcp") opts.command = "mcp";
     else if (cmd === "shopify") opts.command = "shopify";
     else if (cmd === "magento") opts.command = "magento";
@@ -113,6 +123,7 @@ export function parseArgs(argv) {
     else if (cmd === "help") opts.command = "help";
     else throw new Error(`unknown command: ${cmd}`);
   }
+  if (opts.days !== null && opts.days !== undefined && !(Number.isInteger(Number(opts.days)) && Number(opts.days) > 0)) throw new Error(`days expects a whole number of days, got: ${opts.days}`);
   opts.dir = resolve(opts.dir);
   const known = EDITORS.map((e) => e.id);
   for (const e of opts.editors ?? []) if (!known.includes(e)) throw new Error(`unknown editor: ${e} (expected: ${known.join(", ")})`);

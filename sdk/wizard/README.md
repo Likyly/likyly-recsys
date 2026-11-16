@@ -62,11 +62,16 @@ integration", "empty the LIKYLY cache"), there are no commands to learn.
 
 In Claude Code the same are `/likyly-clear-cache [placement]` and `/likyly-uninstall`, plus
 `/likyly-help` (the list of commands), installed with the skill: Claude Code runs the command
-itself and shows its result. Two read-only reports come with them:
+itself and shows its result. Three read-only reports come with them:
 
 - `/likyly-inventory` - what LIKYLY added to the site: each recommendation block, the page it is
-  on, how it is set up in LIKYLY and what it served in the last 24 h; the events the code sends;
-  the setup files. It starts from `inventory` (below), then reads the code and asks LIKYLY.
+  on and how it is set up in LIKYLY; the events the code sends; the setup files. It starts from
+  `inventory` (below), then reads the code and asks LIKYLY.
+- `/likyly-impact [days]` - what the recommendations bring: served, seen, clicked (CTR), and the
+  purchases and revenue they led to, in total and per block, with what the numbers mean (a block
+  served but never seen is flagged). Exact numbers from LIKYLY's analytics, read by
+  `npx @likyly/wizard impact` with the developer key. Free: the last 7 days; Pro: up to 90 days,
+  the day-by-day trend and the products recommendations worked best on.
 - `/likyly-model [catalog] [days]` - the recommendation model: the version serving production
   (training date, precision@10, the data it learned from), the other versions and why they are
   not live, and what each engine served and earned on the site (MCP tool `get_model_overview`,
