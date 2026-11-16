@@ -45,6 +45,17 @@ export async function main(argv = process.argv.slice(2)) {
     return 0;
   }
   if (opts.command === "preview") return preview(opts);
+  if (opts.command === "pages") {
+    const { examplePages, formatPages } = await import("./pages.mjs");
+    const r = await examplePages({ dir: opts.dir, port: opts.port, store: opts.store });
+    if (!r.ok) {
+      if (opts.json) console.log(JSON.stringify({ error: r.text, hint: r.hint ?? null }, null, 2));
+      else console.error(`✗ ${r.text}${r.hint ? `\n  ${r.hint}` : ""}`);
+      return 1;
+    }
+    console.log(opts.json ? JSON.stringify(r.report, null, 2) : formatPages(r.report));
+    return 0;
+  }
   if (opts.command === "impact") {
     const { readImpact, formatImpact } = await import("./impact.mjs");
     const r = await readImpact({ dir: opts.dir, days: opts.days });

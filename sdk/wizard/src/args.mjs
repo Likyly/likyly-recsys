@@ -33,6 +33,9 @@ ${blue("Commands")}
   detect         print what was detected, change nothing
   inventory      list what LIKYLY put in this project: packages, key variable, setup files,
                  and every source line that uses LIKYLY (read-only; --json for data)
+  pages          where to see LIKYLY: one example URL per kind of page with a recommendation
+                 block (a product, a category, the cart...), locally and in production
+                 (uses your developer key; --json for data)
   impact [days]  what the recommendations bring: served, seen, clicked, the purchases and
                  revenue they led to (uses your developer key; Free: 7 days, Pro: up to 90
                  days with the daily trend and the top products; --json for data)
@@ -50,7 +53,7 @@ ${blue("Options")}
   --placement <slug>     with cache clear: the placement to empty (default: all)
   --branch <new|current> with uninstall, in a git repository: work on a new branch
                          likyly/uninstall, or on the current one (asked otherwise)
-  --json                 with inventory or impact: print JSON
+  --json                 with inventory, pages or impact: print JSON
   --days <n>             with impact: how many days back ${dim("(capped by your plan)")}
   --store <shop>         with preview: the Shopify store ${dim("(default: shopify.theme.toml, or your LIKYLY source)")}
   --here                 with preview: run it in this terminal instead of a new window
@@ -116,6 +119,7 @@ export function parseArgs(argv) {
     else if (cmd === "shopify") opts.command = "shopify";
     else if (cmd === "magento") opts.command = "magento";
     else if (cmd === "preview") opts.command = "preview";
+    else if (cmd === "pages") opts.command = "pages";
     else if (cmd === "detect") opts.command = "detect";
     else if (cmd === "inventory") opts.command = "inventory";
     else if (cmd === "uninstall") opts.command = "uninstall";

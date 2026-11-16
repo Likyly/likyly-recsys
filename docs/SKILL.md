@@ -328,6 +328,7 @@ no list of optional clean-ups.
 |---|---|
 | `/likyly-help` | Lists these commands and what you can ask in plain words |
 | `/likyly-inventory` | What LIKYLY added to this site: each recommendation block and its page, tracking, setup |
+| `/likyly-pages` | Where to see LIKYLY: one link per kind of page with a block, local and live |
 | `/likyly-impact [days]` | What the recommendations bring: served, seen, clicked, purchases and revenue (Pro: longer history, daily trend, top products) |
 | `/likyly-model [catalog] [days]` | The recommendation model: versions, which one is live, training date, performance |
 | `/likyly-clear-cache [placement]` | Shows fresh recommendations right away (otherwise they refresh within the hour) |

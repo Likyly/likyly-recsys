@@ -372,7 +372,7 @@ export function wizardInvocation(argv1 = process.argv[1]) {
   return `node ${bin.includes(" ") ? JSON.stringify(bin) : bin}`;
 }
 
-export const CLAUDE_COMMANDS = ["likyly-help.md", "likyly-inventory.md", "likyly-impact.md", "likyly-model.md", "likyly-clear-cache.md", "likyly-uninstall.md"];
+export const CLAUDE_COMMANDS = ["likyly-help.md", "likyly-inventory.md", "likyly-pages.md", "likyly-impact.md", "likyly-model.md", "likyly-clear-cache.md", "likyly-uninstall.md"];
 
 // Claude Code slash command: the exact `cache clear` CLI, run by Claude Code itself (the `!`
 // line executes before the model sees the prompt), so the result is the API's, not a guess.
@@ -469,6 +469,43 @@ and **In your code but unknown to LIKYLY** (✕, with the file). Last line: the 
 \`<Console>/account\` from the account lines above (https://www.likyly.com if none).
 
 ${NOT_CONNECTED}
+`;
+
+// Where to see LIKYLY: the wizard gives what LIKYLY and the project say for sure (placements,
+// real example items, store/domain, dev port); Claude reads the code only to fill a route the data
+// can't give (a Next.js product page's path), with the example item's real values.
+const pagesCommand = (w) => `---
+description: Where to see LIKYLY on the site - one link per kind of page with a recommendation block, local and live
+allowed-tools: Bash(${w} pages:*), Bash(${w} inventory:*), Read, Grep, Glob
+---
+!\`${w} pages --json\`
+
+!\`${w} inventory\`
+
+Read-only: change nothing, call nothing else. If the JSON has an "error", show it and its "hint"
+as is, and stop.
+
+One link per kind of page, never more (not one per product): the JSON's "pages" already carry
+an example item. For a page whose "local"/"production" is null with "route not known", find its
+route in the code listed by the inventory (the file that renders that block: Next.js app/ or
+pages/ path, a router config, a template) and fill it with the example item's real values
+(its id, its url/handle, its category) - never an invented id. Still unknown: say so in the row.
+A block that no file of the code renders is "not on your site yet". No production domain in
+the JSON: look for it in the project (an env var such as SITE_URL / NEXT_PUBLIC_SITE_URL, a
+config, the README); none: "unknown". Never guess a domain.
+
+Report, in the developer's language, with LIKYLY's marks (◆ shows the block, ◇ not yet,
+✕ problem) and nothing before the title:
+
+**◆ LIKYLY · Where to see it**
+
+| Page | Block | On your computer | Live |
+|---|---|---|---|
+| ◆ Product page · e.g. Aerolune Swift Ultra 3 | You may also like · \`pdp-you-may-also-like\` | http://127.0.0.1:9292/products/aerolune-swift-ultra-3 | https://likyly-sandbox.myshopify.com/products/aerolune-swift-ultra-3 |
+
+Full URLs, as they are, so they can be clicked. Under the table, one line about the local site:
+running, or the command to start it (the JSON's local.start). A note from the JSON (an empty
+catalog, a disabled block) goes in its row with ✕ or ◇.
 `;
 
 // What the recommendations bring: LIKYLY's own analytics, read by the wizard with the developer
@@ -585,6 +622,7 @@ Show the developer exactly this, nothing more:
 |---|---|
 | \`/likyly-help\` | This list |
 | \`/likyly-inventory\` | What LIKYLY added to this site: each recommendation block and its page, tracking, setup |
+| \`/likyly-pages\` | Where to see LIKYLY: one link per kind of page with a block (a product, a category, the cart...), local and live |
 | \`/likyly-impact [days]\` | What the recommendations bring: served, seen, clicked, purchases and revenue (Pro: longer history, daily trend, top products) |
 | \`/likyly-model [catalog] [days]\` | The recommendation model: versions, which one is live, training date, performance |
 | \`/likyly-clear-cache [placement]\` | Shows fresh recommendations right away (otherwise they refresh within the hour) |
@@ -595,7 +633,7 @@ Show the developer exactly this, nothing more:
 - "Check my LIKYLY integration" - what works, what's missing
 - "Change the recommendations on my product page" - placement settings
 
-**In a terminal**: \`${w} inventory\` · \`${w} impact\` · \`${w} cache clear\` · \`${w} uninstall\` · \`${w} help\`
+**In a terminal**: \`${w} inventory\` · \`${w} pages\` · \`${w} impact\` · \`${w} cache clear\` · \`${w} uninstall\` · \`${w} help\`
 `;
 
 /** Install the /likyly-* commands for Claude Code (`.claude/commands/`). */
@@ -604,6 +642,7 @@ export function writeClaudeCommands(dir, { dryRun = false, invocation = wizardIn
   const files = {
     "likyly-help.md": helpCommand(invocation),
     "likyly-inventory.md": inventoryCommand(invocation),
+    "likyly-pages.md": pagesCommand(invocation),
     "likyly-impact.md": impactCommand(invocation),
     "likyly-model.md": modelCommand(invocation),
     "likyly-clear-cache.md": clearCacheCommand(invocation),

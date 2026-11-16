@@ -184,6 +184,10 @@ test("end to end: mcp add for Claude Code installs the skill", () => {
   assert.match(inventory, /mcp__likyly__list_placements/);
   assert.doesNotMatch(inventory, /Last 24 h|get_placement_health/, "traffic numbers are /likyly-impact's job");
   assert.match(help, /\/likyly-impact \[days\]/);
+  assert.match(help, /\/likyly-pages/);
+  const pages = readFileSync(join(dir, ".claude/commands/likyly-pages.md"), "utf8");
+  assert.match(pages, /likyly-wizard\.mjs pages --json`/);
+  assert.match(pages, /never an invented id/);
   const impact = readFileSync(join(dir, ".claude/commands/likyly-impact.md"), "utf8");
   assert.match(impact, /likyly-wizard\.mjs impact --json \$ARGUMENTS`/);
   assert.match(impact, /never estimate/);
@@ -343,7 +347,7 @@ test("uninstall removes only what the wizard added, after a dry run that removes
   assert.equal(existsSync(join(dir, "components/likyly-provider.tsx")), false);
   assert.equal(existsSync(join(dir, ".mcp.json")), false, "only LIKYLY was in it");
   assert.deepEqual(JSON.parse(readFileSync(join(dir, ".cursor/mcp.json"), "utf8")), { mcpServers: { other: { command: "x" } } });
-  for (const gone of [".claude/skills/likyly", ".claude/commands/likyly-help.md", ".claude/commands/likyly-inventory.md", ".claude/commands/likyly-impact.md", ".claude/commands/likyly-model.md", ".claude/commands/likyly-clear-cache.md", ".claude/commands/likyly-uninstall.md", ".likyly"]) {
+  for (const gone of [".claude/skills/likyly", ".claude/commands/likyly-help.md", ".claude/commands/likyly-inventory.md", ".claude/commands/likyly-pages.md", ".claude/commands/likyly-impact.md", ".claude/commands/likyly-model.md", ".claude/commands/likyly-clear-cache.md", ".claude/commands/likyly-uninstall.md", ".likyly"]) {
     assert.equal(existsSync(join(dir, gone)), false, gone);
   }
   assert.equal(readFileSync(join(dir, "src/page.tsx"), "utf8"), 'import { LikylyRecommendations } from "@likyly/react";\n', "code is never edited");
@@ -1009,4 +1013,86 @@ test("impact: no key, a key without the right, a bad argument - each said plainl
   const res = runCli(["impact", "--json", "--dir", project({})], project({}));
   assert.equal(res.status, 1);
   assert.match(JSON.parse(res.stdout).error, /No developer key/);
+});
+
+
+import { examplePages, formatPages } from "../src/pages.mjs";
+
+/** LIKYLY's placements and a few items per catalog, as the API answers them. */
+function catalogApi({ placements, items, itemsStatus = 200 }) {
+  const calls = [];
+  const fetchImpl = async (url, init) => {
+    const { pathname, searchParams } = new URL(url);
+    calls.push({ path: pathname, catalog: searchParams.get("data_product_type"), limit: searchParams.get("limit"), key: init.headers["X-API-Key"] });
+    if (pathname === "/placements") return { status: 200, ok: true, json: async () => placements };
+    if (pathname === "/items") return { status: itemsStatus, ok: itemsStatus < 300, json: async () => (itemsStatus < 300 ? items[searchParams.get("data_product_type")] ?? [] : { detail: "scope" }) };
+    return { status: 404, ok: false, json: async () => ({}) };
+  };
+  return { calls, fetchImpl };
+}
+
+const placement = (slug, context_type, product_type = "likyly-sandbox", name = "You may also like") => ({ slug, name, context_type, product_type, enabled: true });
+
+test("pages, Shopify theme: one link per kind of page, local (the preview running) and live", async () => {
+  const preview = await serve('<html><script src="//cdn.shopify.com/t.js"></script></html>');
+  try {
+    const dir = project({ ...THEME, "shopify.theme.toml": 'store = "likyly-sandbox"\n', ...KEYED });
+    const { calls, fetchImpl } = catalogApi({
+      placements: [placement("pdp-you-may-also-like", "product_page"), placement("cart-cross", "cart", "likyly-sandbox", "Complete your order"), placement("plp", "category_page", "likyly-sandbox", "More like this"), placement("old", "product_page", "running-shoes", "Old")],
+      items: { "likyly-sandbox": [{ item_id: "155", title: "Aerolune Swift Ultra 3", properties: { url: "aerolune-swift-ultra-3" } }] },
+    });
+    const r = await examplePages({ dir, fetchImpl, port: preview.port, env: {} });
+    assert.equal(r.ok, true, r.text);
+    const { report } = r;
+    assert.deepEqual(report.local, { url: `http://127.0.0.1:${preview.port}`, running: true, start: "npx @likyly/wizard preview" });
+    assert.equal(report.production, "https://likyly-sandbox.myshopify.com");
+    const by = Object.fromEntries(report.pages.map((p) => [p.block, p]));
+    assert.equal(by["pdp-you-may-also-like"].local, `http://127.0.0.1:${preview.port}/products/aerolune-swift-ultra-3`);
+    assert.equal(by["pdp-you-may-also-like"].production, "https://likyly-sandbox.myshopify.com/products/aerolune-swift-ultra-3");
+    assert.equal(by["cart-cross"].production, "https://likyly-sandbox.myshopify.com/cart");
+    assert.equal(by.plp.production, "https://likyly-sandbox.myshopify.com/collections/all");
+    assert.equal(by.old.local, null);
+    assert.match(by.old.note, /catalog running-shoes has no items/);
+    assert.ok(calls.filter((c) => c.path === "/items").every((c) => c.limit === "3" && c.key === "lk_dev"), "a few items, never the catalog");
+    const text = formatPages(report);
+    assert.match(text, /Product page · You may also like \(pdp-you-may-also-like\)\n {4}local {7}http:\/\/127\.0\.0\.1:\d+\/products\/aerolune-swift-ultra-3/);
+    assert.match(text, / · running/);
+  } finally {
+    await preview.close();
+  }
+});
+
+test("pages, any other site: what the data says, and the route left to the code with a real example item", async () => {
+  const dir = project({ "package.json": { dependencies: { next: "16", react: "19" }, scripts: { dev: "next dev" } }, "app/": "", ...KEYED });
+  const absolute = catalogApi({
+    placements: [placement("pdp", "product_page", "shop")],
+    items: { shop: [{ item_id: "SKU-1", title: "Shoe", properties: { url: "https://www.my-shop.com/p/shoe-1?ref=x" } }] },
+  });
+  const a = (await examplePages({ dir, fetchImpl: absolute.fetchImpl })).report;
+  assert.equal(a.production, "https://www.my-shop.com");
+  assert.equal(a.local.url, "http://localhost:3000");
+  assert.equal(a.pages[0].production, "https://www.my-shop.com/p/shoe-1?ref=x");
+  assert.equal(a.pages[0].local, "http://localhost:3000/p/shoe-1?ref=x");
+
+  const routeOnly = catalogApi({ placements: [placement("pdp", "product_page", "shop"), placement("home", "homepage", "shop", "For you")], items: { shop: [{ item_id: "SKU-1", title: "Shoe", properties: { category: "running" } }] } });
+  const b = (await examplePages({ dir, fetchImpl: routeOnly.fetchImpl })).report;
+  assert.equal(b.production, null, "never a guessed domain");
+  assert.equal(b.pages[0].path, null);
+  assert.equal(b.pages[0].note, "route not known from the data: read the code");
+  assert.deepEqual(b.pages[0].example, { itemId: "SKU-1", title: "Shoe", url: null, category: "running" });
+  assert.equal(b.pages[1].local, "http://localhost:3000/", "the home page needs no route");
+});
+
+test("pages: a key that cannot read the catalog, no key - each said plainly", async () => {
+  const refused = catalogApi({ placements: [placement("pdp", "product_page")], items: {}, itemsStatus: 403 });
+  const r = await examplePages({ dir: project({ ...THEME, ...KEYED }), fetchImpl: refused.fetchImpl, port: await freePort(), env: {} });
+  assert.match(r.report.pages[0].note, /cannot read the catalog/);
+  const saved = process.env.LIKYLY_DEVELOPER_KEY;
+  delete process.env.LIKYLY_DEVELOPER_KEY;
+  try {
+    assert.match((await examplePages({ dir: project({}), fetchImpl: async () => assert.fail("no call") })).text, /No developer key/);
+  } finally {
+    if (saved !== undefined) process.env.LIKYLY_DEVELOPER_KEY = saved;
+  }
+  assert.equal(parseArgs(["pages", "--json"]).command, "pages");
 });
