@@ -1,11 +1,12 @@
 // The site's local preview, so the developer sees LIKYLY's changes as they are made:
 // `shopify theme dev` for a Shopify theme, the project's own dev script otherwise.
 //
-// Run from a terminal, it takes over that terminal (the Shopify CLI may ask for the storefront
-// password). Run by an AI assistant (no terminal to answer in), it opens a new terminal window
-// instead: the prompt can be answered there, and the assistant's own session stays free.
+// Run from a terminal, it takes over that terminal until Ctrl+C (the Shopify CLI may ask for the
+// storefront password there). Run by an AI assistant (no terminal to answer in), it starts
+// nothing and gives the command to run: no window pops up outside the developer's session.
+// --new-window opens one on purpose (openInNewTerminal).
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { connect } from "node:net";
@@ -73,6 +74,50 @@ export async function servesShopify(port, fetchImpl = fetch) {
   }
 }
 
+/**
+ * The folder the program listening on `port` runs from (its working directory), or null when it
+ * can't be told (no lsof, Windows, not ours to read). A `shopify theme dev` serves the theme of
+ * the folder it was started in: another folder's preview is not this project's.
+ */
+export function listenerDir(port, { run = spawnSync, platform = process.platform } = {}) {
+  if (platform === "win32") return null;
+  try {
+    const pids = run("lsof", ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-t"], { encoding: "utf8" }).stdout?.trim().split("\n").filter(Boolean) ?? [];
+    for (const pid of pids) {
+      const cwd = run("lsof", ["-a", "-p", pid, "-d", "cwd", "-Fn"], { encoding: "utf8" }).stdout?.match(/^n(.+)$/m)?.[1];
+      if (cwd) return cwd;
+    }
+  } catch {
+    /* unknown */
+  }
+  return null;
+}
+
+const samePath = (a, b) => {
+  try {
+    return realpathSync(a) === realpathSync(b);
+  } catch {
+    return a === b;
+  }
+};
+
+/**
+ * Where this theme's preview is or would be: { port, running, note? }. A `shopify theme dev`
+ * already answering on `wanted` from this folder is running; from another folder (another
+ * theme), or another program, the preview goes to the next free port - its URL would show
+ * something else. port null: no free port nearby.
+ */
+export async function shopifyLocalPort(dir, wanted, options = {}) {
+  if (!(await portTaken(wanted))) return { port: wanted, running: false };
+  const shopify = await servesShopify(wanted, options.fetchImpl);
+  const owner = shopify ? (options.listenerDir ?? listenerDir)(wanted) : null;
+  const otherTheme = Boolean(owner) && !samePath(owner, dir);
+  if (shopify && !otherTheme) return { port: wanted, running: true };
+  const port = await freePortAfter(wanted);
+  const note = port && (otherTheme ? `Port ${wanted} shows another theme (${owner}): this one uses ${port}.` : `Port ${wanted} is taken by another program: the preview uses ${port}.`);
+  return { port, running: false, note };
+}
+
 /** The first free port after `from` (a few tried), or null. */
 async function freePortAfter(from) {
   for (let port = from + 1; port <= from + 20; port++) if (!(await portTaken(port))) return port;
@@ -89,17 +134,14 @@ export async function previewPlan(project, dir, options = {}) {
   if (project.id === "shopify") {
     const store = await themeStore(dir, options);
     const wanted = Number(options.port) || SHOPIFY_PREVIEW_PORT;
-    let port = wanted;
-    const notes = [];
-    if (await portTaken(wanted)) {
-      if (await servesShopify(wanted, options.fetchImpl)) {
-        const url = `http://127.0.0.1:${wanted}`;
-        return { running: url, url, command: null, requires: null, notes: [`Open ${url}, then a product page: theme changes show up live.`] };
-      }
-      port = await freePortAfter(wanted);
-      if (!port) return { blocked: `Ports ${wanted} to ${wanted + 20} are all taken: free one, or pass --port`, notes: [] };
-      notes.push(`Port ${wanted} is taken by another program: the preview uses ${port}.`);
+    const local = await shopifyLocalPort(dir, wanted, options);
+    if (local.running) {
+      const url = `http://127.0.0.1:${local.port}`;
+      return { running: url, url, command: null, requires: null, notes: [`Open ${url}, then a product page: theme changes show up live.`] };
     }
+    if (!local.port) return { blocked: `Ports ${wanted} to ${wanted + 20} are all taken: free one, or pass --port`, notes: [] };
+    const port = local.port;
+    const notes = local.note ? [local.note] : [];
     const url = `http://127.0.0.1:${port}`;
     const portFlag = port === SHOPIFY_PREVIEW_PORT ? "" : ` --port ${port}`;
     return {

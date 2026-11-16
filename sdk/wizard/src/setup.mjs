@@ -547,24 +547,28 @@ nothing before the title:
 
 **◆ LIKYLY · Impact · <start> → <end>** (<days> days · <planName> plan)
 
-| | |
-|---|---|
-| Recommendations served | 8 |
-| Seen | 120 impressions |
-| Clicked | 6 · 5.0 % of what was seen (CTR) |
-| Purchases they led to | 1 · 1 in 6 clicks · 49.90 |
+| | | What it counts |
+|---|---|---|
+| Blocks served | 30 | one per page that asked LIKYLY for a block |
+| Products seen | 120 | each product of a block that came into view (a block of 4 seen = 4, never scrolled to = 0): 4 per block served here |
+| Products clicked | 6 · 5.0 % CTR | CTR = clicks ÷ products seen |
+| Purchases they led to | 1 · 1 in 6 clicks · 49.90 | a product clicked in a block, then bought |
 
 **By block**
-| Block | Served | Seen | Clicks | CTR | Purchases | Revenue |
+| Block | Blocks served | Products seen | Clicked | CTR | Purchases | Revenue |
 |---|---|---|---|---|---|---|
 
+Keep the "What it counts" column, from the JSON's "meaning" and "seenPerServed": the units differ
+(served counts blocks, seen counts products), so "products seen" above "blocks served" is normal
+and must be read that way - never call an impression a block view.
+
 Then one short paragraph, **What it means**: the efficiency in plain words (out of 100 products
-seen, how many were clicked; out of the clicks, how many became a purchase), and the "signals"
+seen - products, not blocks - how many were clicked; out of the clicks, how many became a purchase), and the "signals"
 of the JSON as they are (a block served but never seen is ✕: the page doesn't send impressions -
 suggest asking "check my LIKYLY integration"). Few or no events yet: say it is too early to judge.
 Revenue is in the currency the site sends with its purchases: no symbol unless you know it.
 
-Only when the JSON has "trend": **Day by day** (date · served · seen · clicks · CTR), and when it
+Only when the JSON has "trend": **Day by day** (date · blocks served · products seen · clicked · CTR), and when it
 has "topItems": **Products that work best** (title or id · seen · clicks · CTR · purchases ·
 revenue). When the JSON has "proExtras" instead: one last line, "On Pro: <proExtras> -
 <upgradeUrl>", and nothing more about plans. When window.asked > window.days, say the plan

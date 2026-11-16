@@ -10,7 +10,7 @@ import { EDITORS, detectEditors, detectProject, installedEditors } from "../fram
 import { KEY_ENV, hasDeveloperKey, readDeveloperKey } from "../mcp.mjs";
 import { ShopifyCatalogStep } from "./shopify.jsx";
 import { MagentoCatalogStep } from "./magento.jsx";
-import { openInNewTerminal, previewPlan } from "../preview.mjs";
+import { previewPlan } from "../preview.mjs";
 import { commandExists, wizardInvocation } from "../setup.mjs";
 import { checkCompat, describeCompat } from "../compat.mjs";
 import {
@@ -216,12 +216,14 @@ function DonePanel({ editors, dryRun, level, devKey, dir }) {
 }
 
 /** The one remaining choice, Enter by default: hand over to the assistant. */
-function NextAction({ editors, canReview, onPick, signedIn }) {
+function NextAction({ editors, canReview, onPick, signedIn, preview }) {
   const items = [];
   // Without a developer key the assistant cannot reach LIKYLY: signing in comes first.
   if (editors.length && !signedIn) items.push({ label: "Connect your LIKYLY account first", value: "signin", hint: "your assistant needs it to reach LIKYLY" });
   if (editors.includes("claude-code") && commandExists("claude")) items.push({ label: "Launch Claude Code now", value: "claude", hint: "it starts on this prompt" });
   if (canReview) items.push({ label: "Review the changes first", value: "review", hint: "git diff of what LIKYLY changed" });
+  // In this terminal, never a new window: Ctrl+C stops it and gives the shell back.
+  if (preview) items.push({ label: "Start the site's preview here", value: "preview", hint: `${preview.command} · Ctrl+C gives you your terminal back` });
   if (editors.includes("codex") && commandExists("codex")) items.push({ label: "Launch Codex now", value: "codex", hint: "it starts on this prompt" });
   if (editors.includes("cursor") && commandExists("cursor")) items.push({ label: "Open Cursor", value: "cursor", hint: "the prompt is copied, paste it in the chat" });
   items.push({ label: "Copy the prompt and exit", value: "copy" });
@@ -268,16 +270,6 @@ function App({ opts: initialOpts, result }) {
 
   const shopRef = useRef(null); // the store the catalog step connected, for the preview
   const [preview, setPreview] = useState(null);
-  const startPreview = (yes) => {
-    if (yes) {
-      const opened = openInNewTerminal(preview.command, opts.dir);
-      const results = opened
-        ? [{ level: "ok", text: "Started in a new terminal window: answer any prompt there", hint: preview.command }, ...preview.notes.map((text) => ({ level: "info", text }))]
-        : [{ level: "warn", text: "Could not open a terminal window. Run it in another terminal:", hint: preview.command }];
-      setPrinted((p) => [...p, { key: "preview", kind: "step", title: "Preview your site", status: opened ? "ok" : "warn", summary: opened ? "running" : "not started", results }]);
-    }
-    setPhase("next");
-  };
   const finish = (id, results, summary, status) => {
     const st = { status: status ?? statusOf(results), results, summary };
     setSteps((s) => ({ ...s, [id]: st }));
@@ -292,6 +284,7 @@ function App({ opts: initialOpts, result }) {
     result.launch = launch;
     result.files = files;
     result.editors = chosenEditors;
+    result.preview = preview;
     setPhase("end");
     setLeaving(true);
   };
@@ -350,7 +343,7 @@ function App({ opts: initialOpts, result }) {
             }
             const usable = plan?.command && !opts.dryRun && (!plan.requires || commandExists(plan.requires));
             setPreview(usable ? plan : null);
-            setPhase(usable ? "preview" : "next");
+            setPhase("next");
           });
       });
     }
@@ -538,26 +531,9 @@ function App({ opts: initialOpts, result }) {
           </Step>
         </Box>
       ) : null}
-      {phase === "preview" && preview ? (
-        <Box flexDirection="column" paddingX={1} marginTop={1} display={tooSmall ? "none" : "flex"}>
-          <Text bold>Start your site's preview now?</Text>
-          <Text color={C.muted}>
-            {preview.command} · in a new terminal window, so you see LIKYLY's changes live while your assistant makes them.
-          </Text>
-          <Box marginTop={1}>
-            <Select
-              items={[
-                { label: "Yes, start the preview", value: "yes" },
-                { label: "No, not now", value: "no", hint: "later: npx @likyly/wizard preview" },
-              ]}
-              onSubmit={(v) => startPreview(v === "yes")}
-            />
-          </Box>
-        </Box>
-      ) : null}
       {phase === "next" ? (
         <Box paddingX={1} marginTop={1} display={tooSmall ? "none" : "flex"}>
-          <NextAction editors={chosenEditors} canReview={reviewRef.current.length > 0} signedIn={opts.dryRun || Boolean(keys.current.devKey) || hasDeveloperKey(opts.dir)} onPick={(v) => end(failed ? 1 : 0, v, reviewRef.current)} />
+          <NextAction editors={chosenEditors} canReview={reviewRef.current.length > 0} signedIn={opts.dryRun || Boolean(keys.current.devKey) || hasDeveloperKey(opts.dir)} preview={preview} onPick={(v) => end(failed ? 1 : 0, v, reviewRef.current)} />
         </Box>
       ) : null}
     </>
@@ -565,7 +541,14 @@ function App({ opts: initialOpts, result }) {
 }
 
 /** After the UI is gone: run what the developer picked, with the terminal handed over. */
-function launch(choice, dir, files = [], editors = []) {
+function launch(choice, dir, files = [], editors = [], preview = null) {
+  if (choice === "preview" && preview) {
+    console.log(`\n  ${preview.command}`);
+    for (const note of preview.notes) console.log(`  · ${note}`);
+    console.log("  · Ctrl+C stops it and gives you your terminal back.\n");
+    spawnSync(preview.command, { cwd: dir, stdio: "inherit", shell: true });
+    return;
+  }
   if (choice === "signin") {
     // The same wizard, `mcp add` for the assistants just connected: it opens the sign-in first.
     const cmd = `${wizardInvocation()} mcp --editor ${editors.join(",")}`;
@@ -601,6 +584,6 @@ export async function runInteractive(opts, version) {
   const result = { code: 130, version, launch: null };
   const app = render(<App opts={opts} result={result} />, { exitOnCtrlC: true });
   await app.waitUntilExit();
-  if (result.launch) launch(result.launch, opts.dir, result.files, result.editors);
+  if (result.launch) launch(result.launch, opts.dir, result.files, result.editors, result.preview);
   return result.code;
 }

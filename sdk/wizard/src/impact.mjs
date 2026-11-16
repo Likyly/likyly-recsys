@@ -13,6 +13,20 @@ import { API_URL, wizardUserAgent } from "./verify.mjs";
 const isoDay = (d) => d.toISOString().slice(0, 10);
 const pct = (n) => `${Math.round(n * 1000) / 10} %`;
 const ratio = (a, b) => (b ? a / b : 0);
+const oneDecimal = (n) => Math.round(n * 10) / 10;
+
+/**
+ * What each number counts - the units differ, which made "28 served, 32 seen" look wrong:
+ * served counts blocks (one recommend call per page showing the block), seen counts products
+ * (each product of a block that comes into view: a block of 4 seen once is 4).
+ */
+export const MEANING = {
+  served: "blocks served: one per page that asked LIKYLY for the block",
+  seen: "products seen: each product of a block that came into view (a block of 4 seen once = 4, a block served but never scrolled to = 0)",
+  clicks: "products clicked in a block",
+  ctr: "clicks ÷ products seen",
+  purchases: "purchases of a product clicked in a block",
+};
 
 /** What Pro adds, said once on a plan without it. */
 export const PRO_EXTRAS = ["up to 90 days of history", "the day-by-day trend", "the products recommendations worked best on"];
@@ -61,6 +75,7 @@ export async function readImpact({ dir, days, fetchImpl = fetch, now = new Date(
       ctr: p.ctr,
       purchases: p.purchases,
       revenue: p.revenue,
+      seenPerServed: oneDecimal(ratio(p.impressions, p.recommendations_served)),
     }));
     const purchases = placements.reduce((n, p) => n + (p.purchases ?? 0), 0);
     const revenue = placements.reduce((n, p) => n + (p.revenue ?? 0), 0);
@@ -77,7 +92,9 @@ export async function readImpact({ dir, days, fetchImpl = fetch, now = new Date(
         purchases,
         revenue: trend?.ok ? trend.data.revenue?.revenue ?? revenue : revenue,
         clickToPurchase: ratio(purchases, s.clicks),
+        seenPerServed: oneDecimal(ratio(s.impressions, s.recommendations_served)),
       },
+      meaning: MEANING,
       placements,
       upgradeUrl: plan.data.upgrade_url,
     };
@@ -111,14 +128,15 @@ export function formatImpact(r) {
   const t = r.totals;
   const lines = [
     `LIKYLY · Impact · ${r.window.start} → ${r.window.end} (${r.window.days} day${r.window.days === 1 ? "" : "s"}, ${r.planName})`,
-    `  Recommendations served  ${t.served}`,
-    `  Seen (impressions)      ${t.impressions}`,
-    `  Clicked                 ${t.clicks} · CTR ${pct(t.ctr)}`,
+    `  Blocks served           ${t.served}   (one per page that asked for a block)`,
+    `  Products seen           ${t.impressions}   (each product of a block that came into view)`,
+    `                               a block of 4 seen = 4, a block never scrolled to = 0${t.served ? ` · here ${t.seenPerServed} per block served` : ""}`,
+    `  Products clicked        ${t.clicks} · CTR ${pct(t.ctr)} of the products seen`,
     `  Purchases they led to   ${t.purchases}${t.purchases ? ` · ${t.revenue}` : ""}`,
   ];
   if (r.placements.length) {
     lines.push("", "  By block");
-    for (const p of r.placements) lines.push(`    ${p.placement}: ${p.served} served · ${p.impressions} seen · ${p.clicks} clicks · CTR ${pct(p.ctr)} · ${p.purchases} purchase(s)${p.purchases ? ` · ${p.revenue}` : ""}`);
+    for (const p of r.placements) lines.push(`    ${p.placement}: ${p.served} served · ${p.impressions} products seen · ${p.clicks} clicked · CTR ${pct(p.ctr)} · ${p.purchases} purchase(s)${p.purchases ? ` · ${p.revenue}` : ""}`);
   }
   for (const s of r.signals) lines.push(`  ${s.level === "fail" ? "✗" : "·"} ${s.text}`);
   if (r.window.asked > r.window.days) lines.push(`  · ${r.window.asked} days asked: the ${r.planName} plan shows ${r.window.days}.`);

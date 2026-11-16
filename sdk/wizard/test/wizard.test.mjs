@@ -750,9 +750,9 @@ test("preview command: nothing known is a clear error, not a hang", () => {
   const res = runCli(["preview", "--dir", dir], dir);
   assert.equal(res.status, 1);
   assert.match(res.stderr, /No preview command known/);
-  assert.equal(parseArgs(["preview"]).here, false, "a new window by default: the terminal stays free");
-  assert.equal(parseArgs(["preview", "--here"]).here, true);
-  assert.equal(parseArgs(["preview", "--store", "x", "--new-window"]).here, false);
+  assert.equal(parseArgs(["preview"]).newWindow, false, "in this terminal by default: no window outside the developer's session");
+  assert.equal(parseArgs(["preview", "--here"]).newWindow, false, "--here is still accepted");
+  assert.equal(parseArgs(["preview", "--store", "x", "--new-window"]).newWindow, true);
 });
 
 // --- Magento: a module written by the wizard, the catalog read through an Integration ----------
@@ -888,9 +888,23 @@ test("preview: a Shopify preview already running is reused, never started twice 
   try {
     assert.equal(await portTaken(store.port), true);
     const dir = project(THEME);
-    const plan = await previewPlan(detectProject(dir), dir, { store: "s", port: store.port, env: {} });
+    const plan = await previewPlan(detectProject(dir), dir, { store: "s", port: store.port, env: {}, listenerDir: () => dir });
     assert.equal(plan.running, `http://127.0.0.1:${store.port}`);
     assert.equal(plan.command, null, "nothing to start");
+  } finally {
+    await store.close();
+  }
+});
+
+test("preview: another theme's preview on the port is not this one's - this theme takes the next port", async () => {
+  // dev-test2's `shopify theme dev` on 9292: dev-test4 must not be sent to dev-test2's pages.
+  const store = await serve('<html><script src="//cdn.shopify.com/s/files/theme.js"></script></html>');
+  try {
+    const dir = project(THEME);
+    const plan = await previewPlan(detectProject(dir), dir, { store: "s", port: store.port, env: {}, listenerDir: () => "/somewhere/dev-test2" });
+    assert.equal(plan.running, undefined);
+    assert.ok(Number(plan.command.match(/--port (\d+)$/)?.[1]) > store.port, plan.command);
+    assert.ok(plan.notes[0].includes(`Port ${store.port} shows another theme (/somewhere/dev-test2)`));
   } finally {
     await store.close();
   }
@@ -938,6 +952,21 @@ test("preview command, end to end: with a preview already running it says so and
   assert.throws(() => parseArgs(["preview", "--port", "abc"]), /--port expects a port number/);
 });
 
+test("preview command from an assistant (no terminal): the command to run, no window, nothing started", () => {
+  const dir = project(THEME);
+  const bin = mkdtempSync(join(tmpdir(), "likyly-bin-"));
+  const marker = join(bin, "ran");
+  // A fake shopify and osascript: either one running leaves the marker.
+  for (const name of ["shopify", "osascript"]) {
+    writeFileSync(join(bin, name), `#!/bin/sh\ntouch ${JSON.stringify(marker)}\n`, { mode: 0o755 });
+  }
+  const res = spawnSync(process.execPath, [BIN, "preview", "--store", "s", "--port", "1", "--dir", dir], { cwd: dir, encoding: "utf8", env: { ...process.env, NO_COLOR: "1", PATH: `${bin}:/usr/bin:/bin` } });
+  assert.equal(res.status, 0, res.stderr);
+  assert.match(res.stdout, /not started: run it in your terminal/);
+  assert.match(res.stdout, /shopify theme dev --store s\.myshopify\.com/);
+  assert.equal(existsSync(marker), false, "neither the preview nor a terminal window was started");
+});
+
 
 import { formatImpact, readImpact } from "../src/impact.mjs";
 
@@ -976,12 +1005,16 @@ test("impact, Free plan: totals and blocks over 7 days, the Pro-only detail neve
   assert.ok(calls.every((c) => c.key === "lk_dev"));
   assert.ok(calls.some((c) => c.path === "/analytics/summary" && c.search === "?start=2026-11-10&end=2026-11-16"), "the window is capped before asking");
   assert.ok(!calls.some((c) => c.path === "/analytics/detail" || c.path === "/analytics/items"), "no 403 on purpose");
-  assert.deepEqual(report.totals, { served: 8, impressions: 40, clicks: 4, ctr: 0.1, purchases: 1, revenue: 49.9, clickToPurchase: 0.25 });
+  assert.deepEqual(report.totals, { served: 8, impressions: 40, clicks: 4, ctr: 0.1, purchases: 1, revenue: 49.9, clickToPurchase: 0.25, seenPerServed: 5 });
   assert.equal(report.trend, undefined);
   assert.ok(report.proExtras.includes("the day-by-day trend"));
   assert.ok(report.signals.some((s) => s.level === "fail" && s.text.startsWith("pdp-related-2: served 4 time(s) but never seen")));
   const text = formatImpact(report);
-  assert.match(text, /Clicked {17}4 · CTR 10 %/);
+  // Served counts blocks, seen counts products: said in the labels, so 40 seen for 8 served reads right.
+  assert.match(text, /Blocks served {11}8 {3}\(one per page that asked for a block\)/);
+  assert.match(text, /Products seen {11}40 {3}\(each product of a block that came into view\)\n {31}a block of 4 seen = 4, a block never scrolled to = 0 · here 5 per block served/);
+  assert.match(text, /Products clicked {8}4 · CTR 10 % of the products seen/);
+  assert.match(report.meaning.seen, /a block of 4 seen once = 4/);
   assert.match(text, /30 days asked: the Free plan shows 7/);
   assert.match(text, /On Pro: up to 90 days of history/);
 });
@@ -1041,7 +1074,7 @@ test("pages, Shopify theme: one link per kind of page, local (the preview runnin
       placements: [placement("pdp-you-may-also-like", "product_page"), placement("cart-cross", "cart", "likyly-sandbox", "Complete your order"), placement("plp", "category_page", "likyly-sandbox", "More like this"), placement("old", "product_page", "running-shoes", "Old")],
       items: { "likyly-sandbox": [{ item_id: "155", title: "Aerolune Swift Ultra 3", properties: { url: "aerolune-swift-ultra-3" } }] },
     });
-    const r = await examplePages({ dir, fetchImpl, port: preview.port, env: {} });
+    const r = await examplePages({ dir, fetchImpl, port: preview.port, env: {}, listenerDir: () => dir });
     assert.equal(r.ok, true, r.text);
     const { report } = r;
     assert.deepEqual(report.local, { url: `http://127.0.0.1:${preview.port}`, running: true, start: "npx @likyly/wizard preview" });

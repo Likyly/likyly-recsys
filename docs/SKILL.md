@@ -244,17 +244,17 @@ commit only the files you changed (not their pending work), push the branch and 
 2. `validate_integration` for the placement you just wired up. Report every check in the
    **Integration** table of the final report, with its count - don't paraphrase it into "looks good."
 3. **Offer the preview** - ask one yes/no question: "Start the site's preview now to see it?"
-   On yes, run `npx @likyly/wizard@latest preview` (in the background if your tool allows it):
-   it starts the project's preview (`shopify theme dev --store <shop>` for a Shopify theme, the
-   dev script otherwise) in a **new terminal window**, where the developer can answer its
-   prompts - a password-protected store (every development store) asks for its storefront
-   password there: it is in the store's admin, `https://admin.shopify.com/store/<handle>/online_store/preferences`
+   On yes, run `npx @likyly/wizard@latest preview`: a preview already running answers with its
+   address; otherwise it starts nothing and prints the command (`shopify theme dev --store <shop>`
+   for a Shopify theme, the dev script otherwise) - give it to the developer to run in **their own
+   terminal**, where they can answer its prompts. Never pass `--new-window`: a window popping up
+   outside their session is not wanted. A password-protected store (every development store) asks
+   for its storefront password there: it is in the store's admin, `https://admin.shopify.com/store/<handle>/online_store/preferences`
    → Store access → Private mode → Password - not the admin login, not the app's client secret. Never run
    `shopify theme dev` (or another interactive dev server) yourself: it stops on that prompt,
    which you can't answer. Then give the page to open (for a theme:
    `http://127.0.0.1:9292/products/<a real handle>`) and say to view it and click a
-   recommendation, so step 4 has real events to check. If the command says no terminal window
-   could be opened, give the developer the command it printed to run in their own terminal.
+   recommendation, so step 4 has real events to check.
    A Magento store has no preview command: once the module is enabled and the cache flushed,
    give the product page to open (`<store>/<url_key>.html`, from the item's `url`).
 4. For anything not `ok`: `get_recent_integration_events` if you need to see the actual rows

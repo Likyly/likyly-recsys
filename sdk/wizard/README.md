@@ -73,9 +73,11 @@ itself and shows its result. Four read-only reports come with them:
   real items and their URL, the store or domain, the local preview and whether it runs); Claude
   reads the code only for a route the data can't give (a Next.js product page's path), filled
   with a real item.
-- `/likyly-impact [days]` - what the recommendations bring: served, seen, clicked (CTR), and the
-  purchases and revenue they led to, in total and per block, with what the numbers mean (a block
-  served but never seen is flagged). Exact numbers from LIKYLY's analytics, read by
+- `/likyly-impact [days]` - what the recommendations bring: blocks served, products seen,
+  products clicked (CTR), and the purchases and revenue they led to, in total and per block, with
+  what each number counts - a block served counts 1, each product of a block that comes into view
+  counts 1 (a block of 4 seen = 4), so more products seen than blocks served is normal; a block
+  served but never seen is flagged. Exact numbers from LIKYLY's analytics, read by
   `npx @likyly/wizard impact` with the developer key. Free: the last 7 days; Pro: up to 90 days,
   the day-by-day trend and the products recommendations worked best on.
 - `/likyly-model [catalog] [days]` - the recommendation model: the version serving production
@@ -106,8 +108,10 @@ that sends the product view, shows the products LIKYLY recommends - read from th
 so prices follow the visitor's currency - and tracks impressions and clicks. Add it from the
 theme editor (*Add section → LIKYLY recommendations*) or let your assistant put it in
 `templates/product.json`, then preview with `npx @likyly/wizard preview` (it runs
-`shopify theme dev --store <your store>` in a new terminal window, where you type the storefront
-password, and leaves your terminal free) and publish with `shopify theme push`. Right after you sign in, the wizard connects the store's catalog itself:
+`shopify theme dev --store <your store>` right here, in your terminal, where you type the
+storefront password; Ctrl+C gives you your terminal back; `--new-window` runs it in a separate
+window. A preview of this theme already running: it just gives its address - another theme's
+preview on 9292 is told apart, this one takes the next port) and publish with `shopify theme push`. Right after you sign in, the wizard connects the store's catalog itself:
 you type the store address and the app's Client ID and secret (the secret is masked) in the
 terminal, and they go straight to LIKYLY, encrypted - never to your AI assistant, never to a file.
 The app is one from Shopify's Dev Dashboard installed on the store with `read_products` (or, on

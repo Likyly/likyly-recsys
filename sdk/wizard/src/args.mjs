@@ -27,9 +27,9 @@ ${blue("Commands")}
                  they go straight to LIKYLY (encrypted), never to your assistant
   magento        connect a Magento / Adobe Commerce store's catalog, the same way: the
                  store's address and an Integration's four values, typed here
-  preview        start the site's local preview (shopify theme dev, or the dev script) in a
-                 new terminal window, to see LIKYLY's changes live while this terminal (or
-                 your assistant) carries on; a store password is typed in that window
+  preview        start the site's local preview (shopify theme dev, or the dev script) right
+                 here, in this terminal (Ctrl+C stops it); already running: just its address.
+                 From an assistant (no terminal): the command to run in yours
   detect         print what was detected, change nothing
   inventory      list what LIKYLY put in this project: packages, key variable, setup files,
                  and every source line that uses LIKYLY (read-only; --json for data)
@@ -56,7 +56,7 @@ ${blue("Options")}
   --json                 with inventory, pages or impact: print JSON
   --days <n>             with impact: how many days back ${dim("(capped by your plan)")}
   --store <shop>         with preview: the Shopify store ${dim("(default: shopify.theme.toml, or your LIKYLY source)")}
-  --here                 with preview: run it in this terminal instead of a new window
+  --new-window           with preview: run it in a new terminal window instead of this one
   --port <n>             with preview: the local port ${dim("(default: 9292 for a Shopify theme, the next free one if taken)")}
   --hosted               use the hosted MCP server (mcp.likyly.com) instead of npx
   --no-install           do not run the package manager
@@ -67,7 +67,7 @@ ${blue("Options")}
 `;
 
 export function parseArgs(argv) {
-  const opts = { command: "install", dir: process.cwd(), yes: false, dryRun: false, install: true, hosted: false, editors: null, publicKey: null, placement: null, branch: null, json: false, store: null, here: false, port: null, days: null };
+  const opts = { command: "install", dir: process.cwd(), yes: false, dryRun: false, install: true, hosted: false, editors: null, publicKey: null, placement: null, branch: null, json: false, store: null, newWindow: false, port: null, days: null };
   const positional = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -83,13 +83,13 @@ export function parseArgs(argv) {
     else if (a === "--no-install") opts.install = false;
     else if (a === "--hosted") opts.hosted = true;
     else if (a === "--json") opts.json = true;
-    else if (a === "--here") opts.here = true;
+    else if (a === "--here") opts.newWindow = false; // the default since 0.14.2, still accepted
     else if (a === "--days") opts.days = next();
     else if (a === "--port") {
       opts.port = Number(next());
       if (!Number.isInteger(opts.port) || opts.port < 1 || opts.port > 65535) throw new Error("--port expects a port number");
     }
-    else if (a === "--new-window") opts.here = false; // the default since 0.12.1, still accepted
+    else if (a === "--new-window") opts.newWindow = true;
     else if (a === "--store") opts.store = next();
     else if (a === "--dir") opts.dir = next();
     else if (a === "--public-key") opts.publicKey = next();

@@ -10,7 +10,7 @@
 import { detectProject } from "./frameworks.mjs";
 import { readDeveloperKey } from "./cache.mjs";
 import { CREDENTIALS_FILE, KEY_ENV } from "./mcp.mjs";
-import { portTaken, servesShopify, themeStore, SHOPIFY_PREVIEW_PORT } from "./preview.mjs";
+import { portTaken, shopifyLocalPort, themeStore, SHOPIFY_PREVIEW_PORT } from "./preview.mjs";
 import { API_URL, wizardUserAgent } from "./verify.mjs";
 
 /** The usual local port of each framework's dev server (what `npm run dev` prints by default). */
@@ -76,10 +76,12 @@ function examplePath(context, platform, item) {
 async function bases(project, dir, items, options) {
   if (project?.id === "shopify") {
     const store = await themeStore(dir, options);
-    // A preview already running answers on 9292 (or the port given); the next one would too.
-    const port = Number(options.port) || SHOPIFY_PREVIEW_PORT;
-    const running = (await portTaken(port)) && (await servesShopify(port, options.storefrontFetch));
-    return { platform: "shopify", local: { url: `http://127.0.0.1:${port}`, running, start: "npx @likyly/wizard preview" }, production: store ? `https://${store}` : null };
+    // This theme's preview: running on 9292 (or the port given) from this folder, or the port it
+    // would take - another theme's preview on 9292 is not this one's address.
+    const wanted = Number(options.port) || SHOPIFY_PREVIEW_PORT;
+    const local = await shopifyLocalPort(dir, wanted, { fetchImpl: options.storefrontFetch, listenerDir: options.listenerDir });
+    const port = local.port ?? wanted;
+    return { platform: "shopify", local: { url: `http://127.0.0.1:${port}`, running: local.running, start: "npx @likyly/wizard preview", ...(local.note ? { note: local.note } : {}) }, production: store ? `https://${store}` : null };
   }
   const port = DEV_PORTS[project?.id];
   const local = port ? { url: `http://localhost:${port}`, running: await portTaken(port), start: "npx @likyly/wizard preview" } : null;
@@ -147,6 +149,7 @@ export async function examplePages({ dir, fetchImpl = fetch, ...options }) {
 export function formatPages(r) {
   const lines = ["LIKYLY · Where to see it"];
   if (r.local) lines.push(`  Local       ${r.local.url}${r.local.running ? " · running" : ` · not running (start it: ${r.local.start})`}`);
+  if (r.local?.note) lines.push(`              ${r.local.note}`);
   lines.push(`  Production  ${r.production ?? "unknown from LIKYLY's data"}`);
   const seen = new Set();
   for (const p of r.pages) {
