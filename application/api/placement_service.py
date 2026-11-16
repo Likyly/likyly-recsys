@@ -282,24 +282,24 @@ def _check(name: str, count: int, *, required: Optional[bool] = None) -> dict[st
 
 
 def _public_key_rotated_check(client_id: int, last_call_at) -> Optional[dict[str, Any]]:
-    """Calls came in, then the public key was regenerated and none came since: the site still
+    """Calls came in, then a public key was regenerated (the workspace's) or revoked (a site's)
+    and none came since: the site still
     sends the old key, every call (recommend and events) gets a 401 that no workspace can be
     credited with, so the counts above keep looking fine for the rest of the window while the
     block is gone from the site. Only reported in that case - a placement whose calls carry on
     after a rotation (new key in place, or a server calling with the secret key) is fine."""
     if last_call_at is None:
         return None
-    client = db.get_client_self_by_id(client_id) or {}
-    rotated_at = client.get("public_key_rotated_at")
-    if rotated_at is None or rotated_at <= last_call_at:
+    disabled_at = db.latest_public_key_disabled_at(client_id)
+    if disabled_at is None or disabled_at <= last_call_at:
         return None
     return {
         "name": "public_key_rotated",
         "status": "missing",
         "count": 0,
         "message": (
-            f"public key regenerated at {rotated_at:%Y-%m-%d %H:%M} UTC, no recommendation call since "
-            f"(last one at {last_call_at:%Y-%m-%d %H:%M} UTC): a site still using the previous key gets 401 - put the new key in it"
+            f"a public key was regenerated or revoked at {disabled_at:%Y-%m-%d %H:%M} UTC, no recommendation call since "
+            f"(last one at {last_call_at:%Y-%m-%d %H:%M} UTC): a site still using that key gets 401 - give it a working key"
         ),
     }
 

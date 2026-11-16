@@ -934,6 +934,23 @@ class ImportSummary(BaseModel):
 # distinct from the secret/public keys - see ALLOWED_SCOPES in db.py.
 # ---------------------------------------------------------------------------
 
+class SitePublicKeyCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=200, examples=["shop.example.com"], description="Which site or project uses it - shown in the console.")
+
+
+class SitePublicKey(BaseModel):
+    id: int
+    name: str
+    key_hint: Optional[str] = Field(default=None, description="Non-secret preview, e.g. `pk_Ab3x…9QpL`.")
+    created_at: datetime
+    last_used_at: Optional[datetime] = None
+    revoked_at: Optional[datetime] = None
+
+
+class SitePublicKeyCreated(SitePublicKey):
+    public_key: str = Field(description="Shown once - store it now, it can't be retrieved again. Public: safe in browser code.")
+
+
 class DeveloperKeyCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200, examples=["Claude Code - data sources"])
     scopes: List[str] = Field(

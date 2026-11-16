@@ -509,6 +509,27 @@ ALLOWED_SCOPES = {
 }
 
 
+class PublicKeyModel(Base):
+    """More public keys for one workspace, one per site or project, next to ClientModel's own
+    public key. Same restricted "public" scope; each is created and revoked on its own, so
+    giving a new project a key (the wizard) never breaks the sites already running on another
+    one - ClientModel.public_key_hash is a single value, and regenerating it did exactly that."""
+    __tablename__ = "public_keys"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False)
+    key_hash = Column(String, nullable=False, unique=True)
+    key_hint = Column(String, nullable=True)
+    name = Column(String, nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    last_used_at = Column(DateTime(timezone=True), nullable=True)
+    revoked_at = Column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        Index("ix_public_keys_client", "client_id"),
+    )
+
+
 class DeveloperKeyModel(Base):
     """A third credential kind, alongside ClientModel's secret/public keys - narrower and
     revocable independently, meant to be handed to a coding agent (Claude Code, Codex) for
@@ -864,7 +885,31 @@ def get_client_and_scope_by_api_key(raw_key: str) -> Optional[tuple[int, str]]:
         client = session.query(ClientModel).filter_by(public_key_hash=key_hash, is_active=True).first()
         if client:
             return client.id, "public"
+        site_key = (
+            session.query(PublicKeyModel)
+            .join(ClientModel, ClientModel.id == PublicKeyModel.client_id)
+            .filter(PublicKeyModel.key_hash == key_hash, PublicKeyModel.revoked_at.is_(None), ClientModel.is_active.is_(True))
+            .first()
+        )
+        if site_key:
+            _touch_public_key(session, site_key.id)
+            return site_key.client_id, "public"
         return None
+
+
+# A site key's last_used_at is written at most once a minute per key - it is looked up on
+# every storefront request (recommend, each event), the debounce keeps that a read.
+_public_key_last_used: dict[int, datetime] = {}
+
+
+def _touch_public_key(session, key_id: int) -> None:
+    now = utcnow()
+    last = _public_key_last_used.get(key_id)
+    if last is not None and (now - last).total_seconds() < _LAST_USED_DEBOUNCE_SECONDS:
+        return
+    _public_key_last_used[key_id] = now
+    session.query(PublicKeyModel).filter_by(id=key_id).update({"last_used_at": now})
+    session.commit()
 
 
 def get_client_plan(client_id: int) -> str:
@@ -1962,6 +2007,70 @@ def list_developer_keys(client_id: int) -> list[dict]:
             .all()
         )
         return [_developer_key_row_to_dict(r) for r in rows]
+
+
+# Enough for every site, preview and app of a workspace; a ceiling so a loop can't mint
+# thousands. Revoked keys don't count.
+MAX_SITE_PUBLIC_KEYS = 25
+
+
+class TooManyPublicKeysError(Exception):
+    pass
+
+
+def _public_key_row_to_dict(row: PublicKeyModel) -> dict:
+    return {
+        "id": row.id, "name": row.name, "key_hint": row.key_hint,
+        "created_at": row.created_at, "last_used_at": row.last_used_at, "revoked_at": row.revoked_at,
+    }
+
+
+def create_site_public_key(client_id: int, name: str) -> tuple[dict, str]:
+    """Returns (row_dict, raw_key) - the raw value only exists here, like every other key.
+    The workspace's other public keys keep working."""
+    raw_key = generate_api_key("pk")
+    with SessionLocal() as session:
+        active = session.query(PublicKeyModel).filter_by(client_id=client_id, revoked_at=None).count()
+        if active >= MAX_SITE_PUBLIC_KEYS:
+            raise TooManyPublicKeysError(
+                f"This workspace already has {active} site public keys (the maximum): revoke one that no site uses any more."
+            )
+        row = PublicKeyModel(client_id=client_id, key_hash=hash_api_key(raw_key), key_hint=key_hint(raw_key), name=name)
+        session.add(row)
+        session.commit()
+        return _public_key_row_to_dict(row), raw_key
+
+
+def list_site_public_keys(client_id: int) -> list[dict]:
+    with SessionLocal() as session:
+        rows = (
+            session.query(PublicKeyModel)
+            .filter_by(client_id=client_id)
+            .order_by(PublicKeyModel.revoked_at.is_(None).desc(), PublicKeyModel.created_at.desc())
+            .all()
+        )
+        return [_public_key_row_to_dict(r) for r in rows]
+
+
+def revoke_site_public_key(client_id: int, key_id: int) -> bool:
+    with SessionLocal() as session:
+        result = (
+            session.query(PublicKeyModel)
+            .filter_by(client_id=client_id, id=key_id, revoked_at=None)
+            .update({"revoked_at": utcnow()})
+        )
+        session.commit()
+        return result > 0
+
+
+def latest_public_key_disabled_at(client_id: int) -> Optional[datetime]:
+    """When a public key of this workspace last stopped working: the workspace key regenerated
+    (or issued), or a site key revoked - what get_health compares with the last recommend call."""
+    with SessionLocal() as session:
+        client = session.get(ClientModel, client_id)
+        revoked = session.query(func.max(PublicKeyModel.revoked_at)).filter_by(client_id=client_id).scalar()
+        times = [t for t in (client.public_key_rotated_at if client else None, revoked) if t is not None]
+        return max(times, default=None)
 
 
 def revoke_developer_key(client_id: int, key_id: int) -> bool:

@@ -60,7 +60,7 @@ from schemas import (
     EventType, EventTypeCreate, EventTypeUpdate, ImportSummary, Item, ItemUpsert, ItemImportRequest, ItemDeleteRequest, BatchResult, ErrorResponse,
     UserUpsert, UserImportRequest, CatalogEraseRequest, CatalogErased, Event, EventBatch, EventResult, EventBatchResult,
     RecommendationRequest, RecommendationResponse,
-    DeveloperKey, DeveloperKeyCreate, DeveloperKeyCreated,
+    DeveloperKey, DeveloperKeyCreate, DeveloperKeyCreated, SitePublicKey, SitePublicKeyCreate, SitePublicKeyCreated,
     IdentifyRequest, IdentifyResult,
     DataSource, PlanLimits, Placement, PlacementUpdate, PlacementHealthOut, TrackingRequirementsOut,
     AnalyticsSummaryOut, AnalyticsDetailOut,
@@ -99,6 +99,7 @@ from db import (
     get_recent_viewed_work_ids,
     store_recommendation,
     ALLOWED_SCOPES, create_developer_key, list_developer_keys, revoke_developer_key,
+    create_site_public_key, list_site_public_keys, revoke_site_public_key, TooManyPublicKeysError,
     link_session_to_user,
     recommendation_performance_summary, recommendation_performance_timeseries,
     recommendation_performance_by_placement, recommendation_attributed_revenue,
@@ -1203,6 +1204,37 @@ async def delete_my_event_type(event_type: EventTypePath, supabase_user_id: str 
     if not delete_client_event_type(client_id, event_type):
         raise HTTPException(status_code=404, detail=f"No event type '{event_type}' registered for this client")
     return {"message": f"Event type '{event_type}' deleted"}
+
+
+@app.post("/clients/me/public-keys", tags=["selfServiceClient"], response_model=SitePublicKeyCreated, summary="Create a public key for one site", responses=_errors(401, 404, 409, 422))
+async def create_my_site_public_key(payload: SitePublicKeyCreate, supabase_user_id: str = Depends(get_current_supabase_user_id), x_workspace_id: WorkspaceIdHeader = None):
+    """One more restricted public key for this workspace - same scope as the workspace's own
+    public key, but the others keep working: a new site or project gets its key without
+    breaking the ones already live (regenerate-public-key replaces the workspace key, so every
+    site using it stops). Shown once - store it now."""
+    client_id = await _resolve_my_client_id(supabase_user_id, x_workspace_id)
+    try:
+        row, raw_key = create_site_public_key(client_id, payload.name.strip())
+    except TooManyPublicKeysError as error:
+        raise HTTPException(status_code=409, detail=str(error))
+    return {**row, "public_key": raw_key}
+
+
+@app.get("/clients/me/public-keys", tags=["selfServiceClient"], response_model=List[SitePublicKey], summary="List my site public keys", responses=_errors(401, 404))
+async def list_my_site_public_keys(supabase_user_id: str = Depends(get_current_supabase_user_id), x_workspace_id: WorkspaceIdHeader = None):
+    """Active keys first, then revoked ones. Never the raw value - only its creation shows it."""
+    client_id = await _resolve_my_client_id(supabase_user_id, x_workspace_id)
+    return list_site_public_keys(client_id)
+
+
+@app.delete("/clients/me/public-keys/{key_id}", tags=["selfServiceClient"], response_model=Message, summary="Revoke a site public key", responses=_errors(401, 404))
+async def revoke_my_site_public_key(key_id: int, supabase_user_id: str = Depends(get_current_supabase_user_id), x_workspace_id: WorkspaceIdHeader = None):
+    """Immediate and permanent: the site using it gets 401s right away (its blocks disappear).
+    The workspace's other public keys are untouched."""
+    client_id = await _resolve_my_client_id(supabase_user_id, x_workspace_id)
+    if not revoke_site_public_key(client_id, key_id):
+        raise HTTPException(status_code=404, detail=f"No active site public key '{key_id}' for this workspace")
+    return {"message": f"Site public key '{key_id}' revoked"}
 
 
 @app.post("/clients/me/developer-keys", tags=["selfServiceClient"], response_model=DeveloperKeyCreated, summary="Create a developer key", responses=_errors(401, 404, 422))
