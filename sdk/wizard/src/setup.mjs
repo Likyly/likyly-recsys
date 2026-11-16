@@ -58,6 +58,7 @@ const TEMPLATES = {
   data-item-id="{{ product.id }}"
   data-customer-id="{{ customer.id }}"
   data-root="{{ routes.root_url }}"
+  data-diagnose="{{ request.design_mode }}"
   hidden
 >
   {%- if section.settings.heading != blank -%}<h2 class="likyly-recs__title">{{ section.settings.heading | escape }}</h2>{%- endif -%}
@@ -70,6 +71,7 @@ const TEMPLATES = {
   .likyly-recs__card { display: flex; flex-direction: column; gap: .5rem; color: inherit; text-decoration: none; }
   .likyly-recs__card img { width: 100%; aspect-ratio: 1; object-fit: cover; }
   .likyly-recs__price { opacity: .75; }
+  .likyly-recs__notice { margin: 0 0 1rem; padding: .75rem 1rem; border-left: 3px solid #ff5b72; background: rgba(255, 91, 114, .08); font-size: .875rem; }
 </style>
 
 <script type="module">
@@ -77,8 +79,20 @@ const TEMPLATES = {
 
   const root = document.getElementById("likyly-{{ section.id }}");
   const key = root.dataset.key;
+  // A block that cannot show stays hidden from visitors and says why in the console. In the
+  // theme editor and on a local preview (shopify theme dev), it also says it on the page.
+  const diagnose = root.dataset.diagnose === "true" || ["127.0.0.1", "localhost"].includes(location.hostname);
+  const explain = (text, error) => {
+    console.warn("LIKYLY: " + text, error || "");
+    if (!diagnose) return;
+    const notice = document.createElement("p");
+    notice.className = "likyly-recs__notice";
+    notice.textContent = "LIKYLY (shown only in the theme editor and on a local preview): " + text;
+    root.querySelector(".likyly-recs__grid").before(notice);
+    root.hidden = false;
+  };
   if (key.indexOf("pk_") !== 0) {
-    console.warn("LIKYLY: no public key in snippets/likyly-key.liquid");
+    explain("no public key in snippets/likyly-key.liquid. Run npx @likyly/wizard in the theme folder.");
   } else {
     const likyly = new Likyly({ apiKey: key });
     const placement = root.dataset.placement;
@@ -110,6 +124,8 @@ const TEMPLATES = {
           ),
       );
       const shown = products.filter(Boolean);
+      if (!recs.items.length) explain('placement "' + placement + '" has no product to recommend on this page (catalog empty, or this product not in it yet).');
+      else if (!shown.length) explain('LIKYLY recommended ' + recs.items.length + " products, none of them found in this store (handles: " + recs.items.map((item) => item.properties.url).join(", ") + ").");
       const grid = root.querySelector(".likyly-recs__grid");
       for (const { item, product } of shown) {
         const link = document.createElement("a");
@@ -147,7 +163,10 @@ const TEMPLATES = {
         }).observe(root);
       }
     } catch (error) {
-      console.warn("LIKYLY: no recommendations for placement " + placement, error);
+      if (error.statusCode === 401)
+        explain("the public key in snippets/likyly-key.liquid was refused: it was regenerated since (another project's wizard, or likyly.com). Run npx @likyly/wizard again here, or paste the current key in that file.", error);
+      else if (error.statusCode === 404) explain('placement "' + placement + '" does not exist in LIKYLY: check the "LIKYLY placement" setting of this section.', error);
+      else explain('no recommendations for placement "' + placement + '": ' + error.message, error);
     }
   }
 </script>

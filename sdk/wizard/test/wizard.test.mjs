@@ -7,7 +7,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { detectProject, detectEditors, installedEditors, EDITORS } from "../src/frameworks.mjs";
 import { mergeConfig, writeMcpConfig, removeTomlBlock, approveClaudeServer, hasDeveloperKey } from "../src/mcp.mjs";
-import { isServerOnlyKey, writeEnv, writeStarter } from "../src/setup.mjs";
+import { isServerOnlyKey, writeEnv, writeStarter, starterContent } from "../src/setup.mjs";
 import { parseArgs } from "../src/cli.mjs";
 import { describePlan, installMode } from "../src/actions.mjs";
 
@@ -1095,4 +1095,15 @@ test("pages: a key that cannot read the catalog, no key - each said plainly", as
     if (saved !== undefined) process.env.LIKYLY_DEVELOPER_KEY = saved;
   }
   assert.equal(parseArgs(["pages", "--json"]).command, "pages");
+});
+
+test("the Shopify section says why it shows nothing, but only in the theme editor or a local preview", () => {
+  const section = starterContent({ template: "shopify-section" });
+  assert.match(section, /data-diagnose="\{\{ request\.design_mode \}\}"/);
+  assert.match(section, /\["127\.0\.0\.1", "localhost"\]\.includes\(location\.hostname\)/);
+  assert.match(section, /error\.statusCode === 401/); // a regenerated public key: the case that hid the block silently
+  assert.match(section, /error\.statusCode === 404/);
+  const script = section.split('<script type="module">')[1].split("</script>")[0].replace("{{ section.id }}", "x");
+  const checked = spawnSync(process.execPath, ["--input-type=module", "--check"], { input: script.replace(/^\s*import .*$/m, "") });
+  assert.equal(checked.status, 0, String(checked.stderr));
 });
