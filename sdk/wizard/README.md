@@ -94,8 +94,9 @@ Nothing is installed: the wizard writes the public key to `snippets/likyly-key.l
 that sends the product view, shows the products LIKYLY recommends - read from the store itself,
 so prices follow the visitor's currency - and tracks impressions and clicks. Add it from the
 theme editor (*Add section → LIKYLY recommendations*) or let your assistant put it in
-`templates/product.json`, then preview with `shopify theme dev` and publish with
-`shopify theme push`. Right after you sign in, the wizard connects the store's catalog itself:
+`templates/product.json`, then preview with `npx @likyly/wizard preview` (it runs
+`shopify theme dev --store <your store>` in a new terminal window, where you type the storefront
+password, and leaves your terminal free) and publish with `shopify theme push`. Right after you sign in, the wizard connects the store's catalog itself:
 you type the store address and the app's Client ID and secret (the secret is masked) in the
 terminal, and they go straight to LIKYLY, encrypted - never to your AI assistant, never to a file.
 The app is one from Shopify's Dev Dashboard installed on the store with `read_products` (or, on

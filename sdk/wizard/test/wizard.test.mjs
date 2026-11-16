@@ -727,7 +727,9 @@ test("preview command: nothing known is a clear error, not a hang", () => {
   const res = runCli(["preview", "--dir", dir], dir);
   assert.equal(res.status, 1);
   assert.match(res.stderr, /No preview command known/);
-  assert.equal(parseArgs(["preview", "--store", "x", "--new-window"]).newWindow, true);
+  assert.equal(parseArgs(["preview"]).here, false, "a new window by default: the terminal stays free");
+  assert.equal(parseArgs(["preview", "--here"]).here, true);
+  assert.equal(parseArgs(["preview", "--store", "x", "--new-window"]).here, false);
 });
 
 // --- Magento: a module written by the wizard, the catalog read through an Integration ----------

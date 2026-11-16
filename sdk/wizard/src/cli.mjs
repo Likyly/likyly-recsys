@@ -77,15 +77,20 @@ async function preview(opts) {
   }
   console.log(`\n${paint("1", "LIKYLY preview")} ${paint("2", plan.command)}`);
   for (const note of plan.notes) console.log(`  ${paint("2", "·")} ${note}`);
-  // An assistant runs this without a terminal to answer prompts (a store password): a new window.
-  const here = !opts.newWindow && process.stdin.isTTY && process.stdout.isTTY;
-  if (here) {
+  // A new window by default: a dev server holds its terminal until Ctrl+C, so the developer (or
+  // their assistant, which can't answer a store password prompt) carries on in this one.
+  // --here runs it in place, when this is a real terminal.
+  if (opts.here && process.stdin.isTTY && process.stdout.isTTY) {
     console.log("");
     return spawnSync(plan.command, { cwd: opts.dir, stdio: "inherit", shell: true }).status ?? 1;
   }
   if (openInNewTerminal(plan.command, opts.dir)) {
     console.log(`  ${paint("32", "✓")} Started in a new terminal window. Answer any prompt there; stop it with Ctrl+C.`);
     return 0;
+  }
+  if (process.stdin.isTTY && process.stdout.isTTY) {
+    console.log(`  ${paint("33", "!")} Could not open a terminal window: running it here (stop it with Ctrl+C).\n`);
+    return spawnSync(plan.command, { cwd: opts.dir, stdio: "inherit", shell: true }).status ?? 1;
   }
   console.error(`  ${paint("31", "✗")} Could not open a terminal window. Run it in a terminal:\n    cd ${opts.dir}\n    ${plan.command}`);
   return 1;

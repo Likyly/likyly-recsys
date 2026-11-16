@@ -27,9 +27,9 @@ ${blue("Commands")}
                  they go straight to LIKYLY (encrypted), never to your assistant
   magento        connect a Magento / Adobe Commerce store's catalog, the same way: the
                  store's address and an Integration's four values, typed here
-  preview        start the site's local preview (shopify theme dev, or the dev script) to
-                 see LIKYLY's changes live; run by an AI assistant, it opens a new terminal
-                 window, where a store password can be typed
+  preview        start the site's local preview (shopify theme dev, or the dev script) in a
+                 new terminal window, to see LIKYLY's changes live while this terminal (or
+                 your assistant) carries on; a store password is typed in that window
   detect         print what was detected, change nothing
   inventory      list what LIKYLY put in this project: packages, key variable, setup files,
                  and every source line that uses LIKYLY (read-only; --json for data)
@@ -49,7 +49,7 @@ ${blue("Options")}
                          likyly/uninstall, or on the current one (asked otherwise)
   --json                 with inventory: print JSON
   --store <shop>         with preview: the Shopify store ${dim("(default: shopify.theme.toml, or your LIKYLY source)")}
-  --new-window           with preview: always open it in a new terminal window
+  --here                 with preview: run it in this terminal instead of a new window
   --hosted               use the hosted MCP server (mcp.likyly.com) instead of npx
   --no-install           do not run the package manager
   --dry-run              show what would happen, write nothing
@@ -59,7 +59,7 @@ ${blue("Options")}
 `;
 
 export function parseArgs(argv) {
-  const opts = { command: "install", dir: process.cwd(), yes: false, dryRun: false, install: true, hosted: false, editors: null, publicKey: null, placement: null, branch: null, json: false, store: null, newWindow: false };
+  const opts = { command: "install", dir: process.cwd(), yes: false, dryRun: false, install: true, hosted: false, editors: null, publicKey: null, placement: null, branch: null, json: false, store: null, here: false };
   const positional = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -75,7 +75,8 @@ export function parseArgs(argv) {
     else if (a === "--no-install") opts.install = false;
     else if (a === "--hosted") opts.hosted = true;
     else if (a === "--json") opts.json = true;
-    else if (a === "--new-window") opts.newWindow = true;
+    else if (a === "--here") opts.here = true;
+    else if (a === "--new-window") opts.here = false; // the default since 0.12.1, still accepted
     else if (a === "--store") opts.store = next();
     else if (a === "--dir") opts.dir = next();
     else if (a === "--public-key") opts.publicKey = next();
