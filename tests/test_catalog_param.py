@@ -84,3 +84,21 @@ def test_openapi_documents_the_parameter_as_optional(http):
         for operation in schema["paths"][path].values():
             parameter = next(p for p in operation["parameters"] if p["name"] == "data_product_type")
             assert parameter.get("required") is False and "optional" in parameter["description"].lower()
+
+
+def test_a_catalog_emptied_from_the_console_does_not_make_the_live_one_ambiguous(http):
+    # Production: the console's "delete catalog" removed running-shoes' items but kept its events,
+    # so the account still counted two catalogs and every view, impression and click a Shopify
+    # theme sent without data_product_type was a 422 - recommendations were served, nothing tracked.
+    tenant = make_tenant()
+    http.put("/items/RUN-1", params={"data_product_type": "running-shoes"}, headers=tenant.secret, json={"title": "Shoe"})
+    http.post("/events/view", params={"data_product_type": "running-shoes"}, headers=tenant.public, json={"session_id": "s", "item_id": "RUN-1"})
+    db.delete_catalog(tenant.client_id, "running-shoes")
+    http.put("/items/1551", params={"data_product_type": "likyly-sandbox"}, headers=tenant.secret, json={"title": "2001"})
+    app_module._catalog_cache.clear()
+    assert set(db.list_catalogs_for_client(tenant.client_id)) == {"running-shoes", "likyly-sandbox"}
+
+    for event in ("view", "impression", "click"):
+        response = http.post(f"/events/{event}", headers=tenant.public, json={"session_id": "s", "item_id": "1551"})
+        assert response.status_code == 200, response.text
+    assert http.get("/items/1551", headers=tenant.secret).json()["title"] == "2001"

@@ -89,7 +89,9 @@ const TEMPLATES = {
     const money = (cents) =>
       currency ? new Intl.NumberFormat(document.documentElement.lang || undefined, { style: "currency", currency }).format(cents / 100) : "";
 
-    if (itemId) likyly.events.view({ ...who, itemId, placement: "product_page" }).catch(() => {});
+    // An event LIKYLY refuses is said in the console (it never breaks the page).
+    const unrecorded = (type) => (error) => console.warn("LIKYLY: " + type + " not recorded", error);
+    if (itemId) likyly.events.view({ ...who, itemId, placement: "product_page" }).catch(unrecorded("product view"));
 
     try {
       const recs = await likyly.placements.recommend({
@@ -129,7 +131,7 @@ const TEMPLATES = {
         link.addEventListener("click", (event) => {
           if (event.metaKey || event.ctrlKey || event.shiftKey) return;
           event.preventDefault();
-          const click = likyly.events.click({ ...who, itemId: item.itemId, recommendationId: recs.recommendationId, placement });
+          const click = likyly.events.click({ ...who, itemId: item.itemId, recommendationId: recs.recommendationId, placement }).catch(unrecorded("click"));
           Promise.race([click, new Promise((r) => setTimeout(r, 400))]).finally(() => (location.href = product.url));
         });
         const li = document.createElement("li");
@@ -141,7 +143,7 @@ const TEMPLATES = {
         new IntersectionObserver((entries, observer) => {
           if (!entries.some((e) => e.isIntersecting)) return;
           observer.disconnect();
-          for (const { item } of shown) likyly.events.impression({ ...who, itemId: item.itemId, recommendationId: recs.recommendationId, placement }).catch(() => {});
+          for (const { item } of shown) likyly.events.impression({ ...who, itemId: item.itemId, recommendationId: recs.recommendationId, placement }).catch(unrecorded("impression"));
         }).observe(root);
       }
     } catch (error) {

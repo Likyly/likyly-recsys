@@ -9499,7 +9499,7 @@
         "operationId": "catalog_erase",
         "parameters": [
           {
-            "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise).",
+            "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise) - unless only one of them still holds items: that one is used.",
             "in": "query",
             "name": "data_product_type",
             "required": false,
@@ -9515,7 +9515,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise).",
+              "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise) - unless only one of them still holds items: that one is used.",
               "examples": [
                 "shop"
               ],
@@ -15714,7 +15714,7 @@
         "operationId": "events_batch",
         "parameters": [
           {
-            "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise).",
+            "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise) - unless only one of them still holds items: that one is used.",
             "in": "query",
             "name": "data_product_type",
             "required": false,
@@ -15730,7 +15730,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise).",
+              "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise) - unless only one of them still holds items: that one is used.",
               "examples": [
                 "shop"
               ],
@@ -15801,7 +15801,7 @@
         "operationId": "events_identify",
         "parameters": [
           {
-            "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise).",
+            "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise) - unless only one of them still holds items: that one is used.",
             "in": "query",
             "name": "data_product_type",
             "required": false,
@@ -15817,7 +15817,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise).",
+              "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise) - unless only one of them still holds items: that one is used.",
               "examples": [
                 "shop"
               ],
@@ -15888,7 +15888,7 @@
         "operationId": "events_purchase",
         "parameters": [
           {
-            "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise).",
+            "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise) - unless only one of them still holds items: that one is used.",
             "in": "query",
             "name": "data_product_type",
             "required": false,
@@ -15904,7 +15904,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise).",
+              "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise) - unless only one of them still holds items: that one is used.",
               "examples": [
                 "shop"
               ],
@@ -15975,7 +15975,7 @@
         "operationId": "events_view",
         "parameters": [
           {
-            "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise).",
+            "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise) - unless only one of them still holds items: that one is used.",
             "in": "query",
             "name": "data_product_type",
             "required": false,
@@ -15991,7 +15991,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise).",
+              "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise) - unless only one of them still holds items: that one is used.",
               "examples": [
                 "shop"
               ],
@@ -16076,7 +16076,7 @@
             }
           },
           {
-            "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise).",
+            "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise) - unless only one of them still holds items: that one is used.",
             "in": "query",
             "name": "data_product_type",
             "required": false,
@@ -16092,7 +16092,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise).",
+              "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise) - unless only one of them still holds items: that one is used.",
               "examples": [
                 "shop"
               ],
@@ -16163,7 +16163,7 @@
         "operationId": "generate_model",
         "parameters": [
           {
-            "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise).",
+            "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise) - unless only one of them still holds items: that one is used.",
             "in": "query",
             "name": "data_product_type",
             "required": false,
@@ -16179,7 +16179,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise).",
+              "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise) - unless only one of them still holds items: that one is used.",
               "examples": [
                 "shop"
               ],
@@ -16342,7 +16342,7 @@
         "operationId": "recommendations_get",
         "parameters": [
           {
-            "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise).",
+            "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise) - unless only one of them still holds items: that one is used.",
             "in": "query",
             "name": "data_product_type",
             "required": false,
@@ -16358,7 +16358,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise).",
+              "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise) - unless only one of them still holds items: that one is used.",
               "examples": [
                 "shop"
               ],
@@ -16461,7 +16461,7 @@
             }
           },
           {
-            "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise).",
+            "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise) - unless only one of them still holds items: that one is used.",
             "in": "query",
             "name": "data_product_type",
             "required": false,
@@ -16477,7 +16477,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise).",
+              "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise) - unless only one of them still holds items: that one is used.",
               "examples": [
                 "shop"
               ],
@@ -16638,7 +16638,7 @@
             }
           },
           {
-            "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise).",
+            "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise) - unless only one of them still holds items: that one is used.",
             "in": "query",
             "name": "data_product_type",
             "required": false,
@@ -16654,7 +16654,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise).",
+              "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise) - unless only one of them still holds items: that one is used.",
               "examples": [
                 "shop"
               ],
@@ -16794,7 +16794,7 @@
         "operationId": "get_rec_content_vectordb_init",
         "parameters": [
           {
-            "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise).",
+            "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise) - unless only one of them still holds items: that one is used.",
             "in": "query",
             "name": "data_product_type",
             "required": false,
@@ -16810,7 +16810,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise).",
+              "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise) - unless only one of them still holds items: that one is used.",
               "examples": [
                 "shop"
               ],
@@ -16904,7 +16904,7 @@
             }
           },
           {
-            "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise).",
+            "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise) - unless only one of them still holds items: that one is used.",
             "in": "query",
             "name": "data_product_type",
             "required": false,
@@ -16920,7 +16920,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise).",
+              "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise) - unless only one of them still holds items: that one is used.",
               "examples": [
                 "shop"
               ],
@@ -17040,7 +17040,7 @@
             }
           },
           {
-            "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise).",
+            "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise) - unless only one of them still holds items: that one is used.",
             "in": "query",
             "name": "data_product_type",
             "required": false,
@@ -17056,7 +17056,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise).",
+              "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise) - unless only one of them still holds items: that one is used.",
               "examples": [
                 "shop"
               ],
@@ -17208,7 +17208,7 @@
             }
           },
           {
-            "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise).",
+            "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise) - unless only one of them still holds items: that one is used.",
             "in": "query",
             "name": "data_product_type",
             "required": false,
@@ -17224,7 +17224,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise).",
+              "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise) - unless only one of them still holds items: that one is used.",
               "examples": [
                 "shop"
               ],
@@ -17406,7 +17406,7 @@
             }
           },
           {
-            "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise).",
+            "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise) - unless only one of them still holds items: that one is used.",
             "in": "query",
             "name": "data_product_type",
             "required": false,
@@ -17422,7 +17422,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise).",
+              "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise) - unless only one of them still holds items: that one is used.",
               "examples": [
                 "shop"
               ],
@@ -17583,7 +17583,7 @@
             }
           },
           {
-            "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise).",
+            "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise) - unless only one of them still holds items: that one is used.",
             "in": "query",
             "name": "data_product_type",
             "required": false,
@@ -17599,7 +17599,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise).",
+              "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise) - unless only one of them still holds items: that one is used.",
               "examples": [
                 "shop"
               ],
@@ -17755,7 +17755,7 @@
             }
           },
           {
-            "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise).",
+            "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise) - unless only one of them still holds items: that one is used.",
             "in": "query",
             "name": "data_product_type",
             "required": false,
@@ -17771,7 +17771,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise).",
+              "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise) - unless only one of them still holds items: that one is used.",
               "examples": [
                 "shop"
               ],
@@ -17846,7 +17846,7 @@
         "operationId": "items_delete_many",
         "parameters": [
           {
-            "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise).",
+            "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise) - unless only one of them still holds items: that one is used.",
             "in": "query",
             "name": "data_product_type",
             "required": false,
@@ -17862,7 +17862,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise).",
+              "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise) - unless only one of them still holds items: that one is used.",
               "examples": [
                 "shop"
               ],
@@ -17943,7 +17943,7 @@
         "operationId": "items_import",
         "parameters": [
           {
-            "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise).",
+            "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise) - unless only one of them still holds items: that one is used.",
             "in": "query",
             "name": "data_product_type",
             "required": false,
@@ -17959,7 +17959,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise).",
+              "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise) - unless only one of them still holds items: that one is used.",
               "examples": [
                 "shop"
               ],
@@ -18056,7 +18056,7 @@
             }
           },
           {
-            "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise).",
+            "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise) - unless only one of them still holds items: that one is used.",
             "in": "query",
             "name": "data_product_type",
             "required": false,
@@ -18072,7 +18072,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise).",
+              "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise) - unless only one of them still holds items: that one is used.",
               "examples": [
                 "shop"
               ],
@@ -18167,7 +18167,7 @@
             }
           },
           {
-            "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise).",
+            "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise) - unless only one of them still holds items: that one is used.",
             "in": "query",
             "name": "data_product_type",
             "required": false,
@@ -18183,7 +18183,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise).",
+              "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise) - unless only one of them still holds items: that one is used.",
               "examples": [
                 "shop"
               ],
@@ -18278,7 +18278,7 @@
             }
           },
           {
-            "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise).",
+            "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise) - unless only one of them still holds items: that one is used.",
             "in": "query",
             "name": "data_product_type",
             "required": false,
@@ -18294,7 +18294,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise).",
+              "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise) - unless only one of them still holds items: that one is used.",
               "examples": [
                 "shop"
               ],
@@ -18476,7 +18476,7 @@
         "operationId": "get_model_status",
         "parameters": [
           {
-            "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise).",
+            "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise) - unless only one of them still holds items: that one is used.",
             "in": "query",
             "name": "data_product_type",
             "required": false,
@@ -18492,7 +18492,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise).",
+              "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise) - unless only one of them still holds items: that one is used.",
               "examples": [
                 "shop"
               ],
@@ -18563,7 +18563,7 @@
         "operationId": "get_model_versions",
         "parameters": [
           {
-            "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise).",
+            "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise) - unless only one of them still holds items: that one is used.",
             "in": "query",
             "name": "data_product_type",
             "required": false,
@@ -18579,7 +18579,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise).",
+              "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise) - unless only one of them still holds items: that one is used.",
               "examples": [
                 "shop"
               ],
@@ -19812,7 +19812,7 @@
             }
           },
           {
-            "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise).",
+            "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise) - unless only one of them still holds items: that one is used.",
             "in": "query",
             "name": "data_product_type",
             "required": false,
@@ -19828,7 +19828,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise).",
+              "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise) - unless only one of them still holds items: that one is used.",
               "examples": [
                 "shop"
               ],
@@ -19913,7 +19913,7 @@
         "operationId": "users_import",
         "parameters": [
           {
-            "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise).",
+            "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise) - unless only one of them still holds items: that one is used.",
             "in": "query",
             "name": "data_product_type",
             "required": false,
@@ -19929,7 +19929,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise).",
+              "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise) - unless only one of them still holds items: that one is used.",
               "examples": [
                 "shop"
               ],
@@ -20026,7 +20026,7 @@
             }
           },
           {
-            "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise).",
+            "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise) - unless only one of them still holds items: that one is used.",
             "in": "query",
             "name": "data_product_type",
             "required": false,
@@ -20042,7 +20042,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise).",
+              "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise) - unless only one of them still holds items: that one is used.",
               "examples": [
                 "shop"
               ],
@@ -20137,7 +20137,7 @@
             }
           },
           {
-            "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise).",
+            "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise) - unless only one of them still holds items: that one is used.",
             "in": "query",
             "name": "data_product_type",
             "required": false,
@@ -20153,7 +20153,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise).",
+              "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise) - unless only one of them still holds items: that one is used.",
               "examples": [
                 "shop"
               ],
@@ -20248,7 +20248,7 @@
             }
           },
           {
-            "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise).",
+            "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise) - unless only one of them still holds items: that one is used.",
             "in": "query",
             "name": "data_product_type",
             "required": false,
@@ -20264,7 +20264,7 @@
                   "type": "null"
                 }
               ],
-              "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise).",
+              "description": "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when omitted, the account's only catalog is used, or `default` if it has none yet. An account with several catalogs must say which (`422` otherwise) - unless only one of them still holds items: that one is used.",
               "examples": [
                 "shop"
               ],

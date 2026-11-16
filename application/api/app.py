@@ -334,10 +334,18 @@ _catalog_cache: dict[int, tuple[float, list[str]]] = {}
 
 
 def _catalogs_of(client_id: int) -> list[str]:
+    """The catalog an omitted data_product_type can mean. Usually every catalog with items or
+    events; but when several exist and exactly one still holds items, that one: a catalog emptied
+    from the console keeps its past events (collaborative signal), and must not make every event
+    of the live catalog a 422 (a Shopify theme's views, impressions and clicks were all refused)."""
     cached = _catalog_cache.get(client_id)
     if cached and time.monotonic() - cached[0] < _CATALOG_CACHE_SECONDS:
         return cached[1]
     catalogs = list_catalogs_for_client(client_id)
+    if len(catalogs) > 1:
+        with_items = list_product_types_for_client(client_id)
+        if len(with_items) == 1:
+            catalogs = with_items
     _catalog_cache[client_id] = (time.monotonic(), catalogs)
     return catalogs
 
@@ -348,15 +356,16 @@ def resolve_catalog(
         description=(
             "Catalog namespace - keeps several catalogs of one account apart. **Optional**: when "
             f"omitted, the account's only catalog is used, or `{DEFAULT_CATALOG}` if it has none yet. "
-            "An account with several catalogs must say which (`422` otherwise)."
+            "An account with several catalogs must say which (`422` otherwise) - unless only one of "
+            "them still holds items: that one is used."
         ),
         examples=["shop"],
     ),
     api_key: Optional[str] = Security(api_key_header),
 ) -> str:
     """Query parameter of every API-key route. Explicit always wins. Omitted: the account's single
-    catalog (items or events), else "default" for a brand-new account; several -> 422, never a
-    silent guess between them. An unknown/missing key falls through to "default" - the auth
+    catalog (items or events), else "default" for a brand-new account; several -> the only one
+    still holding items, otherwise 422, never a silent guess between live catalogs. An unknown/missing key falls through to "default" - the auth
     dependency of the route rejects it right after with the proper 401."""
     if data_product_type is not None:
         return data_product_type
