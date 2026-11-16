@@ -605,3 +605,26 @@ def test_a_source_moves_to_another_catalog_and_the_plan_limit_offers_reuse(http,
     run = _sync(http, tenant, ds_id)
     assert run["items_upserted"] == 2 and run["items_deleted"] == 0
     assert {i["item_id"] for i in http.get("/items", params={"data_product_type": "new-shop"}, headers=tenant.secret).json()} == {"p1", "p2"}
+
+
+def test_candidate_credentials_are_tried_without_replacing_the_ones_that_work(http, tenant, monkeypatch):
+    # The wizard re-asks a store's credentials after a refusal: a typo must never overwrite
+    # credentials that work, so it tests the candidate first and saves only on success.
+    def fake_request(self, params):
+        good = self.credentials.get("token") == "good"
+        return FakeResponse({"products": REST_PRODUCTS} if good else {"error": "unauthorized"}, status_code=200 if good else 401)
+
+    monkeypatch.setattr("connectors.rest_api.RestApiConnector._request", fake_request)
+    ds_id = http.post("/data-sources", headers=tenant.secret, json={
+        "name": "rest", "type": "rest_api", "product_type": "shop",
+        "config": {"base_url": "https://example.invalid/products", "items_path": "products", "auth": {"type": "bearer"}},
+        "credentials": {"token": "good"},
+    }).json()["id"]
+    assert http.post(f"/data-sources/{ds_id}/test", headers=tenant.secret).json()["ok"] is True
+
+    tried = http.post(f"/data-sources/{ds_id}/test", headers=tenant.secret, json={"credentials": {"token": "typo"}}).json()
+    assert tried["ok"] is False
+    source = http.get(f"/data-sources/{ds_id}", headers=tenant.secret).json()
+    assert source["status"] == "connected" and source["last_error"] is None, "a candidate's failure is not the source's"
+    assert http.post(f"/data-sources/{ds_id}/test", headers=tenant.secret).json()["ok"] is True, "stored credentials untouched"
+    assert http.post(f"/data-sources/{ds_id}/test", headers=tenant.secret, json={"credentials": {"token": "good"}}).json()["ok"] is True

@@ -1012,6 +1012,11 @@ class DataSourceCreated(DataSource):
     push_secret: Optional[str] = Field(default=None, description="Only present for push-mode types (woocommerce, webhook) - shown once, configure the upstream system with it.")
 
 
+class ConnectionTestRequest(BaseModel):
+    credentials: Optional[dict[str, Any]] = Field(default=None, description="Candidate credentials to try instead of the stored ones. Nothing is saved: PATCH the source once the test passes.")
+    config: Optional[dict[str, Any]] = Field(default=None, description="Config keys to try on top of the stored config (merged shallowly). Nothing is saved.")
+
+
 class ConnectionTestResultOut(BaseModel):
     ok: bool
     message: str

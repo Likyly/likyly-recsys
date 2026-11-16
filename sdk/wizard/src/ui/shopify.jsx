@@ -10,8 +10,8 @@ import { connectShopifyCatalog, normalizeShopDomain, shopifyCredentials } from "
 
 const LATER = "npx @likyly/wizard shopify";
 
-function Field({ label, hint, placeholder, mask, error, onSubmit }) {
-  const [value, setValue] = useState("");
+function Field({ label, hint, placeholder, mask, error, initial = "", onSubmit }) {
+  const [value, setValue] = useState(initial);
   return (
     <Box flexDirection="column">
       <Text>{label}</Text>
@@ -32,15 +32,24 @@ export function ShopifyCatalogStep({ apiKey, onDone }) {
   const [shop, setShop] = useState(null);
   const [first, setFirst] = useState("");
   const [error, setError] = useState(null);
+  const [refusal, setRefusal] = useState(null); // Shopify's last "no", shown until the next try
   const [credentials, setCredentials] = useState(null);
   const [fetched, setFetched] = useState(0);
   const skip = () => onDone([{ level: "info", text: "Skipped. Connect the catalog later:", hint: LATER }], "skipped");
 
   useEffect(() => {
     if (stage !== "running") return;
-    connectShopifyCatalog({ apiKey, shop, credentials, onProgress: setFetched }).then((results) =>
-      onDone(results, results.some((r) => r.level === "fail") ? "not connected" : shop),
-    );
+    connectShopifyCatalog({ apiKey, shop, credentials, onProgress: setFetched }).then((results) => {
+      // Refused by Shopify: back to the fields, the reason shown, the store already filled in.
+      const refusal = results.find((r) => r.retry);
+      if (refusal) {
+        setCredentials(null);
+        setFetched(0);
+        setRefusal(`${refusal.text.replace(/^Shopify refused the connection: (?=Shopify )/, "")}. Check the store and the app's credentials, or leave empty to skip.`);
+        return setStage("shop");
+      }
+      onDone(results, results.some((r) => r.level === "fail") ? "not connected" : shop);
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- runs once, when the fields are filled
   }, [stage]);
 
@@ -57,7 +66,8 @@ export function ShopifyCatalogStep({ apiKey, onDone }) {
         label="Your store's address"
         hint="The credentials go straight to LIKYLY, encrypted: not in a file, not to your assistant. Enter on an empty field skips."
         placeholder="your-store.myshopify.com"
-        error={error}
+        initial={shop ?? ""}
+        error={error ?? refusal}
         onSubmit={(v) => {
           if (!v) return skip();
           const domain = normalizeShopDomain(v);
@@ -75,11 +85,12 @@ export function ShopifyCatalogStep({ apiKey, onDone }) {
         label={`Client ID of an app installed on ${shop} with read_products`}
         hint="Shopify Dev Dashboard → your app → Settings. On an older store, an Admin API token (shpat_…) works too."
         placeholder="Client ID, or shpat_…"
-        error={error}
+        error={error ?? refusal}
         onSubmit={(v) => {
           if (!v) return skip();
           setError(null);
           if (v.startsWith("shpat_")) {
+            setRefusal(null);
             setCredentials(shopifyCredentials(v));
             return setStage("running");
           }
@@ -96,9 +107,10 @@ export function ShopifyCatalogStep({ apiKey, onDone }) {
         hint="Same page, under the Client ID. It stays hidden as you paste it."
         placeholder="shpss_…"
         mask="•"
-        error={error}
+        error={error ?? refusal}
         onSubmit={(v) => {
           if (!v) return skip();
+          setRefusal(null);
           setCredentials(shopifyCredentials(first, v));
           setStage("running");
         }}

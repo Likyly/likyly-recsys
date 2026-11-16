@@ -620,6 +620,7 @@ test("Shopify: a source that fails its test is deleted again; an existing one fo
   const r1 = await connectShopifyCatalog({ apiKey: "lk", shop: "s.myshopify.com", credentials: { client_id: "a", client_secret: "b" }, fetchImpl: failing.fetchImpl });
   assert.equal(r1[0].level, "fail");
   assert.match(r1[0].text, /refused the client id and secret/);
+  assert.equal(r1[0].retry, true, "the step asks for the store and credentials again");
   assert.ok(failing.calls.some((c) => c.method === "DELETE" && c.path === "/data-sources/8"));
 
   const existing = fakeApi({
@@ -632,6 +633,17 @@ test("Shopify: a source that fails its test is deleted again; an existing one fo
   assert.ok(!existing.calls.some((c) => c.method === "POST" && c.path === "/data-sources"), "no second source");
   assert.deepEqual(existing.calls.find((c) => c.method === "PATCH").body, { credentials: { access_token: "shpat_x" } });
   assert.ok(r2.some((r) => r.level === "fail" && /could not start: One sync per day/.test(r.text)));
+});
+
+test("Shopify: new credentials for an existing source are tested first, and a refusal keeps the old ones", async () => {
+  const { calls, fetchImpl } = fakeApi({
+    "GET /data-sources": [200, [{ id: 3, type: "shopify", product_type: "s", config: { shop_domain: "s.myshopify.com" } }]],
+    "POST /data-sources/3/test": [200, { ok: false, message: "Shopify refused the client id and secret (400)" }],
+  });
+  const r = await connectShopifyCatalog({ apiKey: "lk", shop: "s.myshopify.com", credentials: { client_id: "a", client_secret: "typo" }, fetchImpl });
+  assert.equal(r[0].retry, true);
+  assert.deepEqual(calls.find((c) => c.path === "/data-sources/3/test").body, { credentials: { client_id: "a", client_secret: "typo" } });
+  assert.ok(!calls.some((c) => c.method === "PATCH" || c.method === "DELETE"), "the working source is left as it was");
 });
 
 test("Shopify: an API error is reported with its own message", async () => {

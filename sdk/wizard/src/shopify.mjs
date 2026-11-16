@@ -88,10 +88,16 @@ async function firstSync(api, id, { wait, onProgress, timeoutMs = 180000 }) {
   return [warn("The first sync is still running: check it later in your LIKYLY console (Catalogue → Connecteurs)")];
 }
 
+/** Shopify said no: the developer can type the store and credentials again (`retry`). */
+function refused(test) {
+  return [{ ...fail(`Shopify refused the connection: ${test.data?.message ?? detail(test)}`), retry: true }];
+}
+
 /**
  * Create (or, for the same shop, update) the `shopify` source, test it, start the first sync.
  * A source this call created and that fails its test is deleted again: nothing half-configured
- * is left behind (the free plan has room for one source).
+ * is left behind (the free plan has room for one source). An existing source's credentials are
+ * tested before they replace the stored ones. A refusal is marked `retry`.
  */
 export async function connectShopifyCatalog({ apiKey, shop, credentials, fetchImpl = fetch, wait = (ms) => new Promise((r) => setTimeout(r, ms)), onProgress }) {
   const api = client(apiKey, fetchImpl);
@@ -102,6 +108,9 @@ export async function connectShopifyCatalog({ apiKey, shop, credentials, fetchIm
     if (!list.ok) return [fail(`LIKYLY refused to list your sources: ${detail(list)}`)];
     source = (list.data ?? []).find((s) => s.type === "shopify" && s.config?.shop_domain === shop);
     if (source) {
+      // Tried before they are saved: a typo never replaces credentials that work.
+      const tried = await api("POST", `/data-sources/${source.id}/test`, { credentials });
+      if (!tried.ok || !tried.data?.ok) return refused(tried);
       const updated = await api("PATCH", `/data-sources/${source.id}`, { credentials });
       if (!updated.ok) return [fail(`LIKYLY could not update the ${shop} source: ${detail(updated)}`)];
     } else {
@@ -120,10 +129,7 @@ export async function connectShopifyCatalog({ apiKey, shop, credentials, fetchIm
     const test = await api("POST", `/data-sources/${source.id}/test`);
     if (!test.ok || !test.data?.ok) {
       if (created) await api("DELETE", `/data-sources/${source.id}`);
-      return [
-        fail(`Shopify refused the connection: ${test.data?.message ?? detail(test)}`),
-        info("Check that the app is installed on this store with read_products, then run: npx @likyly/wizard shopify"),
-      ];
+      return refused(test);
     }
 
     const results = [ok(`Connected ${shop} → catalog ${source.product_type}`, `(${test.data.message})`)];

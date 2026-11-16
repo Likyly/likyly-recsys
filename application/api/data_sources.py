@@ -20,7 +20,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, Header, HTTPExcep
 
 import data_source_service as service  # noqa: E402
 from schemas import (  # noqa: E402
-    CatalogStats, ConnectionTestResultOut, DataSource, DataSourceCreate, DataSourceCreated,
+    CatalogStats, ConnectionTestRequest, ConnectionTestResultOut, DataSource, DataSourceCreate, DataSourceCreated,
     DataSourceUpdate, ErrorResponse, FieldMappingDryRunOut, FieldMappingIn, Message,
     PreviewResultOut, PushPayload, PushSecretIssued, SourceTypeOut, SyncRun, SyncTriggerRequest,
 )
@@ -121,12 +121,14 @@ def delete_data_source(data_source_id: int, client_id: int = Depends(require_sco
 
 
 @router.post("/{data_source_id}/test", response_model=ConnectionTestResultOut, summary="Test the connection", responses=_errors(401, 403, 404, 422))
-def test_data_source(data_source_id: int, client_id: int = Depends(require_scope("sources:write"))):
+def test_data_source(data_source_id: int, payload: Optional[ConnectionTestRequest] = None, client_id: int = Depends(require_scope("sources:write"))):
     """Validates credentials/config reach the source without writing any catalog data -
     the `test_data_source` MCP tool. Always returns 200 with ok=false on failure (never a
-    500) so a coding agent can report *why* a connection failed."""
+    500) so a coding agent can report *why* a connection failed. With `credentials` and/or
+    `config` in the body, tries those instead of the stored ones and saves nothing - a typo
+    in new credentials never replaces ones that work."""
     try:
-        return service.test_data_source(client_id, data_source_id)
+        return service.test_data_source(client_id, data_source_id, payload)
     except service.NotFoundError as error:
         raise _not_found(error)
 

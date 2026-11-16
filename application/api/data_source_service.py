@@ -175,15 +175,28 @@ def _connector_for(client_id: int, row: dict[str, Any]):
     return build_connector(row["type"], row.get("config") or {}, credentials)
 
 
-def test_data_source(client_id: int, data_source_id: int) -> dict[str, Any]:
+def test_data_source(client_id: int, data_source_id: int, candidate=None) -> dict[str, Any]:
+    """Tests the stored configuration, or - with `candidate` credentials/config - what the
+    developer is about to save, without saving it or touching the source's status."""
     row = _require(client_id, data_source_id)
+    trying = candidate is not None and (candidate.credentials is not None or candidate.config is not None)
     try:
         result_ok, result_message, result_detail = True, "", None
-        result = _connector_for(client_id, row).test_connection()
+        if trying:
+            if candidate.credentials is not None:
+                credentials = candidate.credentials
+            else:
+                credentials = crypto.decrypt_credentials(db.get_data_source_credentials_encrypted(client_id, row["id"]))
+            config = {**(row.get("config") or {}), **(candidate.config or {})}
+            connector = build_connector(row["type"], config, credentials)
+        else:
+            connector = _connector_for(client_id, row)
+        result = connector.test_connection()
         result_ok, result_message, result_detail = result.ok, result.message, result.detail
     except Exception as error:  # a misconfigured connector (bad key, missing config field, ...)
         result_ok, result_message, result_detail = False, str(error), None
-    db.update_data_source(client_id, data_source_id, status="connected" if result_ok else "error", last_error=None if result_ok else result_message)
+    if not trying:
+        db.update_data_source(client_id, data_source_id, status="connected" if result_ok else "error", last_error=None if result_ok else result_message)
     return {"ok": result_ok, "message": result_message, "detail": result_detail}
 
 

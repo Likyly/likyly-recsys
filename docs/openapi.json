@@ -2317,6 +2317,38 @@
         "title": "ClientUsageSummary",
         "type": "object"
       },
+      "ConnectionTestRequest": {
+        "properties": {
+          "config": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Config keys to try on top of the stored config (merged shallowly). Nothing is saved.",
+            "title": "Config"
+          },
+          "credentials": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Candidate credentials to try instead of the stored ones. Nothing is saved: PATCH the source once the test passes.",
+            "title": "Credentials"
+          }
+        },
+        "title": "ConnectionTestRequest",
+        "type": "object"
+      },
       "ConnectionTestResultOut": {
         "properties": {
           "detail": {
@@ -15493,7 +15525,7 @@
     },
     "/data-sources/{data_source_id}/test": {
       "post": {
-        "description": "Validates credentials/config reach the source without writing any catalog data -\nthe `test_data_source` MCP tool. Always returns 200 with ok=false on failure (never a\n500) so a coding agent can report *why* a connection failed.",
+        "description": "Validates credentials/config reach the source without writing any catalog data -\nthe `test_data_source` MCP tool. Always returns 200 with ok=false on failure (never a\n500) so a coding agent can report *why* a connection failed. With `credentials` and/or\n`config` in the body, tries those instead of the stored ones and saves nothing - a typo\nin new credentials never replaces ones that work.",
         "operationId": "test_data_source",
         "parameters": [
           {
@@ -15506,6 +15538,23 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ConnectionTestRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Payload"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "content": {
