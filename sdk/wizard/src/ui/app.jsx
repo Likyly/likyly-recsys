@@ -343,7 +343,12 @@ function App({ opts: initialOpts, result }) {
         previewPlan(project, opts.dir, { store: shopRef.current })
           .catch(() => null)
           .then((plan) => {
-            const usable = plan && !opts.dryRun && (!plan.requires || commandExists(plan.requires));
+            if (plan?.running && !opts.dryRun) {
+              // Started earlier and still going: say where, start nothing (the port is taken).
+              setPrinted((p) => [...p, { key: "preview", kind: "step", title: "Preview your site", status: "ok", summary: "already running", results: [{ level: "ok", text: `Your preview is already running: ${plan.running}` }, ...plan.notes.map((text) => ({ level: "info", text }))] }]);
+              return setPhase("next");
+            }
+            const usable = plan?.command && !opts.dryRun && (!plan.requires || commandExists(plan.requires));
             setPreview(usable ? plan : null);
             setPhase(usable ? "preview" : "next");
           });

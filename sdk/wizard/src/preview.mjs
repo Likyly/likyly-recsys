@@ -8,6 +8,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
+import { connect } from "node:net";
 import { normalizeShopDomain } from "./shopify.mjs";
 import { readDeveloperKey } from "./mcp.mjs";
 import { API_URL, wizardUserAgent } from "./verify.mjs";
@@ -46,22 +47,71 @@ export async function themeStore(dir, { store, fetchImpl = fetch, env = process.
 
 const runScript = (pm, script) => (pm === "npm" ? `npm run ${script}` : `${pm} ${script}`);
 
+export const SHOPIFY_PREVIEW_PORT = 9292;
+
+/** True when something already listens on 127.0.0.1:port. */
+export function portTaken(port, host = "127.0.0.1") {
+  return new Promise((done) => {
+    const socket = connect({ port, host });
+    const finish = (taken) => {
+      socket.destroy();
+      done(taken);
+    };
+    socket.setTimeout(1000, () => finish(false));
+    socket.once("connect", () => finish(true));
+    socket.once("error", () => finish(false));
+  });
+}
+
+/** Is what answers on this port a Shopify storefront (a `shopify theme dev` already running)? */
+export async function servesShopify(port, fetchImpl = fetch) {
+  try {
+    const res = await fetchImpl(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(5000) });
+    return /cdn\.shopify\.com|Shopify\.theme/.test(await res.text());
+  } catch {
+    return false;
+  }
+}
+
+/** The first free port after `from` (a few tried), or null. */
+async function freePortAfter(from) {
+  for (let port = from + 1; port <= from + 20; port++) if (!(await portTaken(port))) return port;
+  return null;
+}
+
 /**
  * What runs the preview of this project, or null when the wizard knows none.
- * { command, requires, install, notes[] }
+ * { command, requires, install, notes[], url?, running? } - `running` (the URL) when a preview
+ * already answers there: nothing is to start, a second one would fail on the busy port.
  */
 export async function previewPlan(project, dir, options = {}) {
   if (!project) return null;
   if (project.id === "shopify") {
     const store = await themeStore(dir, options);
+    const wanted = Number(options.port) || SHOPIFY_PREVIEW_PORT;
+    let port = wanted;
+    const notes = [];
+    if (await portTaken(wanted)) {
+      if (await servesShopify(wanted, options.fetchImpl)) {
+        const url = `http://127.0.0.1:${wanted}`;
+        return { running: url, url, command: null, requires: null, notes: [`Open ${url}, then a product page: theme changes show up live.`] };
+      }
+      port = await freePortAfter(wanted);
+      if (!port) return { blocked: `Ports ${wanted} to ${wanted + 20} are all taken: free one, or pass --port`, notes: [] };
+      notes.push(`Port ${wanted} is taken by another program: the preview uses ${port}.`);
+    }
+    const url = `http://127.0.0.1:${port}`;
+    const portFlag = port === SHOPIFY_PREVIEW_PORT ? "" : ` --port ${port}`;
     return {
-      command: store ? `shopify theme dev --store ${store}` : "shopify theme dev",
+      url,
+      command: `shopify theme dev${store ? ` --store ${store}` : ""}${portFlag}`,
       requires: "shopify",
       install: "npm install -g @shopify/cli",
       notes: [
-        "Open the local address it prints (http://127.0.0.1:9292), then a product page.",
+        ...notes,
+        `Open the local address it prints (${url}), then a product page.`,
         `A password-protected store (every development store) asks for its storefront password: ${store ? `https://admin.shopify.com/store/${store.replace(/\.myshopify\.com$/, "")}/online_store/preferences` : "Shopify admin"} (Online Store → Preferences) → Store access → Private mode → Password. Not your admin login, not the app's client secret.`,
-        "Nothing on 127.0.0.1:9292 means the preview did not start: read the error in its window.",
+        `Nothing on ${url} means the preview did not start: read the error in its window.`,
         "Theme changes show up live while it runs.",
       ],
     };

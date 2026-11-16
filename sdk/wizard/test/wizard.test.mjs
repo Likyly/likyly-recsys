@@ -672,14 +672,28 @@ test("Shopify: a sync that saves nothing says why (e.g. the plan's catalog limit
   assert.equal(failure.text, "No product saved in LIKYLY (120 rejected): Free plan limit reached: 1 catalog max.");
 });
 
-import { openInNewTerminal, previewPlan, themeStore } from "../src/preview.mjs";
+import { createServer } from "node:http";
+import { openInNewTerminal, portTaken, previewPlan, themeStore } from "../src/preview.mjs";
+
+/** A real local HTTP server answering `body` on every path, on a free port. */
+function serve(body) {
+  return new Promise((resolve) => {
+    const server = createServer((req, res) => res.end(body)).listen(0, "127.0.0.1", () => resolve({ port: server.address().port, close: () => new Promise((r) => server.close(r)) }));
+  });
+}
+async function freePort() {
+  const s = await serve("");
+  await s.close();
+  return s.port;
+}
 
 const THEME = { "layout/theme.liquid": "<html></html>", "config/settings_schema.json": "[]", "sections/main-product.liquid": "" };
 
 test("preview: a Shopify theme previews against its store, found without asking", async () => {
   const noApi = async () => ({ ok: false });
+  const port = await freePort();
   const toml = project({ ...THEME, "shopify.theme.toml": '[environments.dev]\nstore = "my-shop"\n' });
-  assert.equal((await previewPlan(detectProject(toml), toml, { fetchImpl: noApi, env: {} })).command, "shopify theme dev --store my-shop.myshopify.com");
+  assert.equal((await previewPlan(detectProject(toml), toml, { fetchImpl: noApi, env: {}, port })).command, `shopify theme dev --store my-shop.myshopify.com --port ${port}`);
   assert.equal(await themeStore(toml, { store: "https://other.myshopify.com/admin", env: {} }), "other.myshopify.com", "--store wins");
 
   // No toml: the store of the developer's LIKYLY Shopify source.
@@ -689,15 +703,15 @@ test("preview: a Shopify theme previews against its store, found without asking"
     seen.push([url, init.headers["X-API-Key"]]);
     return { ok: true, json: async () => [{ type: "rest_api" }, { type: "shopify", config: { shop_domain: "likyly-sandbox.myshopify.com" } }] };
   };
-  const plan = await previewPlan(detectProject(dir), dir, { fetchImpl, env: {} });
-  assert.equal(plan.command, "shopify theme dev --store likyly-sandbox.myshopify.com");
+  const plan = await previewPlan(detectProject(dir), dir, { fetchImpl, env: {}, port });
+  assert.equal(plan.command, `shopify theme dev --store likyly-sandbox.myshopify.com --port ${port}`);
   assert.equal(plan.requires, "shopify");
   assert.ok(plan.notes.some((n) => n.includes("https://admin.shopify.com/store/likyly-sandbox/online_store/preferences") && /not the app's client secret/.test(n)));
   assert.match(seen[0][0], /\/data-sources$/);
   assert.equal(seen[0][1], "lk_dev");
 
   const unknown = project(THEME);
-  assert.equal((await previewPlan(detectProject(unknown), unknown, { env: {} })).command, "shopify theme dev", "the CLI asks for the store itself");
+  assert.equal((await previewPlan(detectProject(unknown), unknown, { env: {}, port })).command, `shopify theme dev --port ${port}`, "the CLI asks for the store itself");
 });
 
 test("preview: a JS project runs its own dev script; none known otherwise", async () => {
@@ -855,4 +869,62 @@ test("catalog step: the store already connected is found first, with its product
     throw new Error("offline");
   };
   assert.equal(await findConnectedSource({ apiKey: "lk", type: "shopify", fetchImpl: down }), null, "LIKYLY unreachable: just ask for the store");
+});
+
+
+test("preview: a Shopify preview already running is reused, never started twice (EADDRINUSE)", async () => {
+  // The developer ran `npx @likyly/wizard preview` while an earlier one still ran: the second
+  // `shopify theme dev` died with "listen EADDRINUSE 127.0.0.1:9292".
+  const store = await serve('<html><script src="//cdn.shopify.com/s/files/theme.js"></script>Shopify.theme = {}</html>');
+  try {
+    assert.equal(await portTaken(store.port), true);
+    const dir = project(THEME);
+    const plan = await previewPlan(detectProject(dir), dir, { store: "s", port: store.port, env: {} });
+    assert.equal(plan.running, `http://127.0.0.1:${store.port}`);
+    assert.equal(plan.command, null, "nothing to start");
+  } finally {
+    await store.close();
+  }
+});
+
+test("preview: a port taken by another program moves the preview to the next free one", async () => {
+  const other = await serve("<html>some other dev server</html>");
+  try {
+    const dir = project(THEME);
+    const plan = await previewPlan(detectProject(dir), dir, { store: "s", port: other.port, env: {} });
+    assert.equal(plan.running, undefined);
+    const moved = Number(plan.command.match(/--port (\d+)$/)?.[1]);
+    assert.ok(moved > other.port, plan.command);
+    assert.equal(await portTaken(moved), false, "the port given to shopify theme dev is really free");
+    assert.match(plan.command, /^shopify theme dev --store s\.myshopify\.com --port \d+$/);
+    assert.ok(plan.notes[0].includes(`Port ${other.port} is taken by another program`));
+    assert.equal(plan.url, `http://127.0.0.1:${moved}`);
+  } finally {
+    await other.close();
+  }
+  const free = await freePort();
+  assert.equal(await portTaken(free), false);
+});
+
+test("preview command, end to end: with a preview already running it says so and starts nothing", async () => {
+  const store = await serve('<html><link href="https://cdn.shopify.com/x.css"></html>');
+  try {
+    const dir = project(THEME);
+    // Async spawn: the fake store answers from this same process while the CLI runs.
+    const res = await new Promise((resolve) => {
+      const child = spawn(process.execPath, [BIN, "preview", "--store", "s", "--port", String(store.port), "--dir", dir], { cwd: dir, env: { ...process.env, NO_COLOR: "1", PATH: "/nonexistent" } });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.on("data", (d) => (stdout += d));
+      child.stderr.on("data", (d) => (stderr += d));
+      child.on("close", (status) => resolve({ status, stdout, stderr }));
+    });
+    // PATH without osascript/shopify: had it tried to start or open anything, it would have failed.
+    assert.equal(res.status, 0, res.stderr);
+    assert.match(res.stdout, new RegExp(`Your preview is already running: http://127\\.0\\.0\\.1:${store.port}`));
+    assert.doesNotMatch(res.stdout + res.stderr, /not installed|Could not open/);
+  } finally {
+    await store.close();
+  }
+  assert.throws(() => parseArgs(["preview", "--port", "abc"]), /--port expects a port number/);
 });

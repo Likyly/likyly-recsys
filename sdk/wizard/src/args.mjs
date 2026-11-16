@@ -50,6 +50,7 @@ ${blue("Options")}
   --json                 with inventory: print JSON
   --store <shop>         with preview: the Shopify store ${dim("(default: shopify.theme.toml, or your LIKYLY source)")}
   --here                 with preview: run it in this terminal instead of a new window
+  --port <n>             with preview: the local port ${dim("(default: 9292 for a Shopify theme, the next free one if taken)")}
   --hosted               use the hosted MCP server (mcp.likyly.com) instead of npx
   --no-install           do not run the package manager
   --dry-run              show what would happen, write nothing
@@ -59,7 +60,7 @@ ${blue("Options")}
 `;
 
 export function parseArgs(argv) {
-  const opts = { command: "install", dir: process.cwd(), yes: false, dryRun: false, install: true, hosted: false, editors: null, publicKey: null, placement: null, branch: null, json: false, store: null, here: false };
+  const opts = { command: "install", dir: process.cwd(), yes: false, dryRun: false, install: true, hosted: false, editors: null, publicKey: null, placement: null, branch: null, json: false, store: null, here: false, port: null };
   const positional = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -76,6 +77,10 @@ export function parseArgs(argv) {
     else if (a === "--hosted") opts.hosted = true;
     else if (a === "--json") opts.json = true;
     else if (a === "--here") opts.here = true;
+    else if (a === "--port") {
+      opts.port = Number(next());
+      if (!Number.isInteger(opts.port) || opts.port < 1 || opts.port > 65535) throw new Error("--port expects a port number");
+    }
     else if (a === "--new-window") opts.here = false; // the default since 0.12.1, still accepted
     else if (a === "--store") opts.store = next();
     else if (a === "--dir") opts.dir = next();

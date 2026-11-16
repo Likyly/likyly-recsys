@@ -66,9 +66,19 @@ async function preview(opts) {
   const color = !process.env.NO_COLOR && process.stdout.isTTY;
   const paint = (code, t) => (color ? `\x1b[${code}m${t}\x1b[0m` : t);
   const project = detectProject(opts.dir);
-  const plan = await previewPlan(project, opts.dir, { store: opts.store });
+  const plan = await previewPlan(project, opts.dir, { store: opts.store, port: opts.port });
   if (!plan) {
     console.error(`${paint("31", "✗")} No preview command known for ${project?.label ?? "this folder"}: start your site the way you usually do.`);
+    return 1;
+  }
+  if (plan.running) {
+    // Started earlier and still going: a second one would only fail on the busy port.
+    console.log(`${paint("32", "✓")} Your preview is already running: ${plan.running}`);
+    for (const note of plan.notes) console.log(`  ${paint("2", "·")} ${note}`);
+    return 0;
+  }
+  if (plan.blocked) {
+    console.error(`${paint("31", "✗")} ${plan.blocked}`);
     return 1;
   }
   if (plan.requires && !commandExists(plan.requires)) {
