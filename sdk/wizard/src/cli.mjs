@@ -44,6 +44,7 @@ export async function main(argv = process.argv.slice(2)) {
     console.log(opts.json ? JSON.stringify(inv, null, 2) : formatInventory(inv, opts.dir));
     return 0;
   }
+  if (opts.command === "preview") return preview(opts);
   if (opts.command === "detect") {
     console.log(JSON.stringify({ project: detectProject(opts.dir), editors: detectEditors(opts.dir) }, null, 2));
     return 0;
@@ -56,6 +57,38 @@ export async function main(argv = process.argv.slice(2)) {
   if (!interactive) return runPlain(opts);
   const { runInteractive } = await import("./ui/app.jsx");
   return runInteractive(opts, version);
+}
+
+async function preview(opts) {
+  const { previewPlan, openInNewTerminal } = await import("./preview.mjs");
+  const { commandExists } = await import("./setup.mjs");
+  const { spawnSync } = await import("node:child_process");
+  const color = !process.env.NO_COLOR && process.stdout.isTTY;
+  const paint = (code, t) => (color ? `\x1b[${code}m${t}\x1b[0m` : t);
+  const project = detectProject(opts.dir);
+  const plan = await previewPlan(project, opts.dir, { store: opts.store });
+  if (!plan) {
+    console.error(`${paint("31", "✗")} No preview command known for ${project?.label ?? "this folder"}: start your site the way you usually do.`);
+    return 1;
+  }
+  if (plan.requires && !commandExists(plan.requires)) {
+    console.error(`${paint("31", "✗")} ${plan.requires} is not installed${plan.install ? `: ${plan.install}` : ""}`);
+    return 1;
+  }
+  console.log(`\n${paint("1", "LIKYLY preview")} ${paint("2", plan.command)}`);
+  for (const note of plan.notes) console.log(`  ${paint("2", "·")} ${note}`);
+  // An assistant runs this without a terminal to answer prompts (a store password): a new window.
+  const here = !opts.newWindow && process.stdin.isTTY && process.stdout.isTTY;
+  if (here) {
+    console.log("");
+    return spawnSync(plan.command, { cwd: opts.dir, stdio: "inherit", shell: true }).status ?? 1;
+  }
+  if (openInNewTerminal(plan.command, opts.dir)) {
+    console.log(`  ${paint("32", "✓")} Started in a new terminal window. Answer any prompt there; stop it with Ctrl+C.`);
+    return 0;
+  }
+  console.error(`  ${paint("31", "✗")} Could not open a terminal window. Run it in a terminal:\n    cd ${opts.dir}\n    ${plan.command}`);
+  return 1;
 }
 
 async function uninstall(opts) {

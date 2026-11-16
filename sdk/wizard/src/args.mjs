@@ -25,6 +25,9 @@ ${blue("Commands")}
   mcp add        only connect your AI assistant (signs you in first if needed)
   shopify        connect a Shopify store's catalog: you type the app's credentials here,
                  they go straight to LIKYLY (encrypted), never to your assistant
+  preview        start the site's local preview (shopify theme dev, or the dev script) to
+                 see LIKYLY's changes live; run by an AI assistant, it opens a new terminal
+                 window, where a store password can be typed
   detect         print what was detected, change nothing
   inventory      list what LIKYLY put in this project: packages, key variable, setup files,
                  and every source line that uses LIKYLY (read-only; --json for data)
@@ -43,6 +46,8 @@ ${blue("Options")}
   --branch <new|current> with uninstall, in a git repository: work on a new branch
                          likyly/uninstall, or on the current one (asked otherwise)
   --json                 with inventory: print JSON
+  --store <shop>         with preview: the Shopify store ${dim("(default: shopify.theme.toml, or your LIKYLY source)")}
+  --new-window           with preview: always open it in a new terminal window
   --hosted               use the hosted MCP server (mcp.likyly.com) instead of npx
   --no-install           do not run the package manager
   --dry-run              show what would happen, write nothing
@@ -52,7 +57,7 @@ ${blue("Options")}
 `;
 
 export function parseArgs(argv) {
-  const opts = { command: "install", dir: process.cwd(), yes: false, dryRun: false, install: true, hosted: false, editors: null, publicKey: null, placement: null, branch: null, json: false };
+  const opts = { command: "install", dir: process.cwd(), yes: false, dryRun: false, install: true, hosted: false, editors: null, publicKey: null, placement: null, branch: null, json: false, store: null, newWindow: false };
   const positional = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -68,6 +73,8 @@ export function parseArgs(argv) {
     else if (a === "--no-install") opts.install = false;
     else if (a === "--hosted") opts.hosted = true;
     else if (a === "--json") opts.json = true;
+    else if (a === "--new-window") opts.newWindow = true;
+    else if (a === "--store") opts.store = next();
     else if (a === "--dir") opts.dir = next();
     else if (a === "--public-key") opts.publicKey = next();
     else if (a === "--placement") opts.placement = next();
@@ -89,6 +96,7 @@ export function parseArgs(argv) {
       opts.placement = positional[2] ?? opts.placement;
     } else if (cmd === "mcp add" || cmd === "mcp") opts.command = "mcp";
     else if (cmd === "shopify") opts.command = "shopify";
+    else if (cmd === "preview") opts.command = "preview";
     else if (cmd === "detect") opts.command = "detect";
     else if (cmd === "inventory") opts.command = "inventory";
     else if (cmd === "uninstall") opts.command = "uninstall";

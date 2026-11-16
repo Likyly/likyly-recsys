@@ -9,6 +9,7 @@ import { Box, Static, Text, render, useApp, useStdout, useWindowSize } from "ink
 import { EDITORS, detectEditors, detectProject, installedEditors } from "../frameworks.mjs";
 import { KEY_ENV, hasDeveloperKey, readDeveloperKey } from "../mcp.mjs";
 import { ShopifyCatalogStep } from "./shopify.jsx";
+import { openInNewTerminal, previewPlan } from "../preview.mjs";
 import { commandExists, wizardInvocation } from "../setup.mjs";
 import { checkCompat, describeCompat } from "../compat.mjs";
 import {
@@ -258,6 +259,18 @@ function App({ opts: initialOpts, result }) {
   const { columns, rows } = useWindowSize();
   const tooSmall = columns < MIN_COLUMNS || rows < MIN_ROWS;
 
+  const shopRef = useRef(null); // the store the catalog step connected, for the preview
+  const [preview, setPreview] = useState(null);
+  const startPreview = (yes) => {
+    if (yes) {
+      const opened = openInNewTerminal(preview.command, opts.dir);
+      const results = opened
+        ? [{ level: "ok", text: "Started in a new terminal window: answer any prompt there", hint: preview.command }, ...preview.notes.map((text) => ({ level: "info", text }))]
+        : [{ level: "warn", text: "Could not open a terminal window. Run it in another terminal:", hint: preview.command }];
+      setPrinted((p) => [...p, { key: "preview", kind: "step", title: "Preview your site", status: opened ? "ok" : "warn", summary: opened ? "running" : "not started", results }]);
+    }
+    setPhase("next");
+  };
   const finish = (id, results, summary, status) => {
     const st = { status: status ?? statusOf(results), results, summary };
     setSteps((s) => ({ ...s, [id]: st }));
@@ -319,7 +332,14 @@ function App({ opts: initialOpts, result }) {
         const notInGit = repo ? git.ignored(opts.dir, [project?.envFile, ".likyly/credentials.env"].filter(Boolean)) : [];
         setPrinted((p) => [...p, { key: "done", kind: "done", level, review: review && { ...review, branch: workBranch.current, notInGit } }]);
         reviewRef.current = review?.mine ?? [];
-        setPhase("next");
+        // Offer the site's preview first: the developer sees the changes as their assistant makes them.
+        previewPlan(project, opts.dir, { store: shopRef.current })
+          .catch(() => null)
+          .then((plan) => {
+            const usable = plan && !opts.dryRun && (!plan.requires || commandExists(plan.requires));
+            setPreview(usable ? plan : null);
+            setPhase(usable ? "preview" : "next");
+          });
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- each phase runs once
@@ -438,8 +458,10 @@ function App({ opts: initialOpts, result }) {
                     ...results,
                     { level: "info", text: "Next, ask your AI assistant:", hint: '"The Shopify catalog is connected: add LIKYLY recommendations to my product page."' },
                     { level: "info", text: "Assistant not connected to LIKYLY yet? First:", hint: "npx @likyly/wizard mcp add" },
+                    { level: "info", text: "See the changes live while it works:", hint: "npx @likyly/wizard preview" },
                   ];
           }
+          if (results.some((r) => r.level === "ok")) shopRef.current = summary;
           finish("catalog", results, summary);
           setPhase(after("catalog"));
         }}
@@ -495,6 +517,23 @@ function App({ opts: initialOpts, result }) {
           <Step status="active" title={order[index][1]} summary={`${index + 1}/${order.length}`} waiting={phase !== "sdk" && phase !== "verify"} last>
             {body[phase] ? body[phase]() : null}
           </Step>
+        </Box>
+      ) : null}
+      {phase === "preview" && preview ? (
+        <Box flexDirection="column" paddingX={1} marginTop={1} display={tooSmall ? "none" : "flex"}>
+          <Text bold>Start your site's preview now?</Text>
+          <Text color={C.muted}>
+            {preview.command} · in a new terminal window, so you see LIKYLY's changes live while your assistant makes them.
+          </Text>
+          <Box marginTop={1}>
+            <Select
+              items={[
+                { label: "Yes, start the preview", value: "yes" },
+                { label: "No, not now", value: "no", hint: "later: npx @likyly/wizard preview" },
+              ]}
+              onSubmit={(v) => startPreview(v === "yes")}
+            />
+          </Box>
         </Box>
       ) : null}
       {phase === "next" ? (

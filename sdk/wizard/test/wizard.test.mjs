@@ -671,3 +671,61 @@ test("Shopify: a sync that saves nothing says why (e.g. the plan's catalog limit
   const failure = r.find((x) => x.level === "fail");
   assert.equal(failure.text, "No product saved in LIKYLY (120 rejected): Free plan limit reached: 1 catalog max.");
 });
+
+import { openInNewTerminal, previewPlan, themeStore } from "../src/preview.mjs";
+
+const THEME = { "layout/theme.liquid": "<html></html>", "config/settings_schema.json": "[]", "sections/main-product.liquid": "" };
+
+test("preview: a Shopify theme previews against its store, found without asking", async () => {
+  const noApi = async () => ({ ok: false });
+  const toml = project({ ...THEME, "shopify.theme.toml": '[environments.dev]\nstore = "my-shop"\n' });
+  assert.equal((await previewPlan(detectProject(toml), toml, { fetchImpl: noApi, env: {} })).command, "shopify theme dev --store my-shop.myshopify.com");
+  assert.equal(await themeStore(toml, { store: "https://other.myshopify.com/admin", env: {} }), "other.myshopify.com", "--store wins");
+
+  // No toml: the store of the developer's LIKYLY Shopify source.
+  const dir = project({ ...THEME, ".likyly/credentials.env": "LIKYLY_DEVELOPER_KEY=lk_dev\n" });
+  const seen = [];
+  const fetchImpl = async (url, init) => {
+    seen.push([url, init.headers["X-API-Key"]]);
+    return { ok: true, json: async () => [{ type: "rest_api" }, { type: "shopify", config: { shop_domain: "likyly-sandbox.myshopify.com" } }] };
+  };
+  const plan = await previewPlan(detectProject(dir), dir, { fetchImpl, env: {} });
+  assert.equal(plan.command, "shopify theme dev --store likyly-sandbox.myshopify.com");
+  assert.equal(plan.requires, "shopify");
+  assert.ok(plan.notes.some((n) => /storefront password/.test(n)));
+  assert.match(seen[0][0], /\/data-sources$/);
+  assert.equal(seen[0][1], "lk_dev");
+
+  const unknown = project(THEME);
+  assert.equal((await previewPlan(detectProject(unknown), unknown, { env: {} })).command, "shopify theme dev", "the CLI asks for the store itself");
+});
+
+test("preview: a JS project runs its own dev script; none known otherwise", async () => {
+  const next = project({ "package.json": { dependencies: { next: "16", react: "19" }, scripts: { dev: "next dev" } }, "pnpm-lock.yaml": "", "app/": "" });
+  assert.equal((await previewPlan(detectProject(next), next)).command, "pnpm dev");
+  const npm = project({ "package.json": { dependencies: { vue: "3" }, scripts: { dev: "vite" } } });
+  assert.equal((await previewPlan(detectProject(npm), npm)).command, "npm run dev");
+  const bare = project({ "package.json": { dependencies: { vue: "3" } } });
+  assert.equal(await previewPlan(detectProject(bare), bare), null);
+  assert.equal(await previewPlan(null, bare), null);
+});
+
+test("preview: opened in a new terminal window, the folder quoted", () => {
+  const calls = [];
+  const run = (cmd, args) => (calls.push([cmd, args]), { status: 0 });
+  assert.equal(openInNewTerminal("shopify theme dev --store s.myshopify.com", "/tmp/it's here", { platform: "darwin", run }), true);
+  const [cmd, args] = calls[0];
+  assert.equal(cmd, "osascript");
+  assert.match(args[1], /^tell application "Terminal" to do script "cd '\/tmp\/it'\\\\''s here' && .* && shopify theme dev --store s\.myshopify\.com"$/);
+
+  const none = (cmd) => ({ status: cmd === "which" ? 1 : 0 });
+  assert.equal(openInNewTerminal("npm run dev", "/tmp", { platform: "linux", run: none }), false, "no terminal emulator: the caller prints the command");
+});
+
+test("preview command: nothing known is a clear error, not a hang", () => {
+  const dir = project({ "README.md": "" });
+  const res = runCli(["preview", "--dir", dir], dir);
+  assert.equal(res.status, 1);
+  assert.match(res.stderr, /No preview command known/);
+  assert.equal(parseArgs(["preview", "--store", "x", "--new-window"]).newWindow, true);
+});

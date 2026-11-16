@@ -193,8 +193,8 @@ commit only the files you changed (not their pending work), push the branch and 
      "likyly-recommendations"` and `"settings": {"placement": "<the slug you created>"}`, and its
      key in `order` right after the main product section. The ids it sends are Shopify's numeric
      product ids and it needs the handle in `url`: the `shopify` source's default mapping gives
-     exactly that. Tell the developer to preview with `shopify theme dev --store <shop>` and to
-     publish with `shopify theme push`.
+     exactly that. Publishing is `shopify theme push` (the developer's call); the preview is in
+     Phase 4.
    - Anything else: `likyly.recommend({ placement, context })`, render the items yourself,
      call `likyly.events.recommendationImpression`/`recommendationClick` for the events
      `<LikylyRecommendations>` would have handled automatically.
@@ -218,7 +218,17 @@ commit only the files you changed (not their pending work), push the branch and 
    unless the developer asks.
 2. `validate_integration` for the placement you just wired up. Report every check in the
    **Integration** table of the final report, with its count - don't paraphrase it into "looks good."
-3. For anything not `ok`: `get_recent_integration_events` if you need to see the actual rows
+3. **Offer the preview** - ask one yes/no question: "Start the site's preview now to see it?"
+   On yes, run `npx @likyly/wizard@latest preview` (in the background if your tool allows it):
+   it starts the project's preview (`shopify theme dev --store <shop>` for a Shopify theme, the
+   dev script otherwise) in a **new terminal window**, where the developer can answer its
+   prompts - a password-protected store asks for its storefront password there. Never run
+   `shopify theme dev` (or another interactive dev server) yourself: it stops on that prompt,
+   which you can't answer. Then give the page to open (for a theme:
+   `http://127.0.0.1:9292/products/<a real handle>`) and say to view it and click a
+   recommendation, so step 4 has real events to check. If the command says no terminal window
+   could be opened, give the developer the command it printed to run in their own terminal.
+4. For anything not `ok`: `get_recent_integration_events` if you need to see the actual rows
    behind a count, then fix the real cause (a missing call, a wrong `data_product_type`, a
    context key never sent) and validate again. A freshly-added event may need one real
    interaction (view the page, click a card, ...) before it shows up - say so rather than
