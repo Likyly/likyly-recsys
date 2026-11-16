@@ -143,13 +143,26 @@ export function describeSource(label, source) {
   return `${label} → catalog ${source.product_type}${count}`;
 }
 
+/** Every item id the catalog has (GET /items, 1000 at a time). */
+async function catalogItemIds(api, productType) {
+  const ids = [];
+  for (let offset = 0; offset < 100000; offset += 1000) {
+    const page = await api("GET", `/items?data_product_type=${encodeURIComponent(productType)}&limit=1000&offset=${offset}`);
+    if (!page.ok) break;
+    const rows = page.data ?? [];
+    ids.push(...rows.map((r) => String(r.item_id ?? r.id)));
+    if (rows.length < 1000) break;
+  }
+  return ids;
+}
+
 /**
  * A store LIKYLY's servers can't reach (on the developer's computer): the wizard sends the products
  * itself to a push source (`webhook`), created for this store or found again (`matches`), whose
  * push secret is rotated each time (it is shown only once, and never kept). `items` are already
  * LIKYLY-shaped; `source` is the POST /data-sources body. Batches of 1000.
  */
-export async function pushCatalog({ apiKey, platform, agent, label, matches, source: body, items, fetchImpl = fetch, onProgress }) {
+export async function pushCatalog({ apiKey, platform, agent, label, matches, source: body, items, replace = false, fetchImpl = fetch, onProgress }) {
   const api = client(apiKey, fetchImpl, agent);
   try {
     const list = await api("GET", "/data-sources");
@@ -168,15 +181,31 @@ export async function pushCatalog({ apiKey, platform, agent, label, matches, sou
     }
     if (!secret) return [fail("LIKYLY gave no push secret for the source")];
 
+    const push = (payload) =>
+      fetchImpl(`${API_URL}/data-sources/${source.id}/push`, {
+        method: "POST",
+        headers: { "X-Push-Secret": secret, "Content-Type": "application/json", "User-Agent": wizardUserAgent(agent) },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(120000),
+      });
+
+    // `replace`: the items are the whole catalog now (a new choice of categories): what it had
+    // and no longer gets is removed first, so its room is free before the new products arrive.
+    let removed = 0;
+    if (replace) {
+      const keep = new Set(items.map((i) => String(i.id)));
+      const stale = (await catalogItemIds(api, source.product_type)).filter((id) => !keep.has(id));
+      for (let i = 0; i < stale.length; i += 1000) {
+        const res = await push({ items: [], deleted_ids: stale.slice(i, i + 1000) });
+        if (!res.ok) return [fail(`LIKYLY refused to remove the products left out (HTTP ${res.status})`)];
+        removed += Math.min(1000, stale.length - i);
+      }
+    }
+
     let upserted = 0;
     let failed = 0;
     for (let i = 0; i < items.length; i += 1000) {
-      const res = await fetchImpl(`${API_URL}/data-sources/${source.id}/push`, {
-        method: "POST",
-        headers: { "X-Push-Secret": secret, "Content-Type": "application/json", "User-Agent": wizardUserAgent(agent) },
-        body: JSON.stringify({ items: items.slice(i, i + 1000) }),
-        signal: AbortSignal.timeout(120000),
-      });
+      const res = await push({ items: items.slice(i, i + 1000) });
       let data = null;
       try {
         data = await res.json();
@@ -196,6 +225,7 @@ export async function pushCatalog({ apiKey, platform, agent, label, matches, sou
     }
     if (!upserted && items.length) return [fail(`No product saved in LIKYLY${failed ? ` (${failed} rejected)` : ""}: ${why ?? "the push failed"}`)];
     const results = [ok(`Connected ${label} → catalog ${source.product_type}`, "(products sent from this computer)"), ok(`${upserted} product(s) sent to LIKYLY`)];
+    if (removed) results.push(ok(`${removed} product(s) no longer chosen removed from LIKYLY`));
     if (failed) results.push(warn(`${failed} product(s) rejected: ${why}`));
     return results;
   } catch (error) {

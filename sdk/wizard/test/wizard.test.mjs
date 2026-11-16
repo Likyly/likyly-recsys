@@ -1409,3 +1409,27 @@ test("Magento: room left in the plan, and the categories to choose from", async 
   assert.deepEqual(itemsInCategories(items, ["Sale", "Books"]).map((i) => i.id), ["2", "3"]);
   assert.deepEqual(itemsInCategories(items, [null]).map((i) => i.id), ["4"]);
 });
+
+test("Magento: a new choice of categories replaces the previous one - removed first, so its room is free", async () => {
+  const pushes = [];
+  const fetchImpl = async (url, init) => {
+    const path = url.replace(/^https?:\/\/[^/]+/, "");
+    if (path.endsWith("/push")) {
+      const body = JSON.parse(init.body);
+      pushes.push(body);
+      return { ok: true, status: 200, json: async () => ({ upserted: body.items.length, failed: 0, deleted: body.deleted_ids?.length ?? 0 }) };
+    }
+    const routes = {
+      "GET /data-sources": [200, [{ id: 6, type: "webhook", product_type: "magento", config: { platform: "magento", store_url: "http://localhost:8896" } }]],
+      "POST /data-sources/6/push-secret/rotate": [200, { push_secret: "ps" }],
+      "GET /items?data_product_type=magento&limit=1000&offset=0": [200, [{ item_id: "BK-001" }, { item_id: "RUN-001" }, { item_id: "ART-001" }]],
+    };
+    const [status, data] = routes[`${init.method} ${path}`] ?? [404, { detail: "not found" }];
+    return { status, ok: status < 300, json: async () => data };
+  };
+  const r = await pushMagentoCatalog({ apiKey: "lk", storeUrl: "http://localhost:8896", items: ITEMS, fetchImpl });
+  assert.ok(r.every((x) => x.level !== "fail"), JSON.stringify(r));
+  assert.deepEqual(pushes[0], { items: [], deleted_ids: ["BK-001", "ART-001"] }, "the products left out go first");
+  assert.deepEqual(pushes[1].items.map((i) => i.id), ["RUN-001", "RUN-002"]);
+  assert.ok(r.some((x) => x.text === "2 product(s) no longer chosen removed from LIKYLY"));
+});

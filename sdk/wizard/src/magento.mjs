@@ -102,6 +102,9 @@ export function pushMagentoCatalog({ apiKey, storeUrl, items, ...rest }) {
       field_mapping: MAGENTO_PUSH_MAPPING,
     },
     items,
+    // The store's products, as chosen: they replace what the catalog had (a new choice of
+    // categories frees the room the previous one took).
+    replace: true,
     ...rest,
   });
 }
