@@ -502,3 +502,37 @@ def test_a_block_that_follows_the_product_is_verified():
     assert result["blocks"][0]["verified"] == "varies"
     assert kpi(result, "similar_block")["status"] == "pass"
     assert result["compared_with"]["url"] == "https://camping.example/produit/duvet/"
+
+
+SHOW_PAGE = """<html><head><meta property="og:title" content="Turandot - Opéra - Programmation Saison 26/27">
+<meta property="og:url" content="https://opera.example/saison/opera/turandot">
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"Turandot"}</script></head>
+<body><a href="/">retour</a><h1>retour</h1><p>Billetterie · 12 représentations · Billetterie en ligne · Réserver vos places · Billetterie</p>
+<section><h2>Vous aimerez aussi</h2><ul>
+<li><a href="/saison/opera/le-trouvere">Le Trouvère</a></li><li><a href="/saison/opera/turandot">Turandot</a></li><li><a href="/saison/opera/don-giovanni">Don Giovanni</a></li>
+</ul></section></body></html>"""
+
+
+def test_a_show_page_that_declares_nothing_is_still_fully_audited():
+    url = "https://opera.example/saison/opera/turandot"
+
+    def fetch(target):
+        if target == "https://opera.example/.well-known/ucp":
+            raise AuditError("Le site ne répond pas.")  # never answers: still a clear "no"
+        return fake_fetch({url: (200, SHOW_PAGE)})(target)
+
+    result = run_audit(url, fetch)
+    assert result["page_type"]["id"] == "event" and result["item_name"] == "Turandot"
+    # self-recommendation is checked whatever the page declares
+    assert kpi(result, "self_reco")["status"] == "fail" and "L'événement affiché" in kpi(result, "self_reco")["summary"]
+    data = kpi(result, "structured_data")
+    assert data["status"] == "fail" and "« WebPage »" in data["summary"] and "spectacle" in data["summary"]
+    assert kpi(result, "agent_ready")["status"] == "info"
+    assert kpi(result, "unavailable")["label"] == "Disponibilité des événements recommandés"
+
+
+def test_a_page_with_no_structured_data_at_all_fails_that_check():
+    page = SHOW_PAGE.replace('<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"Turandot"}</script>', "")
+    url = "https://opera.example/saison/opera/turandot"
+    result = run_audit(url, fake_fetch({url: (200, page)}))
+    assert kpi(result, "structured_data")["status"] == "fail" and kpi(result, "structured_data")["summary"] == "Aucune donnée structurée schema.org"

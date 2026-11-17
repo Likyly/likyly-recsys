@@ -326,8 +326,10 @@ def _types(node: dict[str, Any]) -> set[str]:
     return {str(v) for v in values if v}
 
 
+GENERIC_LD_TYPES = {"WebPage", "WebSite", "Organization", "BreadcrumbList", "SearchAction", "ItemPage", "CollectionPage", "ImageObject", "ListItem", "SiteNavigationElement", "Person", "LocalBusiness", "PerformingArtsTheater", "Place", "PostalAddress", "ReadAction", "EntryPoint"}
 EVENT_TYPES = {"Event", "MusicEvent", "TheaterEvent", "SportsEvent", "ComedyEvent", "DanceEvent", "Festival", "ScreeningEvent", "ExhibitionEvent", "BusinessEvent", "EducationEvent", "SocialEvent", "LiteraryEvent", "ChildrensEvent"}
 ARTICLE_TYPES = {"Article", "NewsArticle", "BlogPosting", "Report", "ScholarlyArticle", "TechArticle", "AnalysisNewsArticle", "OpinionNewsArticle", "ReviewNewsArticle"}
+TICKETING_RE = re.compile(r"billetterie|représentations?|réserv(?:er|ez) (?:vos|des) places|acheter (?:vos|des) billets|tickets?\b|spectacle", re.IGNORECASE)
 PAGE_TYPE_LABELS = {"product": "Fiche produit", "book": "Fiche livre", "event": "Événement / billetterie", "article": "Article", "home": "Page d'accueil", "category": "Page catégorie", "other": "Autre page"}
 
 
@@ -436,12 +438,16 @@ def detect_page_type(soup: BeautifulSoup, html: str, url: str, nodes: list[dict[
             page_type = "home"
         elif "archive" in body_class or "catalog-category-view" in body_class or body_id == "category" or "/collections/" in url:
             page_type = "category"
+        elif len(TICKETING_RE.findall(low)) >= 5:
+            page_type = "event"  # a show or event page whose markup doesn't say so (ticketing words all over it)
         else:
             page_type = "other"
         if not name:
             og_title = soup.find("meta", attrs={"property": "og:title"})
             heading = soup.find("h1")
-            name = (og_title.get("content", "") if og_title else "") or (_text(heading) if heading else "")
+            # "Turandot - Opéra - Programmation Saison 26/27" -> "Turandot"; a heading like "retour" is not a name
+            title = re.split(r"\s+[-|–—]\s+", (og_title.get("content", "") if og_title else "").strip())[0]
+            name = title or (_text(heading) if heading else "")
             name = name[:200]
         structured.setdefault("type", None)
     return page_type, name, structured
@@ -802,7 +808,7 @@ def build_kpis(page: PageFacts, ucp: Optional[bool], stock_checked: bool = False
     kpis: list[Kpi] = []
 
     # 1. The item recommended on its own page - the first thing to get right.
-    if page.page_type in ("product", "book", "event", "article") and readable:
+    if page.page_type not in ("home", "category") and readable:
         same = [b for b in readable if any(i.key == page.canonical_key for i in b.items)]
         name = page.item_name.strip().lower()
         twins = [b for b in readable if name and any(i.key != page.canonical_key and i.name.strip().lower() == name for i in b.items)]
@@ -960,31 +966,41 @@ def build_kpis(page: PageFacts, ucp: Optional[bool], stock_checked: bool = False
     else:
         kpis.append(Kpi("block_size", "Nombre de recommandations par bloc", 3, UNKNOWN, "Non vérifiable sans bloc lisible", ""))
 
-    # 8. Structured data (search engines and AI agents read it).
-    s = page.structured
-    if page.page_type in ("product", "book", "event", "article") and s.get("type"):
-        sells = page.page_type == "product" or s.get("has_offer")
+    # 8. Structured data (search engines and AI agents read it), on every page that shows one thing.
+    st = page.structured
+    label = "Fiche lisible par Google et les IA"
+    declared = [t for t in st.get("json_ld_types", []) if t not in GENERIC_LD_TYPES]
+    what = {"product": "un produit", "book": "un livre", "event": "un spectacle ou un événement", "article": "un article"}.get(page.page_type, "ce qu'elle présente")
+    if page.page_type in ("home", "category"):
+        kpis.append(Kpi("structured_data", label, 2, UNKNOWN, "Analysez une fiche (produit, article, événement) pour ce contrôle", ""))
+    elif st.get("type"):
+        sells = page.page_type == "product" or st.get("has_offer")
         needed = ["has_name", "has_image"] + (["has_offer", "has_price", "has_availability"] if sells else ["has_date"] if page.page_type in ("article", "event") else [])
-        missing = [k for k in needed if not s.get(k)]
+        missing = [k for k in needed if not st.get(k)]
         names = {"has_name": "nom", "has_image": "image", "has_offer": "offre", "has_price": "prix", "has_availability": "stock", "has_date": "date"}
         if not missing:
-            kpis.append(Kpi("structured_data", "Fiche lisible par Google et les IA", 2, PASS, "Nom, prix et stock bien décrits",
+            kpis.append(Kpi("structured_data", label, 2, PASS, "Bien décrite : nom, image, prix et disponibilité",
                             "Google, Bing et les agents IA (ChatGPT, Gemini…) comprennent ce que la page présente.",
-                            "" if s.get("related_in_markup") else "Ajoutez les éléments liés (isRelatedTo, isSimilarTo) pour que les agents connaissent aussi vos associations."))
+                            "" if st.get("related_in_markup") else "Ajoutez les éléments liés (isRelatedTo, isSimilarTo) pour que les agents connaissent aussi vos associations."))
         else:
-            kpis.append(Kpi("structured_data", "Fiche lisible par Google et les IA", 2, WARN, "Incomplètes : " + ", ".join(names[k] for k in missing) + " manquant",
+            kpis.append(Kpi("structured_data", label, 2, WARN, "Incomplète : " + ", ".join(names[k] for k in missing) + " manquant",
                             "Les moteurs et les agents IA lisent ces données pour présenter vos produits.", "Complétez le balisage schema.org de la page."))
-    elif page.page_type in ("product", "book", "event", "article"):
-        kpis.append(Kpi("structured_data", "Fiche lisible par Google et les IA", 2, FAIL, "Nom, prix et stock non décrits pour les moteurs et les IA",
-                        "Moteurs de recherche et agents IA doivent deviner ce que la page présente.", "Ajoutez un bloc JSON-LD avec nom, image, prix et stock."))
+    elif st.get("json_ld_types"):
+        generic = ", ".join(f"« {t} »" for t in st["json_ld_types"][:3])
+        kpis.append(Kpi("structured_data", label, 2, FAIL, f"La page se décrit seulement comme {generic}, pas comme {what}",
+                        f"Des données schema.org existent, mais elles ne disent pas que la page présente {what} : ni nom, ni date, ni prix, ni disponibilité "
+                        "pour Google et les assistants IA." + (f" Types trouvés : {', '.join(declared)}." if declared else ""),
+                        f"Décrivez la page avec le bon type schema.org ({'Event' if page.page_type == 'event' else 'Product' if page.page_type == 'product' else 'Product, Event, Book ou Article'}) : nom, image, date ou prix, disponibilité."))
     else:
-        kpis.append(Kpi("structured_data", "Fiche lisible par Google et les IA", 2, UNKNOWN, "Analysez une fiche produit ou un article pour ce contrôle", ""))
+        kpis.append(Kpi("structured_data", label, 2, FAIL, "Aucune donnée structurée schema.org",
+                        f"Rien dans le code de la page ne décrit {what} : moteurs de recherche et assistants IA doivent le deviner.",
+                        "Ajoutez un bloc JSON-LD schema.org (Product, Event, Book ou Article) avec nom, image, prix et disponibilité."))
 
     # 9. AI shopping agents (UCP) - informative, not scored.
     if ucp is True:
         kpis.append(Kpi("agent_ready", "Achats via les assistants IA (UCP)", 0, PASS, "Le site est déclaré aux assistants d'achat IA",
                         "Le site se déclare aux agents d'achat IA (Gemini, mode IA de Google…) via le Universal Commerce Protocol."))
-    elif ucp is False:
+    else:
         kpis.append(Kpi("agent_ready", "Achats via les assistants IA (UCP)", 0, INFO, "Le site n'est pas encore déclaré aux assistants d'achat IA",
                         "Le Universal Commerce Protocol (Google, Shopify…) permet aux agents d'achat IA de chercher dans votre catalogue et d'acheter chez vous. "
                         "Il se déploie d'abord aux États-Unis : à surveiller.",
@@ -1080,12 +1096,15 @@ def run_audit(raw_url: str, fetch: Fetch, allow_private: bool = False) -> dict[s
         notes.append(f"{_plural(len(js_blocks), 'bloc se remplit', 'blocs se remplissent')} en JavaScript : leur contenu n'a pas pu être lu sans navigateur.")
 
     origin = f"{urlsplit(page.url).scheme}://{urlsplit(page.url).netloc}/"
-    ucp: Optional[bool] = None
-    try:
-        well_known = fetch(origin + ".well-known/ucp")
+    # A yes or a no: published (200 with a JSON profile) or not - one retry on a network error.
+    ucp = False
+    for _ in range(2):
+        try:
+            well_known = fetch(origin + ".well-known/ucp")
+        except AuditError:
+            continue
         ucp = well_known.status == 200 and well_known.text.lstrip().startswith("{")
-    except AuditError:
-        ucp = None
+        break
 
     kpis = build_kpis(facts, ucp, stock_checked)
     total = score(kpis)
