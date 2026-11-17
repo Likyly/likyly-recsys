@@ -6928,6 +6928,18 @@
             "title": "Name",
             "type": "string"
           },
+          "public_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The key itself - public by design (it ships in a site's pages), so it is kept and listed. Null for a revoked key, and for keys created before values were kept.",
+            "title": "Public Key"
+          },
           "revoked_at": {
             "anyOf": [
               {
@@ -7028,8 +7040,8 @@
         "required": [
           "id",
           "name",
-          "created_at",
-          "public_key"
+          "public_key",
+          "created_at"
         ],
         "title": "SitePublicKeyCreated",
         "type": "object"
@@ -14690,7 +14702,7 @@
     },
     "/clients/me/public-keys": {
       "get": {
-        "description": "Active keys first, then revoked ones. Never the raw value - only its creation shows it.",
+        "description": "Active keys first, then revoked ones, each with its value: a public key is public (it\nships in a site's pages), so the console can put it in the code it hands out. Revoked keys\nand keys created before values were kept have none.",
         "operationId": "list_my_site_public_keys",
         "parameters": [
           {
@@ -14788,7 +14800,7 @@
         ]
       },
       "post": {
-        "description": "One more restricted public key for this workspace - same scope as the workspace's own\npublic key, but the others keep working: a new site or project gets its key without\nbreaking the ones already live (regenerate-public-key replaces the workspace key, so every\nsite using it stops). Shown once - store it now.",
+        "description": "One more restricted public key for this workspace - same scope as the workspace's own\npublic key, but the others keep working: a new site or project gets its key without\nbreaking the ones already live (regenerate-public-key replaces the workspace key, so every\nsite using it stops). Listed again later with its value (it is public).",
         "operationId": "create_my_site_public_key",
         "parameters": [
           {

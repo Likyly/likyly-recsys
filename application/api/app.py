@@ -1287,7 +1287,7 @@ async def create_my_site_public_key(payload: SitePublicKeyCreate, supabase_user_
     """One more restricted public key for this workspace - same scope as the workspace's own
     public key, but the others keep working: a new site or project gets its key without
     breaking the ones already live (regenerate-public-key replaces the workspace key, so every
-    site using it stops). Shown once - store it now."""
+    site using it stops). Listed again later with its value (it is public)."""
     client_id = await _resolve_my_client_id(supabase_user_id, x_workspace_id)
     try:
         row, raw_key = create_site_public_key(client_id, payload.name.strip())
@@ -1298,7 +1298,9 @@ async def create_my_site_public_key(payload: SitePublicKeyCreate, supabase_user_
 
 @app.get("/clients/me/public-keys", tags=["selfServiceClient"], response_model=List[SitePublicKey], summary="List my site public keys", responses=_errors(401, 404))
 async def list_my_site_public_keys(supabase_user_id: str = Depends(get_current_supabase_user_id), x_workspace_id: WorkspaceIdHeader = None):
-    """Active keys first, then revoked ones. Never the raw value - only its creation shows it."""
+    """Active keys first, then revoked ones, each with its value: a public key is public (it
+    ships in a site's pages), so the console can put it in the code it hands out. Revoked keys
+    and keys created before values were kept have none."""
     client_id = await _resolve_my_client_id(supabase_user_id, x_workspace_id)
     return list_site_public_keys(client_id)
 

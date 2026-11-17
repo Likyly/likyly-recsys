@@ -523,6 +523,10 @@ class PublicKeyModel(Base):
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=False)
     key_hash = Column(String, nullable=False, unique=True)
     key_hint = Column(String, nullable=True)
+    # The key itself. A public key is public by design (it ships in a site's pages), so unlike a
+    # secret or developer key it is kept: the console puts it in the code it hands out (the
+    # Shopify pixel, snippets) instead of asking for it. Null for keys made before it was kept.
+    key_value = Column(String, nullable=True)
     name = Column(String, nullable=False)
     created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
     last_used_at = Column(DateTime(timezone=True), nullable=True)
@@ -2089,13 +2093,15 @@ class TooManyPublicKeysError(Exception):
 def _public_key_row_to_dict(row: PublicKeyModel) -> dict:
     return {
         "id": row.id, "name": row.name, "key_hint": row.key_hint,
+        # A revoked key is not handed out again.
+        "public_key": row.key_value if row.revoked_at is None else None,
         "created_at": row.created_at, "last_used_at": row.last_used_at, "revoked_at": row.revoked_at,
     }
 
 
 def create_site_public_key(client_id: int, name: str) -> tuple[dict, str]:
-    """Returns (row_dict, raw_key) - the raw value only exists here, like every other key.
-    The workspace's other public keys keep working."""
+    """Returns (row_dict, raw_key). The workspace's other public keys keep working. The value is
+    kept (key_value): a public key is public, and the console hands it out in code."""
     raw_key = generate_api_key("pk")
     with SessionLocal() as session:
         active = session.query(PublicKeyModel).filter_by(client_id=client_id, revoked_at=None).count()
@@ -2103,7 +2109,7 @@ def create_site_public_key(client_id: int, name: str) -> tuple[dict, str]:
             raise TooManyPublicKeysError(
                 f"This workspace already has {active} site public keys (the maximum): revoke one that no site uses any more."
             )
-        row = PublicKeyModel(client_id=client_id, key_hash=hash_api_key(raw_key), key_hint=key_hint(raw_key), name=name)
+        row = PublicKeyModel(client_id=client_id, key_hash=hash_api_key(raw_key), key_hint=key_hint(raw_key), key_value=raw_key, name=name)
         session.add(row)
         session.commit()
         return _public_key_row_to_dict(row), raw_key

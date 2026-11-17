@@ -943,6 +943,7 @@ class SitePublicKey(BaseModel):
     id: int
     name: str
     key_hint: Optional[str] = Field(default=None, description="Non-secret preview, e.g. `pk_Ab3x…9QpL`.")
+    public_key: Optional[str] = Field(default=None, description="The key itself - public by design (it ships in a site's pages), so it is kept and listed. Null for a revoked key, and for keys created before values were kept.")
     created_at: datetime
     last_used_at: Optional[datetime] = None
     revoked_at: Optional[datetime] = None

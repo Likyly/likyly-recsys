@@ -78,11 +78,14 @@ def test_the_console_routes_create_list_and_revoke(http, auth):
 
     listed = http.get("/clients/me/public-keys", headers=auth).json()
     assert [k["id"] for k in listed] == [body["id"]]
-    assert "public_key" not in listed[0]
+    # A public key is public: it is listed with its value, for the console to put in the code it hands out.
+    assert listed[0]["public_key"] == body["public_key"]
 
     assert http.delete(f"/clients/me/public-keys/{body['id']}", headers=auth).status_code == 200
     assert http.delete(f"/clients/me/public-keys/{body['id']}", headers=auth).status_code == 404
-    assert http.get("/clients/me/public-keys", headers=auth).json()[0]["revoked_at"] is not None
+    revoked = http.get("/clients/me/public-keys", headers=auth).json()[0]
+    assert revoked["revoked_at"] is not None
+    assert revoked["public_key"] is None  # a revoked key is not handed out again
     assert view(http, body["public_key"]).status_code == 401
 
 
