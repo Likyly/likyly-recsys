@@ -190,55 +190,54 @@ VENDORS: list[tuple[str, str, bool, tuple[str, ...]]] = [
 
 # Headings that announce a recommendation block. Lowercased, accents kept (we compare lowercased text).
 HEADING_PATTERNS = [
-    r"vous aimerez (aussi|peut-être|également)", r"vous (pourriez|devriez) aimer", r"produits? (similaires|apparentés|associés|liés|recommandés|complémentaires)",
+    r"vous aimerez (aussi|peut-être|également)", r"vous (pourriez|devriez) aimer", r"tu (aimeras|vas aimer|pourrais aimer)", r"produits? (similaires|apparentés|associés|liés|recommandés|complémentaires)",
     r"articles? (similaires|recommandés|liés|associés)", r"(à|a) lire aussi", r"lire (aussi|ensuite)", r"sur le même (thème|sujet)",
-    r"dans la même (catégorie|collection)", r"(les )?(clients|lecteurs|internautes|visiteurs)( qui)? ont (aussi|également) (acheté|aimé|consulté|lu|vu|regardé)",
-    r"(souvent|fréquemment) achetés? ensemble", r"complétez (votre|le) (look|panier|commande)", r"recommandés? pour vous", r"(sélectionnés?|choisis) pour vous",
-    r"nos recommandations", r"(récemment|derniers?) (consultés|vus)", r"vus récemment", r"(autres|d'autres) (produits|articles|livres|spectacles|événements)",
-    r"vous avez aimé", r"inspiré de", r"ça pourrait vous plaire", r"ont aussi (aimé|acheté|lu|vu|consulté|regardé|réservé)", r"que (lire|voir|écouter) (après|ensuite)",
-    r"autres? (livres|produits|articles|œuvres|titres|albums|spectacles|événements) (de|du|des|classés|dans)", r"dans la même (catégorie|collection|série|gamme|rubrique)", r"du même (auteur|artiste|rayon|univers|thème)", r"suggestions? (pour vous|de produits|d'articles)", r"accessoires?( recommandés)?$",
+    r"(les )?(clients|lecteurs|internautes|visiteurs)( qui)? ont (aussi|également) (acheté|aimé|consulté|lu|vu|regardé)",
+    r"(souvent|fréquemment) achetés? ensemble", r"complétez (votre|le|ton) (look|panier|commande)", r"recommandés? pour (vous|toi)", r"(sélectionnés?|choisis) pour (vous|toi)",
+    r"^\W*pour (vous|toi)\W*$", r"nos recommandations", r"(récemment|derniers?) (consultés|vus)", r"vus récemment", r"(autres|d'autres) (produits|articles|livres|spectacles|événements)",
+    r"vous avez aimé", r"ça pourrait (vous|te) plaire", r"ont aussi (aimé|acheté|lu|vu|consulté|regardé|réservé)", r"que (lire|voir|écouter) (après|ensuite)",
+    r"autres? (livres|produits|articles|œuvres|titres|albums|spectacles|événements) (de|du|des|classés|dans)", r"dans la même (catégorie|collection|série|gamme|rubrique)",
+    r"du même (auteur|artiste|rayon|univers|thème)", r"suggestions? (pour (vous|toi)|de produits|d'articles)", r"^\W*accessoires?( recommandés)?\W*$",
     r"you (may|might|will|could) (also )?(like|love|enjoy)", r"related (products|items|articles|posts|stories|books|events)", r"similar (products|items|articles|books|events)",
-    r"customers (who|also)", r"(frequently|often) bought together", r"recommended (for you|products|items|reading)", r"(read|watch) next", r"more (like this|from|in)",
-    r"recently viewed", r"complete the look", r"(people|readers|shoppers) also (bought|liked|viewed|read)", r"picked for you", r"inspired by",
+    r"customers (who|also)", r"(frequently|often) bought together", r"recommended (for you|products|items|reading)", r"(read|watch) next", r"more like this",
+    r"recently viewed", r"complete the look", r"(people|readers|shoppers) also (bought|liked|viewed|read)", r"picked for you", r"^\W*for you\W*$",
     r"\bupsell", r"cross-?sell",
 ]
 HEADING_RE = re.compile("|".join(f"(?:{p})" for p in HEADING_PATTERNS), re.IGNORECASE)
 
-# What a heading says about how its block is chosen: from what visitors do (computed, the same for
-# everyone unless a personalization tool is loaded) or from a fixed rule (same author, category…).
-BEHAVIOR_HEADING_RE = re.compile(r"ont (aussi|également) (aimé|acheté|lu|vu|consulté|regardé|réservé)|also (bought|liked|viewed|read)|customers who|bought together|achetés? ensemble|pour vous|for you|recently viewed|récemment|vus récemment", re.IGNORECASE)
-RULE_HEADING_RE = re.compile(r"même (catégorie|collection|série|gamme|rubrique|auteur|artiste|thème|sujet)|autres? \w+ (de|du|des|classés)|same (category|collection|author)|more from", re.IGNORECASE)
+# What a block's title says about how it is chosen.
+#   behavior: what other customers did ("ont aussi aimé", "achetés ensemble") - the second block
+#   personal: what this visitor did ("vus récemment") - adapts to each visitor by nature
+#   claims_personal: "Pour vous" - only true if a personalization tool is loaded
+#   similar: everything else that announces recommendations - related to the item shown
+BEHAVIOR_HEADING_RE = re.compile(r"ont (aussi|également) (aimé|acheté|lu|vu|consulté|regardé|réservé)|also (bought|liked|viewed|read)|customers who|bought together|achetés? ensemble", re.IGNORECASE)
+PERSONAL_HEADING_RE = re.compile(r"récemment (consultés|vus)|derniers? (consultés|vus)|vus récemment|recently viewed", re.IGNORECASE)
+CLAIMS_PERSONAL_RE = re.compile(r"pour (vous|toi)|for you|picked for you|choisis pour|sélectionnés? pour", re.IGNORECASE)
 
-# Home-page merchandising that's the same for everyone (fine, but not recommendation).
-STATIC_HOME_RE = re.compile(
-    r"meilleures? ventes|best[- ]?sellers?|top ventes|tendances?|trending|populaires?|les plus (vendus|lus|vus)|nouveautés|new arrivals|"
-    r"coups? de c(œ|oe)ur|featured|sélection du moment|à la une|incontournables",
-    re.IGNORECASE,
-)
-PERSONAL_HOME_RE = re.compile(
-    r"pour vous|for you|recommandé|recommended|récemment (consultés|vus)|vus récemment|recently viewed|inspired by|inspiré de|vous aimerez|you may (also )?like",
-    re.IGNORECASE,
-)
+# Shopify theme sections that show a collection the merchant picked - the same for every product
+# and every visitor, whatever their title says.
+FIXED_SECTION_RE = re.compile(r"featured[-_]?collection|product[-_]?list|collection[-_]?list|featured[-_]?products", re.IGNORECASE)
 
-# CMS-native recommendation containers: (css selector, title used when it has no heading, kind)
-# kind: "rule" = chosen by a fixed rule (same category, random), "manual" = picked by hand
-# in the back office, "auto" = computed by the platform, same for every visitor.
+# CMS-native recommendation containers: (platform, css selector, title used when it has no heading, kind)
+# kind: "similar" (related to the item: same category, content, platform's "related"),
+# "behavior" (what other customers bought), "manual" (picked by hand in the back office).
 NATIVE_BLOCKS: list[tuple[str, str, str, str]] = [
-    ("woocommerce", "section.related.products, div.related.products, .wp-block-woocommerce-related-products", "Produits apparentés (WooCommerce)", "rule"),
+    ("woocommerce", "section.related.products, div.related.products, .wp-block-woocommerce-related-products", "Produits apparentés (WooCommerce)", "similar"),
     ("woocommerce", "section.up-sells, div.up-sells, .upsells.products", "Produits suggérés (WooCommerce)", "manual"),
     ("woocommerce", ".cross-sells", "Ventes croisées (WooCommerce)", "manual"),
     ("magento", ".block.related", "Produits associés (Magento)", "manual"),
     ("magento", ".block.upsell", "Produits suggérés (Magento)", "manual"),
     ("magento", ".block.crosssell", "Ventes croisées (Magento)", "manual"),
     ("prestashop", ".product-accessories", "Accessoires (PrestaShop)", "manual"),
-    ("prestashop", "#products-in-same-category, .products-in-same-category, section.featured-products.clearfix.mt-3", "Produits de la même catégorie (PrestaShop)", "rule"),
-    ("prestashop", ".crossselling-product, #crossselling", "Les clients ont aussi acheté (PrestaShop)", "auto"),
-    ("shopify", "product-recommendations, .product-recommendations, [id*='product-recommendations']", "Recommandations Shopify", "auto"),
+    ("prestashop", "#products-in-same-category, .products-in-same-category", "Produits de la même catégorie (PrestaShop)", "similar"),
+    ("prestashop", ".crossselling-product, #crossselling", "Les clients ont aussi acheté (PrestaShop)", "behavior"),
+    ("shopify", "product-recommendations, .product-recommendations, [id*='product-recommendations']", "Recommandations Shopify", "similar"),
     ("shopify", "complementary-products, .complementary-products", "Produits complémentaires (Shopify)", "manual"),
-    ("wordpress", "#jp-relatedposts, .jp-relatedposts", "Articles similaires (Jetpack)", "auto"),
-    ("wordpress", ".yarpp, .yarpp-related", "Articles similaires (YARPP)", "rule"),
-    ("wordpress", ".crp_related", "Articles similaires (Contextual Related Posts)", "rule"),
-    ("bigcommerce", "[data-similar-by-views], .productView-related, #tab-related", "Produits associés (BigCommerce)", "auto"),
+    ("wordpress", "#jp-relatedposts, .jp-relatedposts", "Articles similaires (Jetpack)", "similar"),
+    ("wordpress", ".yarpp, .yarpp-related", "Articles similaires (YARPP)", "similar"),
+    ("wordpress", ".crp_related", "Articles similaires (Contextual Related Posts)", "similar"),
+    ("bigcommerce", "[data-similar-by-views]", "Les clients ont aussi consulté (BigCommerce)", "behavior"),
+    ("bigcommerce", ".productView-related, #tab-related", "Produits associés (BigCommerce)", "manual"),
 ]
 
 VENDOR_PLACEHOLDERS = ".nosto_element, [id^='nosto-'], .clerk, span.clerk, [data-dy-embedded-object], .rebuy-widget, [data-rebuy-id], .limespot-recommendation-box, [data-likyly-placement], .likyly-recommendations"
@@ -249,6 +248,7 @@ NON_ITEM_PATH = re.compile(
     re.IGNORECASE,
 )
 MORE_LINK_RE = re.compile(r"^(voir|tout voir|afficher|découvrir|see|view|show|shop)?\s*(plus|tout|tous|toutes|la suite|all|more)?\s*[›»→>]*$", re.IGNORECASE)
+UI_LABEL_RE = re.compile(r"^(coup d.?(œ|oe)il|aperçu( rapide)?|quick ?(view|shop|buy)|ajouter( au panier)?|add to (cart|bag)|choisir( les)? options?|voir (le produit|les options)|acheter|buy( now)?|shop now|précédent|suivant|previous|next)$", re.IGNORECASE)
 OUT_OF_STOCK_RE = re.compile(r"rupture de stock|épuisé|indisponible|sold out|out of stock|plus disponible", re.IGNORECASE)
 
 
@@ -272,11 +272,12 @@ class Block:
     items: list[Item] = field(default_factory=list)
     js_only: bool = False
     platform: str = ""
+    claims_personal: bool = False  # titled "Pour vous" whatever actually chooses it
     element: Optional[Tag] = field(default=None, repr=False, compare=False)
 
     def public(self) -> dict[str, Any]:
         return {
-            "title": self.title, "source": self.source, "kind": self.kind, "js_only": self.js_only,
+            "title": self.title, "source": self.source, "kind": self.kind, "js_only": self.js_only, "claims_personal": self.claims_personal,
             "items": [{"name": i.name, "url": i.url, "unavailable": i.unavailable} for i in self.items[:24]],
             "item_count": len(self.items),
         }
@@ -340,7 +341,6 @@ class PageFacts:
     blocks: list[Block]
     shopify_product_id: Optional[str] = None
     lang: str = ""
-    static_headings: list[str] = field(default_factory=list)
 
 
 def detect_cms(html: str, soup: BeautifulSoup) -> str:
@@ -486,6 +486,24 @@ def _card_of(anchor: Tag, node: Tag, base_url: str, host: str, key: str) -> Tag:
     return card
 
 
+TITLE_CLASS_RE = re.compile(r"(^|[-_ ])(title|name|heading)($|[-_ ])|__title|__name|card__heading", re.IGNORECASE)
+
+
+def _card_name(card: Tag, anchor: Tag) -> str:
+    """The item's name as the card shows it: its title element, else a heading, else the image's
+    alt text, else the longest link text that isn't a button label ("Coup d'oeil", "Ajouter")."""
+    scope = card if isinstance(card, Tag) else anchor
+    for node in [scope.find(class_=TITLE_CLASS_RE), scope.find(["h2", "h3", "h4", "h5"])]:
+        if isinstance(node, Tag) and _text(node) and not UI_LABEL_RE.match(_text(node)):
+            return _text(node)[:160]
+    for image in scope.find_all("img"):
+        if (image.get("alt") or "").strip():
+            return image["alt"].strip()[:160]
+    texts = [_text(a) for a in scope.find_all("a")] + [_text(anchor), anchor.get("title", ""), anchor.get("aria-label", "")]
+    texts = [t for t in texts if t and not UI_LABEL_RE.match(t) and not MORE_LINK_RE.match(t)]
+    return max(texts, key=len)[:160] if texts else ""
+
+
 def _items_in(node: Tag, base_url: str) -> list[Item]:
     """Links to items of the same site inside `node`, one per card: the image and the title of a
     card usually both link to the item, and count once; two cards for the same item count twice
@@ -498,18 +516,15 @@ def _items_in(node: Tag, base_url: str) -> list[Item]:
         if link is None:
             continue
         key, absolute = link
-        image = anchor.find("img")
-        title_node = anchor.find(["h2", "h3", "h4"]) or anchor.find(class_=re.compile(r"title|name", re.I))
-        name = ((_text(title_node) if title_node else "") or _text(anchor) or (image.get("alt", "") if image else "") or anchor.get("title", "") or anchor.get("aria-label", ""))[:160]
         card = _card_of(anchor, node, base_url, host, key)
+        name = _card_name(card, anchor)
         card_text = _text(card)[:300] if isinstance(card, Tag) else ""
         card_classes = " ".join(card.get("class", [])) if isinstance(card, Tag) else ""
         unavailable = "outofstock" in card_classes or "out-of-stock" in card_classes or bool(OUT_OF_STOCK_RE.search(card_text))
         same_card = next((i for i, (it, c) in enumerate(zip(items, cards)) if it.key == key and c is card), None)
         if same_card is not None:
             existing = items[same_card]
-            if name and (not existing.name or existing.name == (image.get("alt", "") if image else None)):
-                existing.name = name
+            existing.name = existing.name or name
             existing.unavailable = existing.unavailable or unavailable
             continue
         items.append(Item(key=key, url=absolute, name=name, unavailable=unavailable))
@@ -520,6 +535,24 @@ def _items_in(node: Tag, base_url: str) -> list[Item]:
 def _nearest_heading_text(node: Tag) -> str:
     heading = node.find(["h2", "h3", "h4", "h5"]) or node.find(class_=re.compile(r"title|heading", re.I))
     return _text(heading)[:120] if heading else ""
+
+
+def _in_fixed_section(node: Tag) -> bool:
+    """Inside a theme section that shows a collection picked by the merchant (Shopify "featured
+    collection" / "product list" sections): the same products for every page and visitor."""
+    for element in [node, *node.parents]:
+        if not isinstance(element, Tag):
+            continue
+        attrs = f"{element.get('id', '')} {' '.join(element.get('class', []))}"
+        if "section" in attrs.lower() and FIXED_SECTION_RE.search(attrs):
+            return True
+    return False
+
+
+def _clean_title(text: str) -> str:
+    """Drop slider button labels a heading carries ("Précédent POUR TOI: Suivant")."""
+    cleaned = re.sub(r"^(précédent|previous)\s+|\s+(suivant|next)$", "", text, flags=re.IGNORECASE).strip(" :")
+    return cleaned or text
 
 
 def _related(a: Tag, b: Tag) -> bool:
@@ -571,8 +604,11 @@ def find_blocks(soup: BeautifulSoup, base_url: str, cms: str, vendors: list[dict
                 break
         if container is None or container.name in ("body", "html", "main") or len({i.key for i in items}) < 2:
             continue
-        kind = "auto" if BEHAVIOR_HEADING_RE.search(text) else "rule" if RULE_HEADING_RE.search(text) else "unknown"
-        candidates.append(Block(title=text, source="heading", kind=kind, items=items, element=container))
+        claims = bool(CLAIMS_PERSONAL_RE.search(text))
+        kind = "behavior" if BEHAVIOR_HEADING_RE.search(text) else "personal" if PERSONAL_HEADING_RE.search(text) else "similar"
+        if kind == "similar" and (claims or _in_fixed_section(container)):
+            kind = "fixed" if _in_fixed_section(container) else "claims_personal"
+        candidates.append(Block(title=_clean_title(text), source="heading", kind=kind, items=items, claims_personal=claims, element=container))
 
     # A section title ("Que lire après ?") and its sub-blocks ("Ceux qui ont aimé…", "Du même
     # auteur") both match: keep the most specific blocks, never the section that wraps them.
@@ -596,37 +632,43 @@ def analyze_page(page: Page, soup: Optional[BeautifulSoup] = None) -> PageFacts:
         match = re.search(r'"product"\s*:\s*\{\s*"id"\s*:\s*(\d+)', html) or re.search(r"product_id=(\d+)", html) or re.search(r'"productId"\s*:\s*"?(\d+)', html)
         shopify_id = match.group(1) if match else None
     html_tag = soup.find("html")
-    static_headings = [
-        _text(h)[:80] for h in soup.find_all(["h2", "h3"])
-        if STATIC_HOME_RE.search(_text(h)[:80]) and h.find_parent(["nav", "footer"]) is None
-    ]
     return PageFacts(
         url=page.url, canonical_key=canonical_key, page_type=page_type, item_name=name, structured=structured,
         cms=cms, vendors=vendors, blocks=blocks, shopify_product_id=shopify_id,
-        lang=(html_tag.get("lang", "") if html_tag else "")[:10], static_headings=static_headings,
+        lang=(html_tag.get("lang", "") if html_tag else "")[:10],
     )
 
 
-def shopify_recommendations(fetch: Fetch, page_url: str, product_id: str) -> Optional[list[Item]]:
-    """The store's public recommendations endpoint - what Shopify's own "You may also like"
-    shows for this product, with availability. None when it isn't reachable."""
-    parts = urlsplit(page_url)
-    endpoint = f"{parts.scheme}://{parts.netloc}/recommendations/products.json?product_id={product_id}&limit=10&intent=related"
+def shopify_section_items(fetch: Fetch, page_url: str, data_url: str) -> Optional[list[Item]]:
+    """What a Shopify theme's recommendations section shows, exactly: the section the theme loads
+    in JavaScript (its data-url), fetched as HTML - so the count is what visitors see."""
     try:
-        page = fetch(endpoint)
-        if page.status != 200:
-            return None
-        data = json.loads(page.text)
-    except (AuditError, ValueError):
+        page = fetch(urljoin(page_url, data_url))
+    except AuditError:
         return None
-    items = []
-    for product in data.get("products") or []:
-        handle = product.get("handle")
-        if not handle:
+    if page.status != 200:
+        return None
+    return _items_in(BeautifulSoup(page.text, "lxml"), page_url)
+
+
+def shopify_flag_out_of_stock(fetch: Fetch, page_url: str, items: list[Item], deadline_items: int = 12) -> bool:
+    """Marks the Shopify items that are out of stock, from each product's public /products/x.js
+    (`available` false = no variant can be bought). False when nothing could be read."""
+    parts = urlsplit(page_url)
+    checked = False
+    for item in items[:deadline_items]:
+        handle = item.key.rsplit("/", 1)[-1]
+        if not item.key.startswith("/products/") or not handle:
             continue
-        url = f"{parts.scheme}://{parts.netloc}/products/{handle}"
-        items.append(Item(key=item_key(url), url=url, name=str(product.get("title") or "")[:160], unavailable=product.get("available") is False))
-    return items
+        try:
+            answer = fetch(f"{parts.scheme}://{parts.netloc}/products/{handle}.js")
+            data = json.loads(answer.text) if answer.status == 200 else None
+        except (AuditError, ValueError):
+            data = None
+        if isinstance(data, dict) and "available" in data:
+            checked = True
+            item.unavailable = data["available"] is False
+    return checked
 
 
 # --------------------------------------------------------------------------------------------
@@ -635,6 +677,9 @@ def shopify_recommendations(fetch: Fetch, page_url: str, product_id: str) -> Opt
 
 PASS, WARN, FAIL, UNKNOWN, INFO = "pass", "warn", "fail", "unknown", "info"
 STATUS_VALUE = {PASS: 1.0, WARN: 0.5, FAIL: 0.0}
+# Recommending the item being viewed is the most visible mistake: whatever else is right, the
+# score can't go above this.
+SELF_RECO_SCORE_CAP = 35
 
 
 @dataclass
@@ -660,168 +705,188 @@ def _plural(n: int, one: str, many: str) -> str:
 
 ITEM_WORD = {"product": ("produit", "produits"), "book": ("livre", "livres"), "event": ("événement", "événements"), "article": ("article", "articles")}
 ITEM_THE = {"product": "le produit", "book": "le livre", "event": "l'événement", "article": "l'article"}
+BEHAVIOR_TITLE = {"product": "« Les clients ont aussi aimé / acheté »", "book": "« Les lecteurs ont aussi aimé »", "article": "« Les lecteurs ont aussi lu »", "event": "« Les spectateurs ont aussi réservé »"}
+SIMILAR_TITLE = {"product": "« Produits similaires »", "book": "« Livres similaires »", "article": "« Articles similaires »", "event": "« Événements similaires »"}
+UNAVAILABLE_LABEL = {"product": "Produits en rupture de stock recommandés", "book": "Livres en rupture de stock recommandés", "event": "Événements complets ou passés recommandés"}
 
 
-def build_kpis(page: PageFacts, home: Optional[PageFacts], ucp: Optional[bool]) -> list[Kpi]:
+def _quote(blocks: list[Block]) -> str:
+    return ", ".join(f"« {b.title} »" for b in blocks[:3])
+
+
+def build_kpis(page: PageFacts, ucp: Optional[bool], stock_checked: bool = False) -> list[Kpi]:
+    """The grid. What a product (or article, book, event) page should have: at least two blocks -
+    one related to the item (similar products: the cold start, may be the same for everyone) and
+    one learned from what other customers did (also liked / also bought) - with at least one block
+    adapted to the visitor, never the item itself, no duplicates, nothing out of stock."""
     one, many = ITEM_WORD.get(page.page_type, ("élément", "éléments"))
     the = ITEM_THE.get(page.page_type, "l'élément")
     The = the[0].upper() + the[1:]
-    kpis: list[Kpi] = []
+    behavior_title = BEHAVIOR_TITLE.get(page.page_type, "« Les visiteurs ont aussi aimé »")
+    similar_title = SIMILAR_TITLE.get(page.page_type, "« Éléments similaires »")
+    personal_vendor = next((v for v in page.vendors if v["personalized"]), None)
     readable = [b for b in page.blocks if b.items]
     js_only = [b for b in page.blocks if b.js_only]
+    by_kind = lambda *kinds: [b for b in page.blocks if b.kind in kinds]  # noqa: E731
+    kpis: list[Kpi] = []
 
-    # 1. Recommendations on the audited page.
-    if readable:
-        kpis.append(Kpi("reco_on_page", "Recommandations sur la page", 20, PASS,
-                        f"{_plural(len(page.blocks), 'bloc trouvé', 'blocs trouvés')} : " + ", ".join(f"« {b.title} »" for b in page.blocks[:3]),
-                        "La page propose de quoi continuer la visite. Les contrôles suivants regardent ce que ces blocs montrent vraiment.",
-                        "Gardez au moins un bloc visible sans trop défiler : plus il est loin dans la page, moins il est vu."))
-    elif js_only:
-        kpis.append(Kpi("reco_on_page", "Recommandations sur la page", 20, WARN,
-                        f"{_plural(len(js_only), 'bloc chargé', 'blocs chargés')} en JavaScript, contenu illisible pour les robots",
-                        "Un emplacement de recommandations existe, mais il ne se remplit qu'une fois la page affichée dans un navigateur. "
-                        "Les moteurs de recherche et les agents IA qui lisent la page n'y voient rien.",
-                        "Rendez au moins un bloc côté serveur, ou exposez les produits liés dans les données structurées de la page."))
-    else:
-        kpis.append(Kpi("reco_on_page", "Recommandations sur la page", 20, FAIL,
-                        "Aucun bloc de recommandations trouvé",
-                        "Arrivé sur cette page, le visiteur n'a aucune suggestion pour continuer : s'il ne trouve pas son bonheur ici, il repart. "
-                        "C'est l'emplacement où les recommandations rapportent le plus.",
-                        f"Ajoutez un bloc « Vous aimerez aussi » sous le contenu principal, avec 4 à 8 {many}."))
-
-    # 2. The item recommended on its own page.
+    # 1. The item recommended on its own page - the first thing to get right.
     if page.page_type in ("product", "book", "event", "article") and readable:
-        selfs = [b for b in readable if any(i.key == page.canonical_key or (page.item_name and i.name.strip().lower() == page.item_name.strip().lower()) for i in b.items)]
-        if selfs:
-            kpis.append(Kpi("self_reco", "Auto-recommandation", 15, FAIL,
-                            f"{The} affiché apparaît dans ses propres recommandations (« {selfs[0].title} »)",
-                            "Recommander au visiteur ce qu'il regarde déjà gâche une place et montre que le bloc ne tient pas compte de la page. "
-                            "C'est l'erreur la plus visible pour un visiteur.",
-                            f"Excluez toujours {the} affiché des recommandations de sa propre page."))
+        same = [b for b in readable if any(i.key == page.canonical_key for i in b.items)]
+        name = page.item_name.strip().lower()
+        twins = [b for b in readable if name and any(i.key != page.canonical_key and i.name.strip().lower() == name for i in b.items)]
+        if same:
+            kpis.append(Kpi("self_reco", "Auto-recommandation", 25, FAIL,
+                            f"{The} affiché est recommandé sur sa propre page, dans {_quote(same)}",
+                            f"Le visiteur regarde déjà {the} : le lui proposer gâche une place du bloc et montre que la sélection ne tient pas compte de la page. "
+                            "C'est l'erreur la plus visible, la première à corriger.",
+                            f"Excluez toujours {the} affiché de ses propres recommandations."))
+        elif twins:
+            kpis.append(Kpi("self_reco", "Auto-recommandation", 25, WARN,
+                            f"Le même modèle, sous un autre lien (autre couleur ou variante), est recommandé dans {_quote(twins)}",
+                            f"Ce n'est pas exactement {the} affiché, mais pour le visiteur c'est le même : une place de suggestion utilisée pour rien.",
+                            "Excluez aussi les variantes du même modèle, ou regroupez-les en une seule fiche."))
         else:
-            kpis.append(Kpi("self_reco", "Auto-recommandation", 15, PASS,
+            kpis.append(Kpi("self_reco", "Auto-recommandation", 25, PASS,
                             f"{The} affiché n'est pas dans ses propres recommandations",
-                            "Bon point : aucun bloc ne propose ce que le visiteur regarde déjà."))
+                            "Aucun bloc ne propose ce que le visiteur regarde déjà."))
     else:
-        kpis.append(Kpi("self_reco", "Auto-recommandation", 15, UNKNOWN,
-                        "Non vérifiable : aucun contenu de bloc lisible" if page.blocks else "Sans bloc, rien à vérifier",
+        kpis.append(Kpi("self_reco", "Auto-recommandation", 25, UNKNOWN,
+                        "Non vérifiable : aucun bloc lisible" if page.blocks else "Aucun bloc : rien à vérifier",
                         "Ce contrôle a besoin de lire les éléments recommandés."))
 
-    # 3. Duplicates.
+    # 2. Block 1: related to the item (content, category - the cold start).
+    similar = [b for b in by_kind("similar", "manual") if b.items]
+    fixed = by_kind("fixed", "claims_personal")
+    if similar:
+        manual_only = all(b.kind == "manual" for b in similar)
+        # WooCommerce's "related products" are drawn at random among the same categories/tags.
+        random_only = all(b.kind == "manual" or (b.platform == "woocommerce" and b.source == "native") for b in similar) and not manual_only
+        if manual_only:
+            status, summary = WARN, f"Présent : {_quote(similar)}, choisi à la main"
+            detail = "Une sélection faite à la main, produit par produit : longue à tenir à jour, jamais complète, et sans rapport avec ce qui se vend."
+            advice = "Calculez ce bloc automatiquement à partir du catalogue (contenu, attributs), pour tous les produits."
+        elif random_only:
+            status, summary = WARN, f"Présent : {_quote(similar)}, mais tiré au hasard dans la catégorie"
+            detail = ("Les « produits apparentés » de WooCommerce sont tirés au hasard parmi les produits des mêmes catégories ou étiquettes, à chaque affichage : "
+                      f"ils ne sont pas choisis pour leur ressemblance avec {the} affiché.")
+            advice = f"Choisissez les {many} proches par leur contenu (description, attributs, style), pas au hasard."
+        else:
+            status, summary = PASS, f"Présent : {_quote(similar)}"
+            detail = f"Un bloc lié à {the} affiché : c'est la base, utile même pour un visiteur dont on ne sait rien (démarrage à froid)."
+            advice = ""
+        kpis.append(Kpi("similar_block", f"Bloc {similar_title}", 20, status, summary, detail, advice))
+    elif fixed:
+        kpis.append(Kpi("similar_block", f"Bloc {similar_title}", 20, FAIL,
+                        f"Absent : {_quote(fixed)} est une collection fixe, la même quel que soit {the} affiché",
+                        f"Le bloc montre des {many} choisis une fois pour toutes dans le thème, sans rapport avec {the} que le visiteur regarde.",
+                        f"Remplacez-le par des {many} proches de celui affiché : même usage, même style, même gamme de prix."))
+    elif js_only:
+        kpis.append(Kpi("similar_block", f"Bloc {similar_title}", 20, WARN,
+                        f"{_plural(len(js_only), 'bloc chargé', 'blocs chargés')} en JavaScript : contenu illisible pour les robots",
+                        "Un emplacement existe, mais il ne se remplit qu'une fois la page affichée dans un navigateur : son contenu ne peut pas être contrôlé ici, "
+                        "et les moteurs de recherche comme les agents IA n'y voient rien.",
+                        "Rendez au moins ce bloc côté serveur."))
+    else:
+        kpis.append(Kpi("similar_block", f"Bloc {similar_title}", 20, FAIL,
+                        "Absent",
+                        f"Le visiteur qui hésite sur {the} n'a aucune alternative proche sous les yeux : s'il ne trouve pas son bonheur, il repart.",
+                        f"Ajoutez sous {the} un bloc de 4 à 8 {many} proches (contenu, catégorie, attributs)."))
+
+    # 3. Block 2: learned from what other customers did.
+    behavior = by_kind("behavior")
+    if behavior:
+        kpis.append(Kpi("behavior_block", f"Bloc {behavior_title}", 20, PASS,
+                        f"Présent : {_quote(behavior)}",
+                        "Un bloc appris de ce que font les autres clients : il révèle des associations que la fiche seule ne dit pas."))
+    elif js_only:
+        kpis.append(Kpi("behavior_block", f"Bloc {behavior_title}", 20, WARN,
+                        f"Non lisible : {_plural(len(js_only), 'bloc chargé', 'blocs chargés')} en JavaScript",
+                        "Un bloc se remplit dans le navigateur : on ne peut pas dire ici s'il montre ce que les autres clients ont aimé ou acheté.",
+                        f"Vérifiez qu'un des blocs est bien {behavior_title}, appris des visites, paniers et commandes."))
+    else:
+        kpis.append(Kpi("behavior_block", f"Bloc {behavior_title}", 20, FAIL,
+                        "Absent",
+                        "Aucun bloc ne s'appuie sur ce que les autres clients ont aimé ou acheté avec cet élément. C'est le deuxième bloc attendu sur une fiche : "
+                        "il fait découvrir des associations réelles (le sac et sa pochette, le livre et sa suite) et augmente le panier.",
+                        f"Ajoutez un second bloc {behavior_title}, calculé à partir des visites, paniers et commandes."))
+
+    # 4. Personalization: does any block adapt to the visitor?
+    personal = by_kind("personal")
+    claims = [b for b in page.blocks if b.claims_personal]
+    if personal_vendor:
+        kpis.append(Kpi("personalization", "Personnalisation", 20, PASS,
+                        f"Outil de personnalisation détecté : {personal_vendor['label']}",
+                        "Un outil capable d'adapter les blocs à chaque visiteur est chargé. La personnalisation elle-même ne se voit pas de l'extérieur : "
+                        "mesurez ce que rapporte chaque bloc pour vérifier qu'elle fonctionne."))
+    elif personal:
+        kpis.append(Kpi("personalization", "Personnalisation", 20, WARN,
+                        f"Seulement l'historique du visiteur : {_quote(personal)}",
+                        "Montrer ce que le visiteur a déjà vu l'aide à revenir en arrière, mais ne lui fait rien découvrir.",
+                        "Ajoutez des suggestions qui partent de son historique pour proposer d'autres éléments."))
+    else:
+        why = (f"Le bloc {_quote(claims)} s'intitule « pour vous », mais aucun outil de personnalisation n'est chargé : tous les visiteurs voient la même chose. "
+               if claims else "")
+        kpis.append(Kpi("personalization", "Personnalisation", 20, FAIL,
+                        "Aucune : tous les visiteurs voient les mêmes recommandations",
+                        why + "Rien sur la page ne tient compte du visiteur : aucun outil de personnalisation n'est chargé, et les blocs viennent de règles, de "
+                        "choix manuels ou de collections fixes. Un bloc « similaires » identique pour tous est normal (démarrage à froid) ; mais au moins un bloc "
+                        "doit s'adapter à ce que le visiteur a regardé et à ses goûts.",
+                        "Faites dépendre un bloc de la visite en cours et de l'historique du visiteur."))
+
+    # 5. Duplicates.
     if readable:
         inside = [b for b in readable if len({i.key for i in b.items}) < len(b.items)]
         keys_per_block = [set(i.key for i in b.items) for b in readable]
-        across = set()
+        across: set[str] = set()
         for idx, keys in enumerate(keys_per_block):
             for other in keys_per_block[idx + 1:]:
                 across |= keys & other
         if inside:
-            kpis.append(Kpi("duplicates", "Doublons", 10, FAIL,
-                            f"Un même {one} apparaît deux fois dans « {inside[0].title} »",
-                            "Un doublon dans un même bloc prend la place d'une autre suggestion et donne une impression de catalogue pauvre.",
-                            "Dédoublonnez chaque bloc avant affichage."))
+            kpis.append(Kpi("duplicates", "Doublons", 5, FAIL, f"Un même {one} apparaît deux fois dans « {inside[0].title} »",
+                            "Un doublon prend la place d'une autre suggestion et donne l'impression d'un catalogue pauvre.", "Dédoublonnez chaque bloc avant affichage."))
+        elif twins_inside := [b for b in readable if len({i.name.strip().lower() for i in b.items if i.name}) < len([i for i in b.items if i.name])]:
+            kpis.append(Kpi("duplicates", "Doublons", 5, WARN, f"Le même modèle apparaît deux fois (autre couleur ou variante) dans « {twins_inside[0].title} »",
+                            "Deux variantes du même modèle occupent deux places : le visiteur voit moins de choix qu'il n'y paraît.",
+                            "Ne gardez qu'une variante par modèle dans un même bloc."))
         elif across:
-            kpis.append(Kpi("duplicates", "Doublons", 10, WARN,
-                            f"{_plural(len(across), one, many)} dans plusieurs blocs de la page",
-                            "Les blocs d'une même page se répètent : le visiteur voit moins de choix qu'il n'y paraît.",
-                            "Faites en sorte que chaque bloc écarte ce que les blocs au-dessus montrent déjà."))
+            kpis.append(Kpi("duplicates", "Doublons", 5, WARN, f"{_plural(len(across), one, many)} dans plusieurs blocs de la page",
+                            "Les blocs se répètent : le visiteur voit moins de choix qu'il n'y paraît.", "Faites écarter à chaque bloc ce que les blocs au-dessus montrent déjà."))
         else:
-            kpis.append(Kpi("duplicates", "Doublons", 10, PASS, "Aucun doublon dans les blocs", "Chaque suggestion est unique sur la page."))
+            kpis.append(Kpi("duplicates", "Doublons", 5, PASS, "Aucun doublon", "Chaque suggestion est unique sur la page."))
     else:
-        kpis.append(Kpi("duplicates", "Doublons", 10, UNKNOWN, "Non vérifiable sans contenu de bloc lisible", "Ce contrôle a besoin de lire les éléments recommandés."))
+        kpis.append(Kpi("duplicates", "Doublons", 5, UNKNOWN, "Non vérifiable sans bloc lisible", ""))
 
-    # 4. Unavailable items recommended.
+    # 6. Out of stock (products, books) / sold out or past (events). Not broken links.
+    label = UNAVAILABLE_LABEL.get(page.page_type)
     flagged = [i for b in readable for i in b.items if i.unavailable]
-    has_availability = any(b.source == "shopify_api" for b in readable) or page.cms in ("woocommerce",)
-    if page.page_type in ("article",):
-        kpis.append(Kpi("unavailable", "Éléments indisponibles recommandés", 10, UNKNOWN, "Sans objet pour un article", ""))
+    knows_stock = stock_checked or page.cms == "woocommerce"
+    if label is None:
+        kpis.append(Kpi("unavailable", "Éléments indisponibles recommandés", 5, UNKNOWN, "Sans objet pour cette page", ""))
     elif flagged:
-        kpis.append(Kpi("unavailable", "Éléments indisponibles recommandés", 10, FAIL,
-                        _plural(len(flagged), one + " indisponible recommandé", many + " indisponibles recommandés"),
-                        "Recommander ce qui ne peut pas être acheté ou réservé mène le visiteur à une impasse, au moment où il était prêt à aller plus loin.",
-                        "Filtrez les éléments en rupture, épuisés ou passés dans chaque bloc."))
-    elif readable and has_availability:
-        kpis.append(Kpi("unavailable", "Éléments indisponibles recommandés", 10, PASS, "Aucun élément indisponible dans les blocs", "Tout ce qui est recommandé peut être acheté."))
+        kpis.append(Kpi("unavailable", label, 5, FAIL,
+                        _plural(len(flagged), one + " recommandé n'est plus disponible", many + " recommandés ne sont plus disponibles") + " : " + ", ".join(i.name or i.url for i in flagged[:3]),
+                        "En rupture de stock (ou complet, pour un événement) : le visiteur clique, et ne peut pas acheter. Le lien fonctionne, c'est le produit qui manque.",
+                        "Filtrez les éléments en rupture dans chaque bloc."))
+    elif readable and knows_stock:
+        kpis.append(Kpi("unavailable", label, 5, PASS, "Tout ce qui est recommandé est en stock", "Chaque suggestion peut être achetée."))
     else:
-        kpis.append(Kpi("unavailable", "Éléments indisponibles recommandés", 10, UNKNOWN, "Disponibilité non lisible depuis la page", "La page n'indique pas la disponibilité des éléments recommandés."))
+        kpis.append(Kpi("unavailable", label, 5, UNKNOWN, "Stock non lisible depuis la page", "La page n'indique pas si les éléments recommandés sont en stock."))
 
-    # 5. Personalization: who chooses what's shown?
-    personal_vendor = next((v for v in page.vendors if v["personalized"]), None)
-    kinds = {b.kind for b in page.blocks}
-    if personal_vendor:
-        kpis.append(Kpi("personalization", "Personnalisation", 30, PASS,
-                        f"Outil de recommandation détecté : {personal_vendor['label']}",
-                        "Les recommandations peuvent s'adapter au visiteur. Reste à vérifier ce qu'elles montrent : les contrôles ci-dessus le font.",
-                        "Mesurez ce que rapporte chaque bloc (clics, ajouts au panier, ventes) pour savoir lequel garder."))
-    elif "auto" in kinds:
-        kpis.append(Kpi("personalization", "Personnalisation", 30, WARN,
-                        "Calculées automatiquement, mais identiques pour tous les visiteurs",
-                        "La plateforme calcule des suggestions par produit (achats ou contenus proches), mais un visiteur passionné de la catégorie et un nouveau venu voient exactement la même chose.",
-                        "Ajoutez une couche qui tient compte de la visite en cours et de l'historique du visiteur."))
-    elif "rule" in kinds:
-        kpis.append(Kpi("personalization", "Personnalisation", 30, FAIL,
-                        "Choisies par une règle fixe, identiques pour tous les visiteurs",
-                        {
-                            "woocommerce": "Les « produits apparentés » de WooCommerce sont tirés au hasard parmi les produits de la même catégorie ou des mêmes étiquettes : ils changent à chaque affichage, sans lien avec ce que le visiteur a regardé ou ce que les clients achètent.",
-                            "prestashop": "Le module « produits de la même catégorie » de PrestaShop montre des produits de la catégorie, sans tenir compte du visiteur ni de ce qui se vend.",
-                        }.get(page.cms, "Les éléments montrés viennent d'une règle fixe (même catégorie, mêmes étiquettes, au hasard) : tous les visiteurs voient la même logique, sans lien avec leur comportement."),
-                        "Remplacez la règle par des recommandations apprises de votre catalogue et du comportement de vos visiteurs."))
-    elif "manual" in kinds and not ({"auto", "unknown"} & kinds):
-        kpis.append(Kpi("personalization", "Personnalisation", 30, FAIL,
-                        "Sélection faite à la main, identique pour tous",
-                        "Les produits associés sont choisis un par un dans le back-office : c'est long à tenir à jour, ça ne couvre qu'une partie du catalogue et chaque visiteur voit la même chose.",
-                        "Gardez vos associations manuelles en tête de bloc et complétez-les automatiquement."))
-    elif page.blocks:
-        kpis.append(Kpi("personalization", "Personnalisation", 30, WARN,
-                        "Aucun outil de personnalisation détecté",
-                        "Des blocs existent, mais rien sur la page n'indique qu'ils s'adaptent au visiteur : ce sont probablement les mêmes pour tous.",
-                        "Vérifiez d'où viennent ces blocs ; une sélection qui s'adapte au visiteur fait en général mieux qu'une sélection fixe."))
-    else:
-        kpis.append(Kpi("personalization", "Personnalisation", 30, FAIL, "Pas de recommandations, donc pas de personnalisation",
-                        "Chaque visiteur voit le même site, quels que soient ses goûts.",
-                        "Commencez par un bloc sur les pages de contenu, puis une sélection « pour vous » sur l'accueil."))
-
-    # 6. Home page.
-    if home is None:
-        kpis.append(Kpi("home", "Page d'accueil", 10, UNKNOWN, "Page d'accueil non lue", ""))
-    else:
-        titles = [b.title for b in home.blocks]
-        personal = [t for t in titles if PERSONAL_HOME_RE.search(t)]
-        if not personal and titles and any(v["personalized"] for v in home.vendors):
-            personal = titles
-        static = [t for t in titles if STATIC_HOME_RE.search(t)]
-        static_headings = home.static_headings
-        if personal:
-            kpis.append(Kpi("home", "Page d'accueil", 10, PASS, f"Sélection pour le visiteur : « {personal[0]} »",
-                            "L'accueil s'adapte au visiteur : un client qui revient retrouve ce qui l'intéresse."))
-        elif static or static_headings or titles:
-            label = (static or static_headings or titles)[0]
-            kpis.append(Kpi("home", "Page d'accueil", 10, WARN, f"Sélection identique pour tous : « {label} »",
-                            "L'accueil met en avant des meilleures ventes ou des nouveautés : utile, mais un client qui revient voit la même vitrine qu'un inconnu.",
-                            "Ajoutez une rangée « Pour vous » ou « Vus récemment » pour les visiteurs qui reviennent."))
-        else:
-            kpis.append(Kpi("home", "Page d'accueil", 10, FAIL, "Aucune sélection de contenus sur l'accueil",
-                            "L'accueil ne propose aucun contenu à explorer directement : le visiteur doit chercher lui-même.",
-                            "Ajoutez au moins une rangée de suggestions (tendances pour un nouveau visiteur, « pour vous » pour un visiteur qui revient)."))
-
-    # 7. Block size.
+    # 7. Block size, counted on what the page shows.
     if readable:
         counts = [len({i.key for i in b.items}) for b in readable]
-        small = [c for c in counts if c < 4]
-        large = [c for c in counts if c > 16]
-        if small:
-            kpis.append(Kpi("block_size", "Taille des blocs", 5, WARN, f"Bloc trop court : {_plural(min(counts), one, many)}",
-                            "Avec moins de 4 suggestions, un bloc laisse peu de chances de trouver quelque chose d'intéressant.",
-                            f"Visez 4 à 8 {many} par bloc."))
-        elif large:
-            kpis.append(Kpi("block_size", "Taille des blocs", 5, WARN, f"Bloc très long : {_plural(max(counts), one, many)}",
-                            "Au-delà d'une quinzaine d'éléments, un bloc noie les meilleures suggestions.",
-                            f"Visez 4 à 12 {many}, les meilleurs en premier."))
+        span = f"{min(counts)} {many}" if min(counts) == max(counts) else f"entre {min(counts)} et {max(counts)} {many}"
+        if min(counts) < 4:
+            kpis.append(Kpi("block_size", "Taille des blocs", 3, WARN, f"{span.capitalize()} affichés par bloc : trop court",
+                            "Avec moins de 4 suggestions, un bloc laisse peu de chances de trouver quelque chose.", f"Visez 4 à 8 {many} par bloc."))
+        elif max(counts) > 16:
+            kpis.append(Kpi("block_size", "Taille des blocs", 3, WARN, f"{span.capitalize()} affichés par bloc : trop long",
+                            "Au-delà d'une quinzaine, les meilleures suggestions se perdent.", f"Visez 4 à 12 {many}, les meilleurs en premier."))
         else:
-            span = f"{min(counts)} {many}" if min(counts) == max(counts) else f"Entre {min(counts)} et {max(counts)} {many}"
-            kpis.append(Kpi("block_size", "Taille des blocs", 5, PASS, f"{span} par bloc", "Une taille qui laisse le choix sans noyer le visiteur."))
+            kpis.append(Kpi("block_size", "Taille des blocs", 3, PASS, f"{span.capitalize()} affichés par bloc", "Assez de choix sans noyer le visiteur."))
     else:
-        kpis.append(Kpi("block_size", "Taille des blocs", 5, UNKNOWN, "Non vérifiable sans contenu de bloc lisible", ""))
+        kpis.append(Kpi("block_size", "Taille des blocs", 3, UNKNOWN, "Non vérifiable sans bloc lisible", ""))
 
     # 8. Structured data (search engines and AI agents read it).
     s = page.structured
@@ -829,21 +894,19 @@ def build_kpis(page: PageFacts, home: Optional[PageFacts], ucp: Optional[bool]) 
         sells = page.page_type == "product" or s.get("has_offer")
         needed = ["has_name", "has_image"] + (["has_offer", "has_price", "has_availability"] if sells else ["has_date"] if page.page_type in ("article", "event") else [])
         missing = [k for k in needed if not s.get(k)]
-        labels = {"has_name": "nom", "has_image": "image", "has_offer": "offre", "has_price": "prix", "has_availability": "disponibilité", "has_date": "date"}
+        names = {"has_name": "nom", "has_image": "image", "has_offer": "offre", "has_price": "prix", "has_availability": "stock", "has_date": "date"}
         if not missing:
-            kpis.append(Kpi("structured_data", "Données lisibles par les machines", 5, PASS, "Données structurées complètes (schema.org)",
-                            "Google, Bing et les agents IA (ChatGPT, Gemini…) comprennent ce que la page présente, avec son prix et sa disponibilité.",
-                            "Ajoutez les éléments liés (isRelatedTo, isSimilarTo) pour que les agents connaissent aussi vos associations." if not s.get("related_in_markup") else ""))
+            kpis.append(Kpi("structured_data", "Données lisibles par les machines", 2, PASS, "Données structurées complètes (schema.org)",
+                            "Google, Bing et les agents IA (ChatGPT, Gemini…) comprennent ce que la page présente.",
+                            "" if s.get("related_in_markup") else "Ajoutez les éléments liés (isRelatedTo, isSimilarTo) pour que les agents connaissent aussi vos associations."))
         else:
-            kpis.append(Kpi("structured_data", "Données lisibles par les machines", 5, WARN, "Données structurées incomplètes : " + ", ".join(labels[k] for k in missing) + " manquant(s)",
-                            "Les moteurs et les agents IA lisent ces données pour présenter vos produits : ce qui manque n'apparaîtra pas.",
-                            "Complétez le balisage schema.org de la page."))
+            kpis.append(Kpi("structured_data", "Données lisibles par les machines", 2, WARN, "Incomplètes : " + ", ".join(names[k] for k in missing) + " manquant",
+                            "Les moteurs et les agents IA lisent ces données pour présenter vos produits.", "Complétez le balisage schema.org de la page."))
     elif page.page_type in ("product", "book", "event", "article"):
-        kpis.append(Kpi("structured_data", "Données lisibles par les machines", 5, FAIL, "Pas de données structurées schema.org",
-                        "Sans balisage schema.org, moteurs de recherche et agents IA doivent deviner ce que la page présente.",
-                        "Ajoutez un bloc JSON-LD (Product, Book, Event ou Article) avec nom, image, prix et disponibilité."))
+        kpis.append(Kpi("structured_data", "Données lisibles par les machines", 2, FAIL, "Pas de données structurées schema.org",
+                        "Moteurs de recherche et agents IA doivent deviner ce que la page présente.", "Ajoutez un bloc JSON-LD avec nom, image, prix et stock."))
     else:
-        kpis.append(Kpi("structured_data", "Données lisibles par les machines", 5, UNKNOWN, "Analysez une fiche produit ou un article pour ce contrôle", ""))
+        kpis.append(Kpi("structured_data", "Données lisibles par les machines", 2, UNKNOWN, "Analysez une fiche produit ou un article pour ce contrôle", ""))
 
     # 9. AI shopping agents (UCP) - informative, not scored.
     if ucp is True:
@@ -852,15 +915,19 @@ def build_kpis(page: PageFacts, home: Optional[PageFacts], ucp: Optional[bool]) 
     elif ucp is False:
         kpis.append(Kpi("agent_ready", "Prêt pour les agents IA (UCP)", 0, INFO, "Pas de profil UCP",
                         "Le Universal Commerce Protocol (Google, Shopify…) permet aux agents d'achat IA de chercher dans votre catalogue et d'acheter chez vous. "
-                        "Il se déploie d'abord aux États-Unis : rien d'urgent, mais à surveiller.",
+                        "Il se déploie d'abord aux États-Unis : à surveiller.",
                         "Shopify l'active d'office ; ailleurs, il passe par une extension."))
     return kpis
 
 
 def score(kpis: Iterable[Kpi]) -> int:
+    kpis = list(kpis)
     weighted = [(k.weight, STATUS_VALUE[k.status]) for k in kpis if k.status in STATUS_VALUE and k.weight]
     total = sum(w for w, _ in weighted)
-    return round(100 * sum(w * v for w, v in weighted) / total) if total else 0
+    value = round(100 * sum(w * v for w, v in weighted) / total) if total else 0
+    if any(k.id == "self_reco" and k.status == FAIL for k in kpis):
+        value = min(value, SELF_RECO_SCORE_CAP)
+    return value
 
 
 def grade(value: int) -> str:
@@ -868,16 +935,16 @@ def grade(value: int) -> str:
 
 
 NEXT_STEPS = {
-    "woocommerce": {"title": "L'extension LIKYLY pour WooCommerce", "text": "Elle remplace les « produits apparentés » au hasard par des recommandations apprises de votre catalogue et de vos clients, sans code.", "href": "/wordpress", "cta": "Découvrir l'extension"},
-    "wordpress": {"title": "L'extension LIKYLY pour WordPress", "text": "« À lire ensuite » à la fin de vos articles, appris de ce que lisent vos lecteurs, sans code.", "href": "/wordpress", "cta": "Découvrir l'extension"},
-    "shopify": {"title": "LIKYLY pour Shopify", "text": "Une section « Vous aimerez aussi » personnalisée dans votre thème, et les achats suivis par le pixel de Shopify.", "href": "/docs/installation", "cta": "Voir l'installation"},
-    "magento": {"title": "LIKYLY pour Magento", "text": "L'assistant d'installation envoie votre catalogue et ajoute les blocs à votre thème : npx @likyly/wizard.", "href": "/docs/installation", "cta": "Voir l'installation"},
+    "woocommerce": {"title": "L'extension LIKYLY pour WooCommerce", "text": "Deux blocs sur chaque fiche : « Vous aimerez aussi » (produits proches, dès le premier jour) et « Les clients ont aussi aimé », appris de vos commandes et adapté à chaque visiteur. Sans code.", "href": "/wordpress", "cta": "Découvrir l'extension"},
+    "wordpress": {"title": "L'extension LIKYLY pour WordPress", "text": "« À lire ensuite » à la fin de vos articles : les articles proches, puis ceux que vos lecteurs ont lus ensuite. Sans code.", "href": "/wordpress", "cta": "Découvrir l'extension"},
+    "shopify": {"title": "LIKYLY pour Shopify", "text": "Une section « Vous aimerez aussi » et une section « Les clients ont aussi aimé » dans votre thème, adaptées à chaque visiteur, et les achats suivis par le pixel de Shopify.", "href": "/docs/installation", "cta": "Voir l'installation"},
+    "magento": {"title": "LIKYLY pour Magento", "text": "L'assistant d'installation envoie votre catalogue et ajoute les deux blocs à votre thème : npx @likyly/wizard.", "href": "/docs/installation", "cta": "Voir l'installation"},
 }
-DEFAULT_NEXT_STEP = {"title": "Installez LIKYLY sur votre site", "text": "Un assistant d'installation détecte votre technologie, envoie votre catalogue et ajoute les blocs : npx @likyly/wizard, ou un SDK pour chaque langage.", "href": "/docs/installation", "cta": "Voir l'installation"}
+DEFAULT_NEXT_STEP = {"title": "Installez LIKYLY sur votre site", "text": "Les deux blocs, produits proches et « les clients ont aussi aimé », adaptés à chaque visiteur. Un assistant détecte votre technologie et les installe : npx @likyly/wizard, ou un SDK pour chaque langage.", "href": "/docs/installation", "cta": "Voir l'installation"}
 
 
 def run_audit(raw_url: str, fetch: Fetch, allow_private: bool = False) -> dict[str, Any]:
-    """The whole audit, as stored. `fetch` is SafeFetcher.get in production, a fake in tests."""
+    """The whole audit of one page, as stored. `fetch` is SafeFetcher.get in production, a fake in tests."""
     url = normalize_input_url(raw_url, allow_private)
     page = fetch(url)
     if page.status in (401, 403, 429, 503):
@@ -886,35 +953,28 @@ def run_audit(raw_url: str, fetch: Fetch, allow_private: bool = False) -> dict[s
         raise AuditError(f"La page répond avec une erreur {page.status} : vérifiez l'adresse.")
     if "html" not in (page.content_type or "text/html").lower():
         raise AuditError("Cette adresse ne mène pas à une page web.")
-    soup = BeautifulSoup(page.text, "lxml")
-    facts = analyze_page(page, soup)
+    facts = analyze_page(page)
     notes: list[str] = []
+    stock_checked = False
 
-    if facts.cms == "shopify" and facts.page_type == "product" and facts.shopify_product_id:
-        api_items = shopify_recommendations(fetch, page.url, facts.shopify_product_id)
-        if api_items is not None:
-            native = next((b for b in facts.blocks if b.platform == "shopify" and b.kind == "auto"), None)
-            if native is not None and not native.items:
-                native.items, native.js_only, native.source = api_items, False, "shopify_api"
-            elif native is None and api_items:
-                facts.blocks.append(Block(title="Recommandations Shopify (« Vous aimerez aussi »)", source="shopify_api", kind="auto", items=api_items))
+    if facts.cms == "shopify":
+        # The theme's recommendations section fills in with JavaScript from its data-url: fetch that
+        # section to read exactly what it shows. Never invent a block the theme doesn't have.
+        for block in facts.blocks:
+            data_url = block.element.get("data-url") if block.platform == "shopify" and block.element is not None else None
+            if block.js_only and data_url:
+                items = shopify_section_items(fetch, page.url, data_url)
+                if items:
+                    block.items, block.js_only, block.source = items, False, "shopify_section"
+        items = [i for b in facts.blocks for i in b.items]
+        if items:
+            stock_checked = shopify_flag_out_of_stock(fetch, page.url, items)
 
     js_blocks = [b for b in facts.blocks if b.js_only]
     if js_blocks:
         notes.append(f"{_plural(len(js_blocks), 'bloc se remplit', 'blocs se remplissent')} en JavaScript : leur contenu n'a pas pu être lu sans navigateur.")
 
     origin = f"{urlsplit(page.url).scheme}://{urlsplit(page.url).netloc}/"
-    home: Optional[PageFacts] = None
-    if facts.page_type != "home" and urlsplit(page.url).path.strip("/"):
-        try:
-            home_page = fetch(origin)
-            if home_page.status < 400:
-                home = analyze_page(home_page)
-        except AuditError:
-            notes.append("La page d'accueil n'a pas pu être lue.")
-    else:
-        home = facts
-
     ucp: Optional[bool] = None
     try:
         well_known = fetch(origin + ".well-known/ucp")
@@ -922,9 +982,8 @@ def run_audit(raw_url: str, fetch: Fetch, allow_private: bool = False) -> dict[s
     except AuditError:
         ucp = None
 
-    kpis = build_kpis(facts, home, ucp)
+    kpis = build_kpis(facts, ucp, stock_checked)
     total = score(kpis)
-    vendors = facts.vendors or (home.vendors if home else [])
     return {
         "url": url,
         "final_url": page.url,
@@ -932,12 +991,11 @@ def run_audit(raw_url: str, fetch: Fetch, allow_private: bool = False) -> dict[s
         "cms": {"id": facts.cms, "label": CMS_LABELS.get(facts.cms, facts.cms)},
         "page_type": {"id": facts.page_type, "label": PAGE_TYPE_LABELS.get(facts.page_type, facts.page_type)},
         "item_name": facts.item_name,
-        "vendors": vendors,
+        "vendors": facts.vendors,
         "score": total,
         "grade": grade(total),
         "kpis": [k.public(full=True) for k in kpis],
         "blocks": [b.public() for b in facts.blocks],
-        "home_blocks": [b.public() for b in home.blocks] if home is not None and home is not facts else [],
         "notes": notes,
         "next_step": NEXT_STEPS.get(facts.cms, DEFAULT_NEXT_STEP),
     }
