@@ -302,7 +302,9 @@ def test_teaser_then_full_report_and_email(http, audits):
     token = teaser["token"]
     assert teaser["unlocked"] is False and teaser["score"] < 50
     assert teaser["cms"]["id"] == "woocommerce"
-    assert all(set(k) == {"id", "label", "status", "summary", "weight"} for k in teaser["kpis"])
+    assert all(set(k) == {"id", "label", "status", "summary", "weight", "method"} for k in teaser["kpis"])
+    assert all(k["method"] for k in teaser["kpis"])  # every check says how it is measured, before the email too
+    assert kpi(teaser, "unavailable")["method"].startswith("Stock lu dans le code WooCommerce")
     assert "blocks" not in teaser and "next_step" not in teaser and teaser["block_count"] == 1
     assert teaser["report_url"].endswith(f"/audit/r/{token}")
     assert http.get(f"/audits/{token}").json()["unlocked"] is False

@@ -691,12 +691,30 @@ class Kpi:
     summary: str
     detail: str = ""
     advice: str = ""
+    method: str = ""  # how it was measured, in one short sentence (the page's tooltip)
 
     def public(self, full: bool) -> dict[str, Any]:
-        data = {"id": self.id, "label": self.label, "status": self.status, "summary": self.summary, "weight": self.weight}
+        data = {"id": self.id, "label": self.label, "status": self.status, "summary": self.summary, "weight": self.weight, "method": self.method}
         if full:
             data.update({"detail": self.detail, "advice": self.advice})
         return data
+
+
+METHODS = {
+    "self_reco": "Adresse et nom du produit affiché comparés à chaque élément des blocs.",
+    "similar_block": "Blocs repérés par leur titre et le code du CMS ; leur origine (catalogue, règle, collection fixe) est lue dans le thème.",
+    "behavior_block": "Bloc titré « ont aussi aimé / acheté », ou bloc natif du CMS fondé sur les achats.",
+    "personalization": "Outil de personnalisation chargé par la page (Nosto, Clerk, LIKYLY…) ou bloc « vus récemment ».",
+    "duplicates": "Liens et noms comparés à l'intérieur de chaque bloc et d'un bloc à l'autre.",
+    "block_size": "Nombre d'éléments réellement affichés dans chaque bloc.",
+    "structured_data": "Données schema.org (JSON-LD) lues dans le code de la page.",
+    "agent_ready": "Présence du fichier /.well-known/ucp sur le site.",
+}
+STOCK_METHODS = {
+    "shopify": "Stock lu sur la fiche publique Shopify de chaque produit recommandé (/products/….js).",
+    "woocommerce": "Stock lu dans le code WooCommerce de chaque carte produit (en stock / en rupture).",
+}
+STOCK_METHOD_DEFAULT = "Mentions « épuisé », « rupture », « sold out » cherchées sur chaque carte produit."
 
 
 def _plural(n: int, one: str, many: str) -> str:
@@ -917,6 +935,8 @@ def build_kpis(page: PageFacts, ucp: Optional[bool], stock_checked: bool = False
                         "Le Universal Commerce Protocol (Google, Shopify…) permet aux agents d'achat IA de chercher dans votre catalogue et d'acheter chez vous. "
                         "Il se déploie d'abord aux États-Unis : à surveiller.",
                         "Shopify l'active d'office ; ailleurs, il passe par une extension."))
+    for k in kpis:
+        k.method = STOCK_METHODS.get(page.cms, STOCK_METHOD_DEFAULT) if k.id == "unavailable" else METHODS.get(k.id, "")
     return kpis
 
 
@@ -1005,6 +1025,6 @@ def teaser(result: dict[str, Any]) -> dict[str, Any]:
     """What the page shows before the email: the verdicts, not the explanations or the evidence."""
     return {
         **{k: result[k] for k in ("url", "final_url", "host", "cms", "page_type", "item_name", "vendors", "score", "grade")},
-        "kpis": [{k: v for k, v in kpi.items() if k in ("id", "label", "status", "summary", "weight")} for kpi in result["kpis"]],
+        "kpis": [{k: v for k, v in kpi.items() if k in ("id", "label", "status", "summary", "weight", "method")} for kpi in result["kpis"]],
         "block_count": len(result["blocks"]),
     }
