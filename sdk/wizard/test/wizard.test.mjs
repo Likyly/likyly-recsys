@@ -1117,7 +1117,7 @@ test("info, Free plan: the account, its key (never the value), Free and Pro side
   const { report } = r;
   assert.deepEqual(calls, [{ path: "/analytics/plan", key: "lk_dev" }]);
   assert.equal(report.account.email, "dev@example.com");
-  assert.deepEqual(report.workspace, { id: "li_7f3k2q", name: "My shop", createdAt: "2026-11-03T10:00:00Z" }, "LIKYLY's name wins over the local line");
+  assert.deepEqual(report.workspace, { id: "li_7f3k2q", name: "My shop", named: true, createdAt: "2026-11-03T10:00:00Z" }, "LIKYLY's name wins over the local line");
   assert.equal(report.key.name, "Claude Code");
   assert.equal(report.key.from, ".likyly/credentials.env");
   assert.equal(report.paid, false);
@@ -1141,6 +1141,8 @@ test("info, Pro plan: paid, nothing about upgrading; an older API: only the own 
   assert.equal(pro.report.paid, true);
   assert.ok(pro.report.plans.find((p) => p.plan === "pro").current);
   assert.doesNotMatch(formatInfo(pro.report), /request the Pro plan/);
+  pro.report.workspace = { id: "Self-service client 3711", name: "Self-service client 3711", named: false };
+  assert.match(formatInfo(pro.report), /Workspace {3}not named yet · Self-service client 3711 \(name it in the console\)/);
   const legacy = await readInfo({ dir: project(KEYED), fetchImpl: planApi("free", { legacy: true }).fetchImpl });
   assert.deepEqual(legacy.report.plans.map((p) => p.plan), ["free"]);
   assert.equal(legacy.report.comparedOnlyOwnPlan, true);

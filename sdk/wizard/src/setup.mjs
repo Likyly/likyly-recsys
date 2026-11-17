@@ -667,7 +667,8 @@ included) and nothing before the title:
 | Plan | ◆ Free |
 
 (the key's "hint" is a preview - its first and last characters - never more; a "secret" kind says "the secret key";
-no "scopes": no Rights row; the workspace id only when it differs from its name)
+no "scopes": no Rights row; a workspace whose "named" is false: "not named yet · <id>", and that
+it can be named in the console)
 
 **Limits** - one column per entry of "plans", in that order, the current one marked ◆ in its
 header; a last column "You use" from "used" (empty when absent):

@@ -68,7 +68,8 @@ export async function readInfo({ dir, fetchImpl = fetch }) {
   });
   const report = {
     account: { email: local.account ?? null, console: local.console ?? "https://www.likyly.com" },
-    workspace: d.workspace ? { id: d.workspace.id, name: d.workspace.name, createdAt: d.workspace.created_at } : local.workspace ? { name: local.workspace } : null,
+    // Never renamed: LIKYLY's name is its technical id ("li_..." or "Self-service client <uuid>").
+    workspace: d.workspace ? { id: d.workspace.id, name: d.workspace.name, named: d.workspace.name !== d.workspace.id, createdAt: d.workspace.created_at } : local.workspace ? { name: local.workspace, named: true } : null,
     key: { ...(d.key ?? { kind: "developer" }), from: process.env[KEY_ENV]?.trim() ? `${KEY_ENV} (environment)` : CREDENTIALS_FILE },
     plan,
     planName: d.plan_name ?? PLAN_NAMES[plan] ?? plan,
@@ -108,7 +109,7 @@ export function formatInfo(r) {
   const lines = [
     `LIKYLY · Account · ${r.planName} plan${r.paid ? "" : " (free)"}`,
     `  Account     ${r.account.email ?? "(not recorded in this project)"}`,
-    `  Workspace   ${r.workspace ? `${r.workspace.name}${r.workspace.id && r.workspace.id !== r.workspace.name ? ` · ${r.workspace.id}` : ""}` : "(unknown)"}`,
+    `  Workspace   ${!r.workspace ? "(unknown)" : r.workspace.named ? `${r.workspace.name}${r.workspace.id ? ` · ${r.workspace.id}` : ""}` : `not named yet · ${r.workspace.id} (name it in the console)`}`,
     `  Key         ${keyText} · from ${r.key.from}${r.key.scopes?.length ? `\n              rights: ${r.key.scopes.join(", ")}` : ""}`,
     "",
   ];
