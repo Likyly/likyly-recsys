@@ -449,6 +449,34 @@ def test_training_promotes_without_dvc_or_mlflow(http, seeded, tmp_path, monkeyp
     assert db.get_active_model_version(seeded.client_id, Q["data_product_type"])["id"] == result["version_id"]
 
 
+def test_a_retrain_is_compared_with_the_active_version_on_the_same_data(http, seeded, tmp_path, monkeypatch):
+    """The active version's stored precision was measured on its own day's data: compared with
+    it, a retrain knowing more customers could be turned down forever (seen on the Magento
+    sandbox: 0.83 on 30 customers kept beating every candidate on 46). The active settings are
+    scored again on today's data instead."""
+    import shutil
+    monkeypatch.setattr(shutil, "which", lambda *a, **k: None)
+    monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
+    monkeypatch.setattr(modelData, "_versioned_model_path", lambda t, c, v: str(tmp_path / f"{t}_{c}_v{v}.npz"))
+    settings = {"factors": 4, "regularization": 0.1, "iterations": 10}
+    for u in range(6):
+        track(http, seeded, "purchase", {"user_id": f"u{u}", "item_id": ["SKU-NIKE-001", "SKU-VANS-004"][u % 2]})
+        track(http, seeded, "purchase", {"user_id": f"u{u}", "item_id": "SKU-ASICS-003"})
+    first = modelData.train_and_maybe_promote_model(Q["data_product_type"], client_id=seeded.client_id, **settings)
+    assert first["promoted"]
+    # A figure no retrain on other data could reach.
+    with db.SessionLocal() as session:
+        session.query(db.ModelVersionModel).filter_by(id=first["version_id"]).update({"precision_at_k": 1.0})
+        session.commit()
+    for u in range(6, 12):
+        track(http, seeded, "purchase", {"user_id": f"u{u}", "item_id": ["SKU-NIKE-001", "SKU-VANS-004"][u % 2]})
+        track(http, seeded, "purchase", {"user_id": f"u{u}", "item_id": "SKU-CONVERSE-002"})
+    second = modelData.train_and_maybe_promote_model(Q["data_product_type"], client_id=seeded.client_id, **settings)
+    assert second["promoted"], second  # same settings, same data: as good as the active one
+    assert second["previous_precision_at_k"] == second["precision_at_k"]
+    assert db.get_active_model_version(seeded.client_id, Q["data_product_type"])["id"] == second["version_id"]
+
+
 def test_training_is_recorded_in_a_sqlite_mlflow_store(http, seeded, tmp_path, monkeypatch):
     """Production records MLflow runs in a SQLite file on the model volume (no server):
     the run, its model file under MLFLOW_ARTIFACT_ROOT (never ./mlruns inside the

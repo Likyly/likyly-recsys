@@ -290,6 +290,19 @@ def tune_als(interactions_matrix, k=10, grid=None, splits=ALS_TUNING_SPLITS, tim
     return {key: best[key] for key in keys}, trials
 
 
+def _precision_on(interactions_matrix, version, k):
+    """precision@k of a version's settings on this matrix and the control split - the
+    candidate's own measure, so the two can be compared."""
+    value = evaluate_against_baseline(
+        interactions_matrix,
+        factors=version.get("factors") or ALS_FACTORS,
+        regularization=version.get("regularization") if version.get("regularization") is not None else ALS_REGULARIZATION,
+        iterations=version.get("iterations") or ALS_ITERATIONS,
+        k=k,
+    )["precision_at_k"]
+    return value
+
+
 def train_and_maybe_promote_model(
     product_type,
     client_id=DEMO_CLIENT_ID,
@@ -324,11 +337,16 @@ def train_and_maybe_promote_model(
     # actually serve is trained on 100% of the available data.
     final_model = create_model(interactions, factors=factors, regularization=regularization, iterations=iterations)
 
+    # Compared on the same data: the active version's settings are scored on today's matrix and
+    # control split, like the candidate. Its stored figure was measured on the data of its own
+    # day - fewer visitors, other pairs held out - and is not comparable: a model knowing every
+    # new customer could be turned down forever against a figure from a smaller matrix.
     active = get_active_model_version(client_id, product_type)
+    active_precision = _precision_on(interactions, active, k) if active is not None else None
     is_improvement = (
         active is None
-        or active["precision_at_k"] is None
-        or (candidate_precision is not None and candidate_precision >= active["precision_at_k"])
+        or active_precision is None
+        or (candidate_precision is not None and candidate_precision >= active_precision)
     )
 
     # The matrix is sized by the largest ids (max id + 1), not by how many visitors and
@@ -365,7 +383,7 @@ def train_and_maybe_promote_model(
         "version_id": version_id,
         "precision_at_k": candidate_precision,
         "promoted": is_improvement,
-        "previous_precision_at_k": active["precision_at_k"] if active else None,
+        "previous_precision_at_k": active_precision,
     }
 
 

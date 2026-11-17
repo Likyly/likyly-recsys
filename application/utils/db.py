@@ -1927,6 +1927,20 @@ def get_active_model_version(client_id: int, product_type: str) -> Optional[dict
         return _model_version_row_to_dict(row) if row is not None else None
 
 
+def get_latest_model_version(client_id: int, product_type: str) -> Optional[dict]:
+    """The most recent training run, promoted or not - what the automatic retrain counts new
+    interactions from (counting from the active version re-ran a training on every event
+    after a candidate was turned down)."""
+    with SessionLocal() as session:
+        row = (
+            session.query(ModelVersionModel)
+            .filter_by(client_id=client_id, product_type=product_type)
+            .order_by(ModelVersionModel.trained_at.desc(), ModelVersionModel.id.desc())
+            .first()
+        )
+        return _model_version_row_to_dict(row) if row is not None else None
+
+
 def promote_model_version(version_id: int, client_id: int, product_type: str) -> None:
     """Marks this version active and demotes any previously-active version for the same
     (client_id, product_type) - exactly one active version per pair at a time."""

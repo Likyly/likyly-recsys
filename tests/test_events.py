@@ -256,6 +256,31 @@ class TestAutoRetrain:
         assert len(trained) >= 1
         assert not any(j["client_id"] == seeded.client_id and j["status"] == "failed" for j in api.GENERATE_MODEL_JOBS.values())
 
+    def test_a_turned_down_candidate_does_not_retrain_on_every_event(self, http, seeded, api, monkeypatch):
+        """New interactions count from the last training run, promoted or not. Counted from the
+        active version, a candidate turned down left the count over the threshold: 33 trainings
+        in 4 minutes on the Magento sandbox (Unlimited plan, no daily cap)."""
+        monkeypatch.setattr(api, "AUTO_RETRAIN_INTERACTION_THRESHOLD", 3)
+        trained = []
+
+        def turned_down(*a, **k):
+            trained.append(1)
+            db.record_model_version(
+                client_id=seeded.client_id, product_type=Q["data_product_type"], file_path="pending",
+                factors=8, regularization=10.0, iterations=30, precision_at_k=0.1, triggered_by="auto",
+            )  # recorded, never promoted
+            return {"version_id": 1, "precision_at_k": 0.1, "promoted": False, "previous_precision_at_k": 0.5}
+
+        monkeypatch.setattr(api, "train_and_maybe_promote_model", turned_down)
+        for i in range(3):
+            track(http, seeded, "purchase", {"user_id": f"u{i}", "item_id": "SKU-NIKE-001"})
+        assert len(trained) == 1
+        for i in range(2):
+            track(http, seeded, "purchase", {"user_id": f"v{i}", "item_id": "SKU-NIKE-001"})
+        assert len(trained) == 1  # 2 new interactions since that run: under the threshold
+        track(http, seeded, "purchase", {"user_id": "v9", "item_id": "SKU-NIKE-001"})
+        assert len(trained) == 2
+
     def test_model_status_counts_interactions_toward_the_next_retrain(self, http, seeded):
         """The dashboard shows "x / threshold" before the next automatic retrain: identified,
         signal-carrying events count, impressions and anonymous ones don't."""

@@ -88,7 +88,7 @@ from db import (
     regenerate_secret_key, regenerate_public_key, revoke_secret_key, revoke_public_key,
     set_client_active, delete_client, get_client_admin_row, rename_client, set_client_display_name,
     touch_client_usage, list_all_clients_with_usage, get_client_usage_by_day,
-    get_active_model_version, count_products_in_catalog,
+    get_active_model_version, get_latest_model_version, count_products_in_catalog,
     count_users_in_catalog, count_trainings_today, list_data_sources, delete_catalog, erase_catalog_data,
     DEFAULT_ITEM_SORT,
     get_client_contact_email, create_upgrade_request, count_upgrade_requests_since,
@@ -604,8 +604,10 @@ def maybe_trigger_auto_retrain(client_id: int, product_type: str, background_tas
     if key in _auto_retrain_in_progress:
         return  # a retrain for this pair is already running - don't pile on
 
-    active = get_active_model_version(client_id, product_type)
-    since = active["trained_at"] if active else None
+    # Counted from the last training run, promoted or not: from the active version, a turned
+    # down candidate left the count above the threshold and every following event retrained.
+    latest = get_latest_model_version(client_id, product_type)
+    since = latest["trained_at"] if latest else None
     new_interactions = count_interactions_since(client_id, product_type, since)
     if new_interactions < AUTO_RETRAIN_INTERACTION_THRESHOLD:
         return
@@ -2107,12 +2109,13 @@ def build_model_status(client_id: int, product_type: str) -> dict:
     skip = _auto_retrain_skips.get((client_id, product_type))
     skip_today = skip is not None and skip["skipped_at"].date() == utcnow().date()
     active = get_active_model_version(client_id, product_type)
+    latest = get_latest_model_version(client_id, product_type)
 
     return {
         "data_product_type": product_type,
         "active_version": active,
         "new_interactions_since_training": count_interactions_since(
-            client_id, product_type, active["trained_at"] if active else None,
+            client_id, product_type, latest["trained_at"] if latest else None,
         ),
         "auto_retrain_threshold": AUTO_RETRAIN_INTERACTION_THRESHOLD,
         "manual_trainings_today": count_trainings_today(client_id, product_type, MANUAL),
