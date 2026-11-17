@@ -1,7 +1,7 @@
 // Line-by-line renderer for CI and non-TTY runs (`--yes`, pipes): no prompts, stable output,
 // non-zero exit when a step fails.
 
-import { detectEditors, detectProject } from "./frameworks.mjs";
+import { detectEditors, detectProject, findProjectsBelow } from "./frameworks.mjs";
 import { KEY_ENV } from "./mcp.mjs";
 import { applyKey, applyStarter, connectEditors, installSdk } from "./actions.mjs";
 import { AGENT_PROMPT, DOCS_URL, KEYS_URL, TAGLINE } from "./constants.mjs";
@@ -54,7 +54,14 @@ export async function runPlain(opts) {
   const project = detectProject(opts.dir);
   step(1, 4, "Detect the project");
   if (!project) {
-    report([{ level: "warn", text: "No project recognised here (no package.json, composer.json, pyproject.toml, Gemfile, go.mod, Cargo.toml, .csproj, pom.xml, WordPress or Shopify theme). Run it at your project root, or follow", hint: DOCS_URL }]);
+    const below = findProjectsBelow(opts.dir);
+    if (below.length) {
+      report([{ level: "warn", text: "No project in this folder. Are you in the right one? Found in the folders below it:" }]);
+      for (const p of below) console.log(`    cd ${p.path}   ${dim(`# ${p.label}`)}`);
+      console.log(dim("    then run the wizard again there."));
+      return 1;
+    }
+    report([{ level: "warn", text: "No project recognised in this folder - are you at your project's root? (no package.json, composer.json, pyproject.toml, Gemfile, go.mod, Cargo.toml, .csproj, pom.xml, WordPress, Magento or Shopify theme). Run it there, or follow", hint: DOCS_URL }]);
     return 1;
   }
   report([{ level: "ok", text: `${project.label}${project.packageManager ? ` (${project.packageManager})` : ""}` }]);

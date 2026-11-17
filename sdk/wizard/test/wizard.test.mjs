@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { detectProject, detectEditors, installedEditors, EDITORS } from "../src/frameworks.mjs";
+import { detectProject, detectEditors, findProjectsBelow, installedEditors, EDITORS } from "../src/frameworks.mjs";
 import { mergeConfig, writeMcpConfig, removeTomlBlock, approveClaudeServer, hasDeveloperKey } from "../src/mcp.mjs";
 import { isServerOnlyKey, writeEnv, writeStarter, starterContent } from "../src/setup.mjs";
 import { parseArgs } from "../src/cli.mjs";
@@ -461,7 +461,22 @@ test("an unrecognised folder says so and exits with an error", () => {
   const dir = project({});
   const res = runCli(["--yes", "--dir", dir], dir);
   assert.equal(res.status, 1);
-  assert.match(res.stdout + res.stderr, /No project recognised here .*Shopify theme/);
+  assert.match(res.stdout + res.stderr, /No project recognised in this folder - are you at your project's root\? .*Shopify theme/);
+});
+
+test("run one folder too high, the wizard points to the projects below it", () => {
+  const dir = project({});
+  mkdirSync(join(dir, "shop/site/app/etc"), { recursive: true });
+  writeFileSync(join(dir, "shop/site/composer.json"), JSON.stringify({ require: { "magento/product-community-edition": "2.4.9" } }));
+  mkdirSync(join(dir, "front/node_modules/next"), { recursive: true });
+  writeFileSync(join(dir, "front/package.json"), JSON.stringify({ dependencies: { next: "15", react: "19" } }));
+  writeFileSync(join(dir, "front/node_modules/next/package.json"), "{}");
+  const found = findProjectsBelow(dir);
+  assert.deepEqual(found.map((p) => [p.path, p.label]), [["front", "Next.js"], [join("shop", "site"), "Magento Open Source"]]);
+  const res = runCli(["--yes", "--dir", dir], dir);
+  assert.equal(res.status, 1);
+  assert.match(res.stdout, /Are you in the right one\?/);
+  assert.match(res.stdout, /cd shop\/site .*Magento Open Source/);
 });
 
 
@@ -1432,4 +1447,20 @@ test("Magento: a new choice of categories replaces the previous one - removed fi
   assert.deepEqual(pushes[0], { items: [], deleted_ids: ["BK-001", "ART-001"] }, "the products left out go first");
   assert.deepEqual(pushes[1].items.map((i) => i.id), ["RUN-001", "RUN-002"]);
   assert.ok(r.some((x) => x.text === "2 product(s) no longer chosen removed from LIKYLY"));
+});
+
+// --- The detected stack's mark on the plan card ---------------------------------------------------
+
+test("every detected stack has a mark, with lines of one width and no double-width character", async () => {
+  const { logoFor } = await import("../src/ui/logos.mjs");
+  const ids = ["magento", "shopify", "shopify-app", "wordpress", "drupal", "nextjs", "vue", "nuxt", "react", "react-vite", "react-cra", "remix", "angular", "laravel", "symfony", "php", "astro", "sveltekit", "django", "flask", "fastapi", "python", "rails", "node", "javascript", "go", "rust", "java", "dotnet"];
+  for (const id of ids) {
+    const logo = logoFor({ id });
+    assert.ok(logo, `no mark for ${id}`);
+    assert.match(logo.color, /^#[0-9A-F]{6}$/i);
+    const widths = new Set(logo.art.map((l) => [...l].length));
+    assert.equal(widths.size, 1, `${id}: lines of different widths`);
+    assert.ok(logo.art.every((l) => !/\p{Extended_Pictographic}/u.test(l)), `${id}: emoji`);
+  }
+  assert.equal(logoFor({ id: "unknown" }), null);
 });

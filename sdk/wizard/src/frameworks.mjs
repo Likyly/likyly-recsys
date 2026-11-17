@@ -6,7 +6,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 
 const JS_SDK = "@likyly/sdk";
 const REACT_SDK = "@likyly/react";
@@ -329,6 +329,48 @@ export function detectProject(dir) {
   const php = detectPhp(dir);
   const phpFramework = php && php.id !== "php" ? php : null;
   return wp ?? phpFramework ?? detectJs(dir) ?? php ?? detectPython(dir) ?? detectOthers(dir);
+}
+
+// Folders never worth looking into for a project: dependencies, build output, caches, the
+// generated parts of a CMS, and macOS's Library when the wizard runs in the home folder.
+const SKIP_DIRS = new Set(["node_modules", "vendor", "dist", "build", "out", "target", "generated", "var", "pub", "storage", "cache", "tmp", "coverage", "Library", "Applications"]);
+
+/**
+ * The projects in the folders below `dir`, when `dir` itself is not one (the wizard run one level
+ * too high, e.g. in a monorepo or next to the site's folder). Breadth-first, nearest first, never
+ * inside a project already found; bounded so a run in the home folder stays quick.
+ * Returns `[{ dir, path, label }]`, `path` relative to `dir`.
+ */
+export function findProjectsBelow(dir, { depth = 3, limit = 10, maxDirs = 400 } = {}) {
+  const found = [];
+  let queue = [dir];
+  let visited = 0;
+  for (let level = 0; level < depth && queue.length && found.length < limit; level++) {
+    const next = [];
+    for (const parent of queue) {
+      let entries = [];
+      try {
+        entries = readdirSync(parent, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+      const dirs = entries.filter((e) => e.isDirectory() && !e.name.startsWith(".") && !SKIP_DIRS.has(e.name)).map((e) => e.name).sort();
+      for (const name of dirs) {
+        if (found.length >= limit || ++visited > maxDirs) break;
+        const child = join(parent, name);
+        let project = null;
+        try {
+          project = detectProject(child);
+        } catch {
+          project = null;
+        }
+        if (project) found.push({ dir: child, path: relative(dir, child), label: project.label });
+        else next.push(child);
+      }
+    }
+    queue = next;
+  }
+  return found;
 }
 
 /**

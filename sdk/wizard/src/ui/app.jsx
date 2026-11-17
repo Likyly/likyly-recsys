@@ -6,7 +6,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { homedir } from "node:os";
 import { useEffect, useRef, useState } from "react";
 import { Box, Static, Text, render, useApp, useStdout, useWindowSize } from "ink";
-import { EDITORS, detectEditors, detectProject, installedEditors } from "../frameworks.mjs";
+import { EDITORS, detectEditors, detectProject, findProjectsBelow, installedEditors } from "../frameworks.mjs";
 import { KEY_ENV, hasDeveloperKey, readDeveloperKey } from "../mcp.mjs";
 import { ShopifyCatalogStep } from "./shopify.jsx";
 import { MagentoCatalogStep } from "./magento.jsx";
@@ -26,6 +26,7 @@ import {
 } from "../actions.mjs";
 import { AGENT_PROMPT, DOCS_URL, KEYS_URL, TAGLINE } from "../constants.mjs";
 import { C, Gradient, Logo, Tag } from "./theme.jsx";
+import { logoFor } from "./logos.mjs";
 import { LiveLog, MultiSelect, Results, Select, Step } from "./widgets.jsx";
 import { AccountStep } from "./account.jsx";
 import { copyToClipboard } from "./system.mjs";
@@ -76,6 +77,9 @@ function TooSmall({ columns, rows }) {
   );
 }
 
+const NO_PROJECT =
+  "No project recognised in this folder - are you at your project's root? (no package.json, composer.json, pyproject.toml, Gemfile, go.mod, Cargo.toml, .csproj, pom.xml, WordPress, Magento or Shopify theme). Run it there, or follow";
+
 function Header({ opts, version }) {
   return (
     <Box flexDirection="column" marginBottom={1}>
@@ -97,14 +101,29 @@ function Header({ opts, version }) {
 }
 
 function PlanCard({ project, rows, compat }) {
+  const logo = logoFor(project);
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={C.violet} paddingX={1} width={74}>
-      <Text>
-        <Text color={C.violet} bold>
-          {project.label}
-        </Text>
-        {project.packageManager ? <Text color={C.muted}> · {project.packageManager}</Text> : null}
-      </Text>
+      <Box gap={2} marginBottom={logo ? 1 : 0}>
+        {logo ? (
+          <Box flexDirection="column" flexShrink={0}>
+            {logo.art.map((line, i) => (
+              <Text key={i} color={logo.color}>
+                {line}
+              </Text>
+            ))}
+          </Box>
+        ) : null}
+        <Box flexDirection="column" justifyContent="center">
+          <Text>
+            <Text color={C.violet} bold>
+              {project.label}
+            </Text>
+            {project.packageManager ? <Text color={C.muted}> · {project.packageManager}</Text> : null}
+          </Text>
+          {logo ? <Text color={C.mint}>✓ detected</Text> : null}
+        </Box>
+      </Box>
       <Box>
         <Box width={9} flexShrink={0}>
           <Text color={C.muted}>Check</Text>
@@ -235,6 +254,8 @@ function App({ opts: initialOpts, result }) {
   const { exit } = useApp();
   const opts = useRef({ ...initialOpts }).current;
   const [project] = useState(() => detectProject(opts.dir));
+  // Run one folder too high (next to the site, in a monorepo): the projects found below, to offer.
+  const [below] = useState(() => (project ? [] : findProjectsBelow(opts.dir)));
   const [order] = useState(() => {
     const signedIn = hasDeveloperKey(opts.dir) || opts.dryRun;
     if (opts.command === "mcp") return signedIn ? MCP_STEPS : MCP_STEPS_SIGN_IN;
@@ -264,7 +285,7 @@ function App({ opts: initialOpts, result }) {
   const reviewRef = useRef([]);
   const [chosenEditors, setChosenEditors] = useState([]);
   // Everything finished is printed once and never redrawn: only the live step is.
-  const [printed, setPrinted] = useState([{ key: "header", kind: "header" }]);
+  const [printed, setPrinted] = useState(opts.continued ? [] : [{ key: "header", kind: "header" }]);
   const { columns, rows } = useWindowSize();
   const tooSmall = columns < MIN_COLUMNS || rows < MIN_ROWS;
 
@@ -295,7 +316,8 @@ function App({ opts: initialOpts, result }) {
   useEffect(() => {
     if (phase === "detect") {
       if (!project) {
-        finish("detect", [{ level: "fail", text: "No project recognised here (no package.json, composer.json, pyproject.toml, Gemfile, go.mod, Cargo.toml, .csproj, pom.xml, WordPress or Shopify theme). Run it at your project root, or follow", hint: DOCS_URL }]);
+        if (below.length) return; // the developer picks one of them (body.detect)
+        finish("detect", [{ level: "fail", text: NO_PROJECT, hint: DOCS_URL }]);
         end(1);
         return;
       }
@@ -366,6 +388,32 @@ function App({ opts: initialOpts, result }) {
   const offerBranch = Boolean(repo && !opts.dryRun && repo.branch !== git.BRANCH);
   const current = repo?.branch ?? "the current branch";
   const body = {
+    detect: () =>
+      below.length ? (
+        <Box flexDirection="column">
+          <Text>No project in this folder. Are you in the right one?</Text>
+          <Box marginBottom={1}>
+            <Text color={C.muted}>Found in the folders below it:</Text>
+          </Box>
+          <Select
+            items={[
+              ...below.map((p) => ({ label: p.path, value: p.dir, hint: p.label })),
+              { label: "None of these", value: "exit", hint: "exit, then run it again at your project's root" },
+            ]}
+            onSubmit={(v) => {
+              if (v === "exit") {
+                finish("detect", [{ level: "fail", text: NO_PROJECT, hint: DOCS_URL }]);
+                end(1);
+                return;
+              }
+              const picked = below.find((p) => p.dir === v);
+              finish("detect", [{ level: "ok", text: `Continuing in ${picked.path} (${picked.label})`, hint: `this terminal stays where it is: cd ${picked.path} to work on the site afterwards` }], `→ ${picked.path}`, "done");
+              result.next = v;
+              end(0);
+            }}
+          />
+        </Box>
+      ) : null,
     plan: () => (
       <>
         <PlanCard project={project} rows={describePlan(opts, project)} compat={compat} />
@@ -582,9 +630,18 @@ function launch(choice, dir, files = [], editors = [], preview = null) {
 }
 
 export async function runInteractive(opts, version) {
-  const result = { code: 130, version, launch: null };
-  const app = render(<App opts={opts} result={result} />, { exitOnCtrlC: true });
+  const result = { code: 130, version, launch: null, next: null };
+  let app = render(<App opts={opts} result={result} />, { exitOnCtrlC: true });
   await app.waitUntilExit();
+  // The developer picked a project in a folder below: the same run goes on there, header kept.
+  while (result.next) {
+    opts = { ...opts, dir: result.next, continued: true };
+    result.next = null;
+    result.code = 130;
+    process.chdir(opts.dir);
+    app = render(<App opts={opts} result={result} />, { exitOnCtrlC: true });
+    await app.waitUntilExit();
+  }
   if (result.launch) launch(result.launch, opts.dir, result.files, result.editors, result.preview);
   return result.code;
 }
