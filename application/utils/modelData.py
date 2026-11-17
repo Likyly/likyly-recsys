@@ -449,7 +449,7 @@ def _log_training_run_to_mlflow(
         client_label = client_name or f"client {client_id}"
         trained_at = trained_at or datetime.utcnow()
         trained_label = trained_at.strftime("%d/%m/%Y %H:%M UTC")
-        trigger_label = "automatique" if triggered_by == "auto" else "manuel"
+        trigger_label = {"auto": "automatique", "admin": "admin LIKYLY"}.get(triggered_by, "manuel")
         precision_label = _fr_percent(precision_at_k) if precision_at_k is not None else "non mesurée"
         control_scores = control_scores or {}
         popularity = control_scores.get("popularity_precision_at_k")

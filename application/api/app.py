@@ -88,7 +88,7 @@ from db import (
     regenerate_secret_key, regenerate_public_key, revoke_secret_key, revoke_public_key,
     set_client_active, delete_client, get_client_admin_row, rename_client, set_client_display_name,
     touch_client_usage, list_all_clients_with_usage, get_client_usage_by_day,
-    get_active_model_version, get_latest_model_version, count_products_in_catalog,
+    get_active_model_version, get_latest_model_version, count_products_in_catalog, ADMIN,
     count_users_in_catalog, count_trainings_today, list_data_sources, delete_catalog, erase_catalog_data,
     DEFAULT_ITEM_SORT,
     get_client_contact_email, create_upgrade_request, count_upgrade_requests_since,
@@ -1570,6 +1570,66 @@ async def admin_client_models(client_id: int, admin_user_id: str = Depends(get_c
     if get_client_admin_row(client_id) is None:
         raise HTTPException(status_code=404, detail="Client not found")
     return [build_model_status(client_id, product_type) for product_type in list_product_types_for_client(client_id)]
+
+@app.get("/admin/clients/{client_id}/models/{data_product_type}/overview", tags=["admin"], response_model=ModelOverview, summary="A client's model in depth", responses=_errors(401, 403, 404))
+async def admin_client_model_overview(
+    client_id: int, data_product_type: str,
+    days: int = Query(7, ge=1, le=90, description="How many days of production traffic to count."),
+    admin_user_id: str = Depends(get_current_admin_user_id),
+):
+    """Same as the client's GET /models/overview, for the back office: every trained version
+    (live, kept, or turned down with its precision@10 and the data it learned from) and what
+    each engine did in production over the last `days`."""
+    if get_client_admin_row(client_id) is None:
+        raise HTTPException(status_code=404, detail="Client not found")
+    since = utcnow() - timedelta(days=days)
+    return {
+        "data_product_type": data_product_type,
+        "active_version": get_active_model_version(client_id, data_product_type),
+        "versions": list_model_versions(client_id, data_product_type),
+        "precision_k": 10,
+        "window_days": days,
+        "performance": recommendation_performance_by_strategy(client_id, data_product_type, since),
+    }
+
+@app.post("/admin/clients/{client_id}/models/{data_product_type}/train", tags=["admin"], response_model=GenerateModelJobStatus, summary="Retrain a client's model", responses=_errors(401, 403, 404, 409))
+async def admin_train_client_model(
+    client_id: int, data_product_type: str, background_tasks: BackgroundTasks,
+    admin_user_id: str = Depends(get_current_admin_user_id),
+):
+    """Starts a training run for this client's catalog from the back office - whatever its plan,
+    never counted in its own daily quotas (recorded as triggered_by "admin"), and even before
+    its first automatic model. Promoted only if it scores at least as well as the live version
+    on the same data, like every other run. Poll GET /admin/clients/{client_id}/models/jobs/{job_id}."""
+    if get_client_admin_row(client_id) is None:
+        raise HTTPException(status_code=404, detail="Client not found")
+    if data_product_type not in list_product_types_for_client(client_id):
+        raise HTTPException(status_code=404, detail=f"No catalog '{data_product_type}' for this client")
+    if count_interactions_since(client_id, data_product_type, None) == 0:
+        raise HTTPException(status_code=409, detail="Nothing to learn from yet: no interaction from an identified visitor in this catalog.")
+    key = (client_id, data_product_type)
+    if key in _auto_retrain_in_progress:
+        raise HTTPException(status_code=409, detail="A training run is already in progress for this catalog.")
+    job_id = str(uuid.uuid4())
+    GENERATE_MODEL_JOBS[job_id] = {
+        "job_id": job_id, "client_id": client_id, "status": "queued", "data_product_type": data_product_type,
+        "detail": "Started from the back office", "version_id": None, "precision_at_k": None, "promoted": None,
+    }
+    _auto_retrain_in_progress.add(key)  # no automatic run on top of this one
+
+    def run(job_id=job_id):
+        try:
+            run_generate_model_job(job_id, client_id, data_product_type, ADMIN)
+        finally:
+            _auto_retrain_in_progress.discard(key)
+
+    background_tasks.add_task(run)
+    return GENERATE_MODEL_JOBS[job_id]
+
+@app.get("/admin/clients/{client_id}/models/jobs/{job_id}", tags=["admin"], response_model=GenerateModelJobStatus, summary="A back-office training run's status", responses=_errors(401, 403, 404))
+async def admin_training_job(client_id: int, job_id: str, admin_user_id: str = Depends(get_current_admin_user_id)):
+    """queued, running, completed (with the precision@10 and whether it went live) or failed."""
+    return get_job_or_404_for_client(job_id, client_id)
 
 @app.get("/admin/overview", tags=["admin"], response_model=AdminOverview, summary="Platform overview", responses=_errors(401, 403))
 async def admin_overview(admin_user_id: str = Depends(get_current_admin_user_id)):

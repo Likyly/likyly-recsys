@@ -65,6 +65,9 @@ REMOVE_FROM_CART = "remove_from_cart"
 
 MANUAL = "manual"
 AUTO = "auto"
+# Started by a LIKYLY admin from the back office: on top of the plan, never counted in the
+# customer's own daily quotas.
+ADMIN = "admin"
 
 # Fixed id for our own demo catalog (movies/books/shoes) and for internal callers
 # (Solara pages) that talk to these functions directly, bypassing the HTTP API and its

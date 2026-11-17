@@ -128,3 +128,40 @@ def test_users_lists_accounts_with_their_workspaces(http, monkeypatch, seeded):
         "last_sign_in_at": None, "email_confirmed": True, "providers": ["github", "email"],
         "is_admin": True, "mfa_enabled": True, "locale": "fr", "workspaces": [],
     }]
+
+
+# --- The model of a workspace ----------------------------------------------------------------------
+
+def test_an_admin_sees_a_workspace_model_and_retrains_it_outside_its_quota(http, monkeypatch, seeded):
+    """The back office shows every version and each engine's production figures, and an admin
+    retrains any catalog - on top of the plan, never counted in the customer's own quota."""
+    import db
+    from conftest import Q
+    headers = _as_admin(monkeypatch)
+    base = f"/admin/clients/{seeded.client_id}/models/{Q['data_product_type']}"
+
+    # Nothing identified to learn from yet.
+    assert http.post(f"{base}/train", headers=headers).status_code == 409
+    assert http.post(f"/admin/clients/{seeded.client_id}/models/no-such-catalog/train", headers=headers).status_code == 404
+
+    started = []
+    monkeypatch.setattr(app_module, "run_generate_model_job", lambda job_id, client_id, product_type, triggered_by: started.append(triggered_by))
+    http.post("/events/purchase", params=Q, headers=seeded.public, json={"user_id": "u1", "item_id": "SKU-NIKE-001"})
+    job = http.post(f"{base}/train", headers=headers)
+    assert job.status_code == 200, job.text
+    assert started == [db.ADMIN]
+    status = http.get(f"/admin/clients/{seeded.client_id}/models/jobs/{job.json()['job_id']}", headers=headers)
+    assert status.status_code == 200 and status.json()["data_product_type"] == Q["data_product_type"]
+    # Another workspace's id never reads it.
+    assert http.get(f"/admin/clients/{seeded.client_id + 999}/models/jobs/{job.json()['job_id']}", headers=headers).status_code == 404
+
+    overview = http.get(f"{base}/overview", headers=headers, params={"days": 30})
+    assert overview.status_code == 200
+    assert overview.json()["window_days"] == 30 and "versions" in overview.json() and "performance" in overview.json()
+
+
+def test_model_routes_are_admin_only(http, monkeypatch, seeded):
+    headers = _as_admin(monkeypatch, is_admin=False)
+    base = f"/admin/clients/{seeded.client_id}/models/shop"
+    assert http.get(f"{base}/overview", headers=headers).status_code == 403
+    assert http.post(f"{base}/train", headers=headers).status_code == 403
