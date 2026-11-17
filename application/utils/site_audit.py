@@ -98,7 +98,8 @@ class SafeFetcher:
             infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
         except socket.gaierror:
             raise AuditError(f"Le site {host} est introuvable : vérifiez l'adresse.")
-        addresses = [info[4][0] for info in infos]
+        # IPv4 first: a server without IPv6 connectivity would otherwise time out on AAAA records.
+        addresses = sorted(dict.fromkeys(info[4][0] for info in infos), key=lambda a: ":" in a)
         if not addresses:
             raise AuditError(f"Le site {host} est introuvable : vérifiez l'adresse.")
         if not self.allow_private and not all(_is_public(a) for a in addresses):
@@ -147,7 +148,7 @@ class SafeFetcher:
                         text = bytes(body).decode("utf-8", errors="replace")
                     return Page(url=current, status=response.status_code, text=text, content_type=response.headers.get("content-type", ""))
             except httpx.TimeoutException:
-                raise AuditError(f"Le site {host} met trop de temps à répondre.")
+                raise AuditError(f"Le site {host} ne répond pas à notre robot d'analyse : il est trop lent, ou il ignore les visites automatiques.")
             except httpx.HTTPError:
                 raise AuditError(f"Impossible de joindre {host}.")
         raise AuditError("La page redirige trop de fois.")

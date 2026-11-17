@@ -355,3 +355,12 @@ def test_book_page_sub_blocks_cards_and_broken_markup():
     assert kpi(result, "duplicates")["status"] == "pass"
     assert kpi(result, "personalization")["status"] == "warn"
     assert kpi(result, "structured_data")["status"] == "pass"  # a book page that sells nothing needs no offer
+
+
+def test_ipv4_is_preferred_when_a_site_has_both(monkeypatch):
+    monkeypatch.setattr(site_audit.socket, "getaddrinfo", lambda host, port, *a, **k: [
+        (10, 1, 6, "", ("2606:4700::1", port, 0, 0)), (2, 1, 6, "", ("93.184.216.34", port)),
+    ])
+    seen = []
+    mock_fetcher(lambda r: seen.append(r) or httpx.Response(200, text="<html></html>")).get("https://dual.example/")
+    assert seen[0].url.host == "93.184.216.34"
