@@ -270,6 +270,26 @@ def test_exclude_cart_items(http, seeded):
     assert "SKU-ADIDAS-007" not in ids
 
 
+def test_a_signed_in_visitor_is_never_offered_back_what_she_bought(http, seeded):
+    """Content and hybrid rank by similarity: without the rule, a customer on a product page
+    gets her own purchases first (seen on the Magento sandbox). Default on; false keeps them."""
+    create_pdp_placement(http, seeded, signals={"required": [], "optional": ["current_item_id", "user_id"]}, limit=7)
+    bought = ["SKU-ADIDAS-007", "SKU-ASICS-003"]
+    for item in bought:
+        response = http.post("/events/purchase", params=Q, headers=seeded.public, json={"user_id": "buyer_1", "item_id": item})
+        assert response.status_code in (200, 201, 202), response.text
+    ids = [i["item_id"] for i in recommend(http, seeded, {"current_item_id": "SKU-NIKE-001", "user_id": "buyer_1"})["items"]]
+    assert ids and not set(bought) & set(ids)
+    assert len(ids) == 5  # 8 items - the current one - the 2 bought: still a full list of what is left
+    # Someone else, or a visitor who isn't signed in, still gets them.
+    anonymous = [i["item_id"] for i in recommend(http, seeded, {"current_item_id": "SKU-NIKE-001"})["items"]]
+    assert set(bought) <= set(anonymous)
+    # Products bought again and again: the rule can be turned off.
+    http.patch(f"/placements/{PDP_SLUG}", headers=seeded.secret, json={"business_rules": {"exclude_purchased_items": False}})
+    again = [i["item_id"] for i in recommend(http, seeded, {"current_item_id": "SKU-NIKE-001", "user_id": "buyer_1"})["items"]]
+    assert set(bought) <= set(again)
+
+
 # ---------------------------------------------------------------------------
 # get_placement_requirements / preview_placement debug shape
 # ---------------------------------------------------------------------------

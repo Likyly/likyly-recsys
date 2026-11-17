@@ -1145,6 +1145,7 @@ class PlacementFilters(BaseModel):
 class PlacementBusinessRules(BaseModel):
     exclude_current_item: bool = Field(default=True, description="Never recommend the item named in context.current_item_id back to itself.")
     exclude_cart_items: bool = Field(default=False, description="Never recommend an item already in context.cart_item_ids.")
+    exclude_purchased_items: bool = Field(default=True, description="Never recommend an item the signed-in visitor (context.user_id) has already bought. Set it to false for products bought again and again (consumables, refills).")
     unknown_current_item: Literal["empty", "popular"] = Field(
         default="empty",
         description=(

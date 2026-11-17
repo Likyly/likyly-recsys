@@ -39,7 +39,7 @@ choice given a name.
 | `signals` | `{required: [...], optional: [...]}` - see below. |
 | `fallback_strategy` | Tried if `strategy` returns nothing. `popular` is always the final safety net regardless. |
 | `filters` | Attribute-based inclusion rules - `category_in`, `category_not_in`, `in_stock_only`, `include_attributes`, `exclude_attributes`. |
-| `business_rules` | Behavioral rules - `exclude_current_item` (default `true`), `exclude_cart_items`, `unknown_current_item` (`empty` by default, or `popular`). |
+| `business_rules` | Behavioral rules - `exclude_current_item` (default `true`), `exclude_cart_items`, `exclude_purchased_items` (default `true`), `unknown_current_item` (`empty` by default, or `popular`). |
 | `tracking_configuration` | Reserved for a future per-placement tracking override - `{}` today. |
 | `enabled`, `version` | Status; `version` increments on every update. |
 
@@ -92,6 +92,9 @@ Applied after ranking, to the already-presented items:
   (`strategy_used: "none"`, a warning in the preview) instead of the most popular items, which
   have nothing to do with the page. `popular` keeps showing those.
 - `exclude_cart_items` - never recommends anything in `context.cart_item_ids`.
+- `exclude_purchased_items` (default `true`) - never recommends to a signed-in visitor
+  (`context.user_id`) an item they have already bought. Set it to `false` for products bought
+  again and again (consumables, refills).
 
 Results can come back under `limit` after filtering - there's no re-fetch/top-up loop yet
 (deliberately simple, per the brief - no merchandising engine).

@@ -1321,6 +1321,21 @@ def fetch_users(
     return df[columns] if not df.empty else pd.DataFrame(columns=columns)
 
 
+def get_purchased_work_ids(client_id: int, product_type: str, user_id: int) -> set[int]:
+    """Every item this (internal) user has bought in this catalog - what a placement's
+    business_rules.exclude_purchased_items keeps out of their recommendations."""
+    with engine.connect() as conn:
+        rows = conn.execute(
+            select(InteractionModel.work_id).distinct().where(
+                InteractionModel.client_id == client_id,
+                InteractionModel.product_type == product_type,
+                InteractionModel.event_type == PURCHASE,
+                InteractionModel.user_id == user_id,
+            )
+        ).all()
+    return {int(row[0]) for row in rows if row[0] is not None}
+
+
 def fetch_interactions(
     product_type: str,
     event_type: str,

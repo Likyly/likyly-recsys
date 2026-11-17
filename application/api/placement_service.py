@@ -122,6 +122,15 @@ def _context_dict(context) -> dict[str, Any]:
 _CANDIDATE_MARGIN = 3
 
 
+def _purchased(client_id: int, placement: dict[str, Any], context_dict: dict[str, Any]) -> set[int]:
+    user_id = context_dict.get("user_id")
+    if not user_id or not (placement.get("business_rules") or {}).get("exclude_purchased_items", True):
+        return set()
+    product_type = placement["product_type"]
+    internal = db.resolve_internal_ids(client_id, product_type, db.KIND_USER, [user_id]).get(user_id)
+    return db.get_purchased_work_ids(client_id, product_type, internal) if internal is not None else set()
+
+
 def _rank_and_fill(client_id: int, placement: dict[str, Any], context_dict: dict[str, Any], limit: int, *, blend_session: bool) -> tuple[engine.PlacementResult, list[dict]]:
     from recommender import present_records, rec_popular
 
@@ -133,6 +142,12 @@ def _rank_and_fill(client_id: int, placement: dict[str, Any], context_dict: dict
         ]), []
     want = min(100, limit * _CANDIDATE_MARGIN)
     result = engine.run_placement(placement, context_dict, want, client_id=client_id, blend_session=blend_session)
+    # A signed-in visitor is never offered back what they already bought (business rule
+    # exclude_purchased_items, on by default): content and hybrid rank by similarity and would
+    # otherwise put her own purchases first.
+    bought = _purchased(client_id, placement, context_dict)
+    if bought:
+        result.records = [r for r in result.records if r.get("work_id") is None or int(r["work_id"]) not in bought]
     presented = apply_filters(
         present_records(client_id, product_type, result.records, legacy=False, include_similar_users=False),
         placement=placement, context=context_dict,
@@ -140,7 +155,7 @@ def _rank_and_fill(client_id: int, placement: dict[str, Any], context_dict: dict
 
     if len(presented) < limit and result.strategy_used != "popular":
         seen = {item["item_id"] for item in presented}
-        exclude = {int(r["work_id"]) for r in result.records if r.get("work_id") is not None}
+        exclude = {int(r["work_id"]) for r in result.records if r.get("work_id") is not None} | bought
         extra = rec_popular(client_id, product_type, want, exclude_work_ids=exclude, catalog_fallback=True)
         extra = apply_filters(
             present_records(client_id, product_type, extra, legacy=False, include_similar_users=False),

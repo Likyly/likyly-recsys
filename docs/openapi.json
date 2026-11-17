@@ -5045,6 +5045,12 @@
             "title": "Exclude Current Item",
             "type": "boolean"
           },
+          "exclude_purchased_items": {
+            "default": true,
+            "description": "Never recommend an item the signed-in visitor (context.user_id) has already bought. Set it to false for products bought again and again (consumables, refills).",
+            "title": "Exclude Purchased Items",
+            "type": "boolean"
+          },
           "unknown_current_item": {
             "default": "empty",
             "description": "On a product page (context_type product_page, or current_item_id required), when context.current_item_id is not in the catalog (not synced yet, refused by the plan's product limit, another catalog's id): 'empty' (default) returns no items (strategy_used 'none') rather than the most popular items, unrelated to the page; 'popular' shows those.",
