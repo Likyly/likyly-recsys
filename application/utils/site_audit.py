@@ -743,9 +743,10 @@ class Kpi:
     detail: str = ""
     advice: str = ""
     method: str = ""  # how it was measured, in one short sentence (the page's tooltip)
+    about: str = ""  # what the check is, in plain words (shown under the title)
 
     def public(self, full: bool) -> dict[str, Any]:
-        data = {"id": self.id, "label": self.label, "status": self.status, "summary": self.summary, "weight": self.weight, "method": self.method}
+        data = {"id": self.id, "label": self.label, "about": self.about, "status": self.status, "summary": self.summary, "weight": self.weight, "method": self.method}
         if full:
             data.update({"detail": self.detail, "advice": self.advice})
         return data
@@ -774,9 +775,10 @@ def _plural(n: int, one: str, many: str) -> str:
 
 ITEM_WORD = {"product": ("produit", "produits"), "book": ("livre", "livres"), "event": ("événement", "événements"), "article": ("article", "articles")}
 ITEM_THE = {"product": "le produit", "book": "le livre", "event": "l'événement", "article": "l'article"}
-BEHAVIOR_TITLE = {"product": "« Les clients ont aussi aimé / acheté »", "book": "« Les lecteurs ont aussi aimé »", "article": "« Les lecteurs ont aussi lu »", "event": "« Les spectateurs ont aussi réservé »"}
-SIMILAR_TITLE = {"product": "« Produits similaires »", "book": "« Livres similaires »", "article": "« Articles similaires »", "event": "« Événements similaires »"}
-UNAVAILABLE_LABEL = {"product": "Produits en rupture de stock recommandés", "book": "Livres en rupture de stock recommandés", "event": "Événements complets ou passés recommandés"}
+BEHAVIOR_TITLE = {"product": "« Les clients ont aussi acheté »", "book": "« Les lecteurs ont aussi aimé »", "article": "« Les lecteurs ont aussi lu »", "event": "« Les spectateurs ont aussi réservé »"}
+BEHAVIOR_LABEL = {"product": "Recommandations basées sur les achats", "book": "Recommandations basées sur les lectures", "article": "Recommandations basées sur les lectures", "event": "Recommandations basées sur les réservations"}
+BEHAVIOR_SOURCE = {"product": "acheté", "book": "aimé", "article": "lu", "event": "réservé"}
+UNAVAILABLE_LABEL = {"product": "Stock des produits recommandés", "book": "Stock des livres recommandés", "event": "Disponibilité des événements recommandés"}
 
 
 def _quote(blocks: list[Block]) -> str:
@@ -792,7 +794,7 @@ def build_kpis(page: PageFacts, ucp: Optional[bool], stock_checked: bool = False
     the = ITEM_THE.get(page.page_type, "l'élément")
     The = the[0].upper() + the[1:]
     behavior_title = BEHAVIOR_TITLE.get(page.page_type, "« Les visiteurs ont aussi aimé »")
-    similar_title = SIMILAR_TITLE.get(page.page_type, "« Éléments similaires »")
+    behavior_label = BEHAVIOR_LABEL.get(page.page_type, "Recommandations basées sur les autres visiteurs")
     personal_vendor = next((v for v in page.vendors if v["personalized"]), None)
     readable = [b for b in page.blocks if b.items]
     js_only = [b for b in page.blocks if b.js_only]
@@ -830,7 +832,7 @@ def build_kpis(page: PageFacts, ucp: Optional[bool], stock_checked: bool = False
     proven = [b for b in similar if b.verified == "varies"]
     manual = [b for b in by_kind("manual") if b.items]
     random_blocks, fixed = by_kind("random"), by_kind("fixed")
-    label = f"Bloc {similar_title}"
+    label = "Recommandations similaires"
     if proven:
         kpis.append(Kpi("similar_block", label, 20, PASS, f"Présent : {_quote(proven)}, propre à chaque fiche (vérifié)",
                         f"Un bloc lié à {the} affiché : c'est la base, utile même pour un visiteur dont on ne sait rien (démarrage à froid). {proven[0].evidence}"))
@@ -864,16 +866,16 @@ def build_kpis(page: PageFacts, ucp: Optional[bool], stock_checked: bool = False
     # 3. Block 2: learned from what other customers did.
     behavior = by_kind("behavior")
     if behavior:
-        kpis.append(Kpi("behavior_block", f"Bloc {behavior_title}", 20, PASS,
+        kpis.append(Kpi("behavior_block", behavior_label, 20, PASS,
                         f"Présent : {_quote(behavior)}",
                         "Un bloc appris de ce que font les autres clients : il révèle des associations que la fiche seule ne dit pas."))
     elif js_only:
-        kpis.append(Kpi("behavior_block", f"Bloc {behavior_title}", 20, WARN,
+        kpis.append(Kpi("behavior_block", behavior_label, 20, WARN,
                         f"Non lisible : {_plural(len(js_only), 'bloc chargé', 'blocs chargés')} en JavaScript",
                         "Un bloc se remplit dans le navigateur : on ne peut pas dire ici s'il montre ce que les autres clients ont aimé ou acheté.",
                         f"Vérifiez qu'un des blocs est bien {behavior_title}, appris des visites, paniers et commandes."))
     else:
-        kpis.append(Kpi("behavior_block", f"Bloc {behavior_title}", 20, FAIL,
+        kpis.append(Kpi("behavior_block", behavior_label, 20, FAIL,
                         "Absent",
                         "Aucun bloc ne s'appuie sur ce que les autres clients ont aimé ou acheté avec cet élément. C'est le deuxième bloc attendu sur une fiche : "
                         "il fait découvrir des associations réelles (le sac et sa pochette, le livre et sa suite) et augmente le panier.",
@@ -931,31 +933,32 @@ def build_kpis(page: PageFacts, ucp: Optional[bool], stock_checked: bool = False
     flagged = [i for b in readable for i in b.items if i.unavailable]
     knows_stock = stock_checked or page.cms == "woocommerce"
     if label is None:
-        kpis.append(Kpi("unavailable", "Éléments indisponibles recommandés", 5, UNKNOWN, "Sans objet pour cette page", ""))
+        kpis.append(Kpi("unavailable", "Stock des éléments recommandés", 5, UNKNOWN, "Sans objet : pas de stock pour ce type de page", ""))
     elif flagged:
         kpis.append(Kpi("unavailable", label, 5, FAIL,
                         _plural(len(flagged), one + " recommandé n'est plus disponible", many + " recommandés ne sont plus disponibles") + " : " + ", ".join(i.name or i.url for i in flagged[:3]),
                         "En rupture de stock (ou complet, pour un événement) : le visiteur clique, et ne peut pas acheter. Le lien fonctionne, c'est le produit qui manque.",
                         "Filtrez les éléments en rupture dans chaque bloc."))
     elif readable and knows_stock:
-        kpis.append(Kpi("unavailable", label, 5, PASS, "Tout ce qui est recommandé est en stock", "Chaque suggestion peut être achetée."))
+        kpis.append(Kpi("unavailable", label, 5, PASS, "Tout ce qui est recommandé est disponible", "Chaque suggestion peut être achetée."))
     else:
-        kpis.append(Kpi("unavailable", label, 5, UNKNOWN, "Stock non lisible depuis la page", "La page n'indique pas si les éléments recommandés sont en stock."))
+        kpis.append(Kpi("unavailable", label, 5, UNKNOWN, "Impossible de savoir si les recommandations sont disponibles",
+                        "Ni la page ni le site n'indiquent si les éléments recommandés sont en stock."))
 
     # 7. Block size, counted on what the page shows.
     if readable:
         counts = [len({i.key for i in b.items}) for b in readable]
         span = f"{min(counts)} {many}" if min(counts) == max(counts) else f"entre {min(counts)} et {max(counts)} {many}"
         if min(counts) < 4:
-            kpis.append(Kpi("block_size", "Taille des blocs", 3, WARN, f"{span.capitalize()} affichés par bloc : trop court",
+            kpis.append(Kpi("block_size", "Nombre de recommandations par bloc", 3, WARN, f"{span.capitalize()} recommandés par bloc : pas assez",
                             "Avec moins de 4 suggestions, un bloc laisse peu de chances de trouver quelque chose.", f"Visez 4 à 8 {many} par bloc."))
         elif max(counts) > 16:
-            kpis.append(Kpi("block_size", "Taille des blocs", 3, WARN, f"{span.capitalize()} affichés par bloc : trop long",
+            kpis.append(Kpi("block_size", "Nombre de recommandations par bloc", 3, WARN, f"{span.capitalize()} recommandés par bloc : trop",
                             "Au-delà d'une quinzaine, les meilleures suggestions se perdent.", f"Visez 4 à 12 {many}, les meilleurs en premier."))
         else:
-            kpis.append(Kpi("block_size", "Taille des blocs", 3, PASS, f"{span.capitalize()} affichés par bloc", "Assez de choix sans noyer le visiteur."))
+            kpis.append(Kpi("block_size", "Nombre de recommandations par bloc", 3, PASS, f"{span.capitalize()} recommandés par bloc", "Assez de choix sans noyer le visiteur."))
     else:
-        kpis.append(Kpi("block_size", "Taille des blocs", 3, UNKNOWN, "Non vérifiable sans bloc lisible", ""))
+        kpis.append(Kpi("block_size", "Nombre de recommandations par bloc", 3, UNKNOWN, "Non vérifiable sans bloc lisible", ""))
 
     # 8. Structured data (search engines and AI agents read it).
     s = page.structured
@@ -965,29 +968,43 @@ def build_kpis(page: PageFacts, ucp: Optional[bool], stock_checked: bool = False
         missing = [k for k in needed if not s.get(k)]
         names = {"has_name": "nom", "has_image": "image", "has_offer": "offre", "has_price": "prix", "has_availability": "stock", "has_date": "date"}
         if not missing:
-            kpis.append(Kpi("structured_data", "Données lisibles par les machines", 2, PASS, "Données structurées complètes (schema.org)",
+            kpis.append(Kpi("structured_data", "Fiche lisible par Google et les IA", 2, PASS, "Nom, prix et stock bien décrits",
                             "Google, Bing et les agents IA (ChatGPT, Gemini…) comprennent ce que la page présente.",
                             "" if s.get("related_in_markup") else "Ajoutez les éléments liés (isRelatedTo, isSimilarTo) pour que les agents connaissent aussi vos associations."))
         else:
-            kpis.append(Kpi("structured_data", "Données lisibles par les machines", 2, WARN, "Incomplètes : " + ", ".join(names[k] for k in missing) + " manquant",
+            kpis.append(Kpi("structured_data", "Fiche lisible par Google et les IA", 2, WARN, "Incomplètes : " + ", ".join(names[k] for k in missing) + " manquant",
                             "Les moteurs et les agents IA lisent ces données pour présenter vos produits.", "Complétez le balisage schema.org de la page."))
     elif page.page_type in ("product", "book", "event", "article"):
-        kpis.append(Kpi("structured_data", "Données lisibles par les machines", 2, FAIL, "Pas de données structurées schema.org",
+        kpis.append(Kpi("structured_data", "Fiche lisible par Google et les IA", 2, FAIL, "Nom, prix et stock non décrits pour les moteurs et les IA",
                         "Moteurs de recherche et agents IA doivent deviner ce que la page présente.", "Ajoutez un bloc JSON-LD avec nom, image, prix et stock."))
     else:
-        kpis.append(Kpi("structured_data", "Données lisibles par les machines", 2, UNKNOWN, "Analysez une fiche produit ou un article pour ce contrôle", ""))
+        kpis.append(Kpi("structured_data", "Fiche lisible par Google et les IA", 2, UNKNOWN, "Analysez une fiche produit ou un article pour ce contrôle", ""))
 
     # 9. AI shopping agents (UCP) - informative, not scored.
     if ucp is True:
-        kpis.append(Kpi("agent_ready", "Prêt pour les agents IA (UCP)", 0, PASS, "Profil UCP publié (/.well-known/ucp)",
+        kpis.append(Kpi("agent_ready", "Achats via les assistants IA (UCP)", 0, PASS, "Le site est déclaré aux assistants d'achat IA",
                         "Le site se déclare aux agents d'achat IA (Gemini, mode IA de Google…) via le Universal Commerce Protocol."))
     elif ucp is False:
-        kpis.append(Kpi("agent_ready", "Prêt pour les agents IA (UCP)", 0, INFO, "Pas de profil UCP",
+        kpis.append(Kpi("agent_ready", "Achats via les assistants IA (UCP)", 0, INFO, "Le site n'est pas encore déclaré aux assistants d'achat IA",
                         "Le Universal Commerce Protocol (Google, Shopify…) permet aux agents d'achat IA de chercher dans votre catalogue et d'acheter chez vous. "
                         "Il se déploie d'abord aux États-Unis : à surveiller.",
                         "Shopify l'active d'office ; ailleurs, il passe par une extension."))
+    source = BEHAVIOR_SOURCE.get(page.page_type, "aimé")
+    about = {
+        "self_reco": f"{The} affiché ne doit jamais apparaître dans ses propres recommandations.",
+        "similar_block": f"Des {many} proches de celui affiché (style, usage, catégorie), souvent titrées « Vous aimerez aussi ». Utiles dès la première visite.",
+        "behavior_block": f"Ce que les autres clients ont {source} avec ce {one}, souvent titré {behavior_title}. Un second bloc, différent du précédent.",
+        "personalization": "Au moins un bloc doit s'adapter au visiteur : ce qu'il a regardé, ses goûts.",
+        "duplicates": f"Un même {one} ne doit pas apparaître deux fois dans les recommandations.",
+        "unavailable": ("Recommander un événement complet ou passé mène le visiteur à une impasse." if page.page_type == "event" else
+                        f"Recommander un {one} en rupture de stock mène le visiteur à une impasse."),
+        "block_size": f"Combien de {many} chaque bloc propose : entre 4 et 8, assez de choix sans noyer les meilleurs.",
+        "structured_data": "Nom, prix et stock décrits dans un format standard (schema.org) que lisent Google, Bing et les assistants IA comme ChatGPT.",
+        "agent_ready": "UCP (Universal Commerce Protocol) : le standard de Google et Shopify qui permet aux assistants IA (Gemini, ChatGPT…) de chercher dans votre catalogue et d'acheter chez vous.",
+    }
     for k in kpis:
         k.method = STOCK_METHODS.get(page.cms, STOCK_METHOD_DEFAULT) if k.id == "unavailable" else METHODS.get(k.id, "")
+        k.about = about.get(k.id, "")
     return kpis
 
 
@@ -1094,6 +1111,6 @@ def teaser(result: dict[str, Any]) -> dict[str, Any]:
     """What the page shows before the email: the verdicts, not the explanations or the evidence."""
     return {
         **{k: result[k] for k in ("url", "final_url", "host", "cms", "page_type", "item_name", "vendors", "score", "grade")},
-        "kpis": [{k: v for k, v in kpi.items() if k in ("id", "label", "status", "summary", "weight", "method")} for kpi in result["kpis"]],
+        "kpis": [{k: v for k, v in kpi.items() if k in ("id", "label", "about", "status", "summary", "weight", "method")} for kpi in result["kpis"]],
         "block_count": len(result["blocks"]),
     }

@@ -273,13 +273,14 @@ def report_body(row: dict[str, Any]) -> str:
     ]
     for kpi in sorted(r["kpis"], key=lambda k: STATUS_ORDER.get(k["status"], 9)):
         label, accent, tint = STATUS_STYLE.get(kpi["status"], STATUS_STYLE["unknown"])
+        about = f'<br><span style="font-size:12px;color:{C["muted"]};">{e(kpi.get("about"))}</span><br>' if kpi.get("about") else ""
         detail = f'<br><span style="color:{C["muted"]};">{e(kpi.get("detail"))}</span>' if kpi.get("detail") else ""
         advice = f'<br><span style="color:{C["ink"]};"><strong>À faire</strong> : {e(kpi.get("advice"))}</span>' if kpi.get("advice") and kpi["status"] != "pass" else ""
         parts.append(
             f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 12px;">'
             f'<tr><td style="background:{tint};border:1px solid {C["border"]};border-left:4px solid {accent};border-radius:12px;padding:12px 16px;font:400 14px/1.55 {FONT};color:{C["ink"]};">'
             f'<span style="font:700 11px/1 {FONT};letter-spacing:1px;text-transform:uppercase;color:{accent};">{e(label)}</span><br>'
-            f'<strong>{e(kpi["label"])}</strong> — {e(kpi["summary"])}{detail}{advice}</td></tr></table>'
+            f'<strong>{e(kpi["label"])}</strong>{about} — {e(kpi["summary"])}{detail}{advice}</td></tr></table>'
         )
     blocks = [b for b in r.get("blocks") or [] if b.get("items")]
     if blocks:

@@ -69,7 +69,7 @@ def test_woocommerce_product_page_errors_are_found():
     assert result["blocks"][0]["verified"] is None and result["compared_with"] is None
     assert kpi(result, "behavior_block")["status"] == "fail"
     assert kpi(result, "duplicates")["status"] == "fail"
-    assert kpi(result, "unavailable")["status"] == "fail" and kpi(result, "unavailable")["label"] == "Produits en rupture de stock recommandés"
+    assert kpi(result, "unavailable")["status"] == "fail" and kpi(result, "unavailable")["label"] == "Stock des produits recommandés"
     assert "Sac à dos" in kpi(result, "unavailable")["summary"]
     assert kpi(result, "personalization")["status"] == "fail"
     assert kpi(result, "structured_data")["status"] == "pass"
@@ -118,7 +118,7 @@ def test_shopify_reads_the_theme_section_and_each_product_stock():
     assert result["compared_with"]["name"] == "Écharpe"
     assert kpi(result, "behavior_block")["status"] == "fail"
     assert kpi(result, "personalization")["status"] == "fail"
-    assert kpi(result, "block_size")["summary"] == "4 produits affichés par bloc"
+    assert kpi(result, "block_size")["summary"] == "4 produits recommandés par bloc"
     assert kpi(result, "agent_ready")["status"] == "pass"
 
 
@@ -320,8 +320,10 @@ def test_teaser_then_full_report_and_email(http, audits):
     token = teaser["token"]
     assert teaser["unlocked"] is False and teaser["score"] < 50
     assert teaser["cms"]["id"] == "woocommerce"
-    assert all(set(k) == {"id", "label", "status", "summary", "weight", "method"} for k in teaser["kpis"])
-    assert all(k["method"] for k in teaser["kpis"])  # every check says how it is measured, before the email too
+    assert all(set(k) == {"id", "label", "about", "status", "summary", "weight", "method"} for k in teaser["kpis"])
+    assert all(k["method"] and k["about"] for k in teaser["kpis"])  # every check says what it is and how it is measured, before the email too
+    assert kpi(teaser, "self_reco")["about"] == "Le produit affiché ne doit jamais apparaître dans ses propres recommandations."
+    assert "UCP (Universal Commerce Protocol)" in kpi(teaser, "agent_ready")["about"]
     assert kpi(teaser, "unavailable")["method"].startswith("Stock lu dans le code WooCommerce")
     assert "blocks" not in teaser and "next_step" not in teaser and teaser["block_count"] == 1
     assert teaser["report_url"].endswith(f"/audit/r/{token}")
