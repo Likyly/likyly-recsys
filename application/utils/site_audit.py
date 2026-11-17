@@ -208,15 +208,12 @@ HEADING_RE = re.compile("|".join(f"(?:{p})" for p in HEADING_PATTERNS), re.IGNOR
 # What a block's title says about how it is chosen.
 #   behavior: what other customers did ("ont aussi aimé", "achetés ensemble") - the second block
 #   personal: what this visitor did ("vus récemment") - adapts to each visitor by nature
-#   claims_personal: "Pour vous" - only true if a personalization tool is loaded
+#   (a title saying "pour vous" is kept as a claim: what a block really does is checked by
+#   opening a second item page and reloading the page - see compare_blocks)
 #   similar: everything else that announces recommendations - related to the item shown
 BEHAVIOR_HEADING_RE = re.compile(r"ont (aussi|également) (aimé|acheté|lu|vu|consulté|regardé|réservé)|also (bought|liked|viewed|read)|customers who|bought together|achetés? ensemble", re.IGNORECASE)
 PERSONAL_HEADING_RE = re.compile(r"récemment (consultés|vus)|derniers? (consultés|vus)|vus récemment|recently viewed", re.IGNORECASE)
 CLAIMS_PERSONAL_RE = re.compile(r"pour (vous|toi)|for you|picked for you|choisis pour|sélectionnés? pour", re.IGNORECASE)
-
-# Shopify theme sections that show a collection the merchant picked - the same for every product
-# and every visitor, whatever their title says.
-FIXED_SECTION_RE = re.compile(r"featured[-_]?collection|product[-_]?list|collection[-_]?list|featured[-_]?products", re.IGNORECASE)
 
 # CMS-native recommendation containers: (platform, css selector, title used when it has no heading, kind)
 # kind: "similar" (related to the item: same category, content, platform's "related"),
@@ -273,11 +270,16 @@ class Block:
     js_only: bool = False
     platform: str = ""
     claims_personal: bool = False  # titled "Pour vous" whatever actually chooses it
+    # What was seen, not assumed: "varies" (other products on another item page), "fixed" (the same
+    # products there), "random" (other products on a second load of the same page), None (not compared).
+    verified: Optional[str] = None
+    evidence: str = ""
     element: Optional[Tag] = field(default=None, repr=False, compare=False)
 
     def public(self) -> dict[str, Any]:
         return {
             "title": self.title, "source": self.source, "kind": self.kind, "js_only": self.js_only, "claims_personal": self.claims_personal,
+            "verified": self.verified, "evidence": self.evidence,
             "items": [{"name": i.name, "url": i.url, "unavailable": i.unavailable} for i in self.items[:24]],
             "item_count": len(self.items),
         }
@@ -537,18 +539,6 @@ def _nearest_heading_text(node: Tag) -> str:
     return _text(heading)[:120] if heading else ""
 
 
-def _in_fixed_section(node: Tag) -> bool:
-    """Inside a theme section that shows a collection picked by the merchant (Shopify "featured
-    collection" / "product list" sections): the same products for every page and visitor."""
-    for element in [node, *node.parents]:
-        if not isinstance(element, Tag):
-            continue
-        attrs = f"{element.get('id', '')} {' '.join(element.get('class', []))}"
-        if "section" in attrs.lower() and FIXED_SECTION_RE.search(attrs):
-            return True
-    return False
-
-
 def _clean_title(text: str) -> str:
     """Drop slider button labels a heading carries ("Précédent POUR TOI: Suivant")."""
     cleaned = re.sub(r"^(précédent|previous)\s+|\s+(suivant|next)$", "", text, flags=re.IGNORECASE).strip(" :")
@@ -606,8 +596,6 @@ def find_blocks(soup: BeautifulSoup, base_url: str, cms: str, vendors: list[dict
             continue
         claims = bool(CLAIMS_PERSONAL_RE.search(text))
         kind = "behavior" if BEHAVIOR_HEADING_RE.search(text) else "personal" if PERSONAL_HEADING_RE.search(text) else "similar"
-        if kind == "similar" and (claims or _in_fixed_section(container)):
-            kind = "fixed" if _in_fixed_section(container) else "claims_personal"
         candidates.append(Block(title=_clean_title(text), source="heading", kind=kind, items=items, claims_personal=claims, element=container))
 
     # A section title ("Que lire après ?") and its sub-blocks ("Ceux qui ont aimé…", "Du même
@@ -671,6 +659,69 @@ def shopify_flag_out_of_stock(fetch: Fetch, page_url: str, items: list[Item], de
     return checked
 
 
+def fill_shopify_sections(fetch: Fetch, facts: PageFacts) -> None:
+    """A Shopify theme's recommendations section fills in with JavaScript from its data-url: fetch
+    that section to read exactly what it shows. Never invents a block the theme doesn't have."""
+    if facts.cms != "shopify":
+        return
+    for block in facts.blocks:
+        data_url = block.element.get("data-url") if block.platform == "shopify" and block.element is not None else None
+        if block.js_only and data_url:
+            items = shopify_section_items(fetch, facts.url, data_url)
+            if items:
+                block.items, block.js_only, block.source = items, False, "shopify_section"
+
+
+def _signature(title: str) -> str:
+    """A block's title, comparable from one page to another ("Autres livres de X (26)" -> "autres livres de x")."""
+    return re.sub(r"[^\w]+", " ", re.sub(r"\(\d+\)", "", title.lower())).strip()
+
+
+def _keys(block: Block, *exclude: str) -> set[str]:
+    return {i.key for i in block.items} - set(exclude)
+
+
+def compare_blocks(facts: PageFacts, reload: Optional[PageFacts], other: Optional[PageFacts], other_name: str) -> None:
+    """Sets each readable block's `verified` and `evidence` from what the two extra loads showed:
+    the same page loaded again (a block that changes is drawn at random) and another item's page
+    (a block that shows the same products there is a fixed collection). Then its kind follows."""
+    reloaded = {_signature(b.title): b for b in (reload.blocks if reload else []) if b.items}
+    elsewhere = {_signature(b.title): b for b in (other.blocks if other else []) if b.items}
+    other_label = f"« {other_name} »" if other_name else "une autre fiche"
+    for block in facts.blocks:
+        if not block.items:
+            continue
+        sig = _signature(block.title)
+        twin = reloaded.get(sig)
+        if twin is not None and _keys(twin) != _keys(block):
+            block.verified, block.kind = "random", "random"
+            block.evidence = "Rechargée, la page affiche d'autres éléments dans ce bloc : il est tiré au hasard à chaque affichage."
+            continue
+        if other is None:
+            block.evidence = "Pas comparé à une autre fiche : elle n'a pas pu être ouverte."
+            continue
+        peer = elsewhere.get(sig)
+        if peer is None:
+            block.evidence = f"Pas comparé : le bloc n'apparaît pas sur la fiche {other_label}."
+            continue
+        mine, theirs = _keys(block, facts.canonical_key, other.canonical_key), _keys(peer, facts.canonical_key, other.canonical_key)
+        if mine and mine == theirs:
+            block.verified, block.kind = "fixed", "fixed"
+            block.evidence = f"Sur la fiche {other_label}, ce bloc affiche exactement les mêmes éléments : il ne dépend pas de la fiche affichée."
+        else:
+            block.verified = "varies"
+            block.evidence = f"Sur la fiche {other_label}, ce bloc affiche d'autres éléments : il dépend bien de la fiche affichée."
+
+
+def _comparison_target(facts: PageFacts) -> Optional[Item]:
+    """The item page to compare with: the first recommended item that isn't the page itself."""
+    for block in facts.blocks:
+        for item in block.items:
+            if item.key != facts.canonical_key:
+                return item
+    return None
+
+
 # --------------------------------------------------------------------------------------------
 # KPIs and score
 # --------------------------------------------------------------------------------------------
@@ -702,9 +753,9 @@ class Kpi:
 
 METHODS = {
     "self_reco": "Adresse et nom du produit affiché comparés à chaque élément des blocs.",
-    "similar_block": "Blocs repérés par leur titre et le code du CMS ; leur origine (catalogue, règle, collection fixe) est lue dans le thème.",
-    "behavior_block": "Bloc titré « ont aussi aimé / acheté », ou bloc natif du CMS fondé sur les achats.",
-    "personalization": "Outil de personnalisation chargé par la page (Nosto, Clerk, LIKYLY…) ou bloc « vus récemment ».",
+    "similar_block": "Bloc comparé sur une deuxième fiche du site et sur un rechargement de la page : mêmes produits ailleurs = collection fixe, autres produits au rechargement = hasard.",
+    "behavior_block": "Bloc titré « ont aussi aimé / acheté », ou bloc natif du CMS fondé sur les achats, et qui n'est pas une collection fixe (vérifié sur une deuxième fiche).",
+    "personalization": "Outil de personnalisation chargé par la page (Nosto, Clerk, LIKYLY…) ou bloc « vus récemment ». Ne se constate pas de l'extérieur : un robot sans historique voit la version commune.",
     "duplicates": "Liens et noms comparés à l'intérieur de chaque bloc et d'un bloc à l'autre.",
     "block_size": "Nombre d'éléments réellement affichés dans chaque bloc.",
     "structured_data": "Données schema.org (JSON-LD) lues dans le code de la page.",
@@ -773,41 +824,40 @@ def build_kpis(page: PageFacts, ucp: Optional[bool], stock_checked: bool = False
                         "Non vérifiable : aucun bloc lisible" if page.blocks else "Aucun bloc : rien à vérifier",
                         "Ce contrôle a besoin de lire les éléments recommandés."))
 
-    # 2. Block 1: related to the item (content, category - the cold start).
-    similar = [b for b in by_kind("similar", "manual") if b.items]
-    fixed = by_kind("fixed", "claims_personal")
-    if similar:
-        manual_only = all(b.kind == "manual" for b in similar)
-        # WooCommerce's "related products" are drawn at random among the same categories/tags.
-        random_only = all(b.kind == "manual" or (b.platform == "woocommerce" and b.source == "native") for b in similar) and not manual_only
-        if manual_only:
-            status, summary = WARN, f"Présent : {_quote(similar)}, choisi à la main"
-            detail = "Une sélection faite à la main, produit par produit : longue à tenir à jour, jamais complète, et sans rapport avec ce qui se vend."
-            advice = "Calculez ce bloc automatiquement à partir du catalogue (contenu, attributs), pour tous les produits."
-        elif random_only:
-            status, summary = WARN, f"Présent : {_quote(similar)}, mais tiré au hasard dans la catégorie"
-            detail = ("Les « produits apparentés » de WooCommerce sont tirés au hasard parmi les produits des mêmes catégories ou étiquettes, à chaque affichage : "
-                      f"ils ne sont pas choisis pour leur ressemblance avec {the} affiché.")
-            advice = f"Choisissez les {many} proches par leur contenu (description, attributs, style), pas au hasard."
-        else:
-            status, summary = PASS, f"Présent : {_quote(similar)}"
-            detail = f"Un bloc lié à {the} affiché : c'est la base, utile même pour un visiteur dont on ne sait rien (démarrage à froid)."
-            advice = ""
-        kpis.append(Kpi("similar_block", f"Bloc {similar_title}", 20, status, summary, detail, advice))
+    # 2. Block 1: related to the item (content, category - the cold start). Judged on what was
+    # seen: on another item page, on a second load - never on the CMS or the theme's names.
+    similar = [b for b in by_kind("similar") if b.items]
+    proven = [b for b in similar if b.verified == "varies"]
+    manual = [b for b in by_kind("manual") if b.items]
+    random_blocks, fixed = by_kind("random"), by_kind("fixed")
+    label = f"Bloc {similar_title}"
+    if proven:
+        kpis.append(Kpi("similar_block", label, 20, PASS, f"Présent : {_quote(proven)}, propre à chaque fiche (vérifié)",
+                        f"Un bloc lié à {the} affiché : c'est la base, utile même pour un visiteur dont on ne sait rien (démarrage à froid). {proven[0].evidence}"))
+    elif similar:
+        kpis.append(Kpi("similar_block", label, 20, WARN, f"Présent : {_quote(similar)}, mais non vérifié",
+                        f"{similar[0].evidence} On ne peut donc pas dire si ce bloc change avec {the} affiché.",
+                        "Relancez l'audit sur une autre fiche pour comparer."))
+    elif manual:
+        kpis.append(Kpi("similar_block", label, 20, WARN, f"Présent : {_quote(manual)}, choisi à la main",
+                        "Une sélection faite à la main dans le back-office, produit par produit : longue à tenir à jour, jamais complète.",
+                        "Calculez ce bloc automatiquement à partir du catalogue (contenu, attributs), pour tous les produits."))
+    elif random_blocks:
+        kpis.append(Kpi("similar_block", label, 20, WARN, f"{_quote(random_blocks)} est tiré au hasard : il change à chaque affichage (constaté)",
+                        f"{random_blocks[0].evidence} Les {many} montrés ne sont pas choisis pour leur ressemblance avec {the} affiché.",
+                        f"Choisissez les {many} proches par leur contenu (description, attributs, style), pas au hasard."))
     elif fixed:
-        kpis.append(Kpi("similar_block", f"Bloc {similar_title}", 20, FAIL,
-                        f"Absent : {_quote(fixed)} est une collection fixe, la même quel que soit {the} affiché",
-                        f"Le bloc montre des {many} choisis une fois pour toutes dans le thème, sans rapport avec {the} que le visiteur regarde.",
-                        f"Remplacez-le par des {many} proches de celui affiché : même usage, même style, même gamme de prix."))
+        kpis.append(Kpi("similar_block", label, 20, FAIL, f"Absent : {_quote(fixed)} affiche les mêmes {many} sur une autre fiche (constaté)",
+                        f"{fixed[0].evidence} C'est une collection fixe, sans rapport avec {the} que le visiteur regarde.",
+                        f"Remplacez-la par des {many} proches de celui affiché : même usage, même style, même gamme de prix."))
     elif js_only:
-        kpis.append(Kpi("similar_block", f"Bloc {similar_title}", 20, WARN,
+        kpis.append(Kpi("similar_block", label, 20, WARN,
                         f"{_plural(len(js_only), 'bloc chargé', 'blocs chargés')} en JavaScript : contenu illisible pour les robots",
                         "Un emplacement existe, mais il ne se remplit qu'une fois la page affichée dans un navigateur : son contenu ne peut pas être contrôlé ici, "
                         "et les moteurs de recherche comme les agents IA n'y voient rien.",
                         "Rendez au moins ce bloc côté serveur."))
     else:
-        kpis.append(Kpi("similar_block", f"Bloc {similar_title}", 20, FAIL,
-                        "Absent",
+        kpis.append(Kpi("similar_block", label, 20, FAIL, "Absent",
                         f"Le visiteur qui hésite sur {the} n'a aucune alternative proche sous les yeux : s'il ne trouve pas son bonheur, il repart.",
                         f"Ajoutez sous {the} un bloc de 4 à 8 {many} proches (contenu, catégorie, attributs)."))
 
@@ -843,13 +893,14 @@ def build_kpis(page: PageFacts, ucp: Optional[bool], stock_checked: bool = False
                         "Montrer ce que le visiteur a déjà vu l'aide à revenir en arrière, mais ne lui fait rien découvrir.",
                         "Ajoutez des suggestions qui partent de son historique pour proposer d'autres éléments."))
     else:
-        why = (f"Le bloc {_quote(claims)} s'intitule « pour vous », mais aucun outil de personnalisation n'est chargé : tous les visiteurs voient la même chose. "
-               if claims else "")
+        proven_fixed = [b for b in claims if b.verified == "fixed"]
+        why = (f"Le bloc {_quote(proven_fixed)} s'intitule « pour vous », mais affiche les mêmes produits sur une autre fiche : ce n'est pas une sélection pour le visiteur. "
+               if proven_fixed else
+               f"Le bloc {_quote(claims)} s'intitule « pour vous », mais aucun outil de personnalisation n'est chargé. " if claims else "")
         kpis.append(Kpi("personalization", "Personnalisation", 20, FAIL,
                         "Aucune : tous les visiteurs voient les mêmes recommandations",
-                        why + "Rien sur la page ne tient compte du visiteur : aucun outil de personnalisation n'est chargé, et les blocs viennent de règles, de "
-                        "choix manuels ou de collections fixes. Un bloc « similaires » identique pour tous est normal (démarrage à froid) ; mais au moins un bloc "
-                        "doit s'adapter à ce que le visiteur a regardé et à ses goûts.",
+                        why + "Aucun outil de personnalisation n'est chargé par la page. Un bloc « similaires » identique pour tous est normal (démarrage à froid) ; "
+                        "mais au moins un bloc doit s'adapter à ce que le visiteur a regardé et à ses goûts.",
                         "Faites dépendre un bloc de la visite en cours et de l'historique du visiteur."))
 
     # 5. Duplicates.
@@ -977,15 +1028,32 @@ def run_audit(raw_url: str, fetch: Fetch, allow_private: bool = False) -> dict[s
     notes: list[str] = []
     stock_checked = False
 
+    fill_shopify_sections(fetch, facts)
+
+    # Seen, not assumed: the same page loaded again, and the page of another recommended item.
+    reload: Optional[PageFacts] = None
+    other: Optional[PageFacts] = None
+    target = _comparison_target(facts)
+    if target is not None:
+        try:
+            again = fetch(page.url)
+            if again.status == 200:
+                reload = analyze_page(again)
+                fill_shopify_sections(fetch, reload)
+        except AuditError:
+            reload = None
+        try:
+            second = fetch(target.url)
+            if second.status == 200 and "html" in (second.content_type or "text/html").lower():
+                other = analyze_page(second)
+                fill_shopify_sections(fetch, other)
+            else:
+                notes.append(f"La fiche « {target.name or target.url} » n'a pas pu être ouverte pour comparer les blocs (erreur {second.status}).")
+        except AuditError as error:
+            notes.append(f"La fiche « {target.name or target.url} » n'a pas pu être ouverte pour comparer les blocs : {error}")
+        compare_blocks(facts, reload, other, (other.item_name if other else "") or target.name)
+
     if facts.cms == "shopify":
-        # The theme's recommendations section fills in with JavaScript from its data-url: fetch that
-        # section to read exactly what it shows. Never invent a block the theme doesn't have.
-        for block in facts.blocks:
-            data_url = block.element.get("data-url") if block.platform == "shopify" and block.element is not None else None
-            if block.js_only and data_url:
-                items = shopify_section_items(fetch, page.url, data_url)
-                if items:
-                    block.items, block.js_only, block.source = items, False, "shopify_section"
         items = [i for b in facts.blocks for i in b.items]
         if items:
             stock_checked = shopify_flag_out_of_stock(fetch, page.url, items)
@@ -1017,6 +1085,7 @@ def run_audit(raw_url: str, fetch: Fetch, allow_private: bool = False) -> dict[s
         "kpis": [k.public(full=True) for k in kpis],
         "blocks": [b.public() for b in facts.blocks],
         "notes": notes,
+        "compared_with": {"url": target.url, "name": (other.item_name if other else "") or target.name} if target is not None and other is not None else None,
         "next_step": NEXT_STEPS.get(facts.cms, DEFAULT_NEXT_STEP),
     }
 

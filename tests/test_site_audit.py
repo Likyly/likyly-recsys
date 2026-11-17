@@ -11,9 +11,16 @@ import site_audits
 from site_audit import AuditError, Page, SafeFetcher, run_audit
 
 
-def fake_fetch(pages: dict[str, tuple[int, str]]):
+def fake_fetch(pages: dict):
+    """url -> (status, body), or a list of them served one per call (a page that changes on reload)."""
+    calls: dict[str, int] = {}
+
     def fetch(url: str) -> Page:
-        status, body = pages.get(url, (404, "<html><body>not found</body></html>"))
+        answer = pages.get(url, (404, "<html><body>not found</body></html>"))
+        if isinstance(answer, list):
+            answer = answer[min(calls.get(url, 0), len(answer) - 1)]
+            calls[url] = calls.get(url, 0) + 1
+        status, body = answer
         content_type = "application/json" if body.lstrip().startswith("{") else "text/html; charset=utf-8"
         return Page(url=url, status=status, text=body, content_type=content_type)
     return fetch
@@ -57,8 +64,9 @@ def test_woocommerce_product_page_errors_are_found():
     # image + title + "read more" of one card count once; the add-to-cart link is not an item
     assert [i["name"] for i in block["items"]] == ["Chaussure Trail", "Sac à dos", "Gourde", "Gourde"]
     assert kpi(result, "self_reco")["status"] == "fail"
-    assert kpi(result, "similar_block")["status"] == "warn"
-    assert "hasard" in kpi(result, "similar_block")["summary"]
+    # nothing assumed from "it's WooCommerce": the other product page can't be opened -> not verified
+    assert kpi(result, "similar_block")["status"] == "warn" and "non vérifié" in kpi(result, "similar_block")["summary"]
+    assert result["blocks"][0]["verified"] is None and result["compared_with"] is None
     assert kpi(result, "behavior_block")["status"] == "fail"
     assert kpi(result, "duplicates")["status"] == "fail"
     assert kpi(result, "unavailable")["status"] == "fail" and kpi(result, "unavailable")["label"] == "Produits en rupture de stock recommandés"
@@ -93,6 +101,9 @@ def test_shopify_reads_the_theme_section_and_each_product_stock():
     for handle in ("echarpe", "mitaines", "chaussettes"):
         pages[f"https://shop.example/products/{handle}.js"] = (200, '{"available": true}')
     pages["https://shop.example/products/gants.js"] = (200, '{"available": false}')
+    # the first recommended product's own page, whose section shows other products
+    pages["https://shop.example/products/echarpe"] = (200, SHOPIFY_PRODUCT.replace("4242", "5151").replace("Bonnet", "Écharpe"))
+    pages["https://shop.example/recommendations/products?product_id=5151&section_id=x&limit=4"] = (200, SHOPIFY_SECTION.replace("mitaines", "bonnet").replace("Mitaines", "Bonnet"))
     result = run_audit("https://shop.example/products/bonnet", fake_fetch(pages))
 
     assert result["cms"]["id"] == "shopify" and result["page_type"]["id"] == "product"
@@ -102,7 +113,9 @@ def test_shopify_reads_the_theme_section_and_each_product_stock():
     assert [i["name"] for i in block["items"]] == ["Écharpe", "Gants", "Mitaines", "Chaussettes"]  # never "Coup d'oeil"
     assert [i["name"] for i in block["items"] if i["unavailable"]] == ["Gants"]
     assert kpi(result, "unavailable")["status"] == "fail"
-    assert kpi(result, "similar_block")["status"] == "pass"
+    assert block["verified"] == "varies" and "Écharpe" in block["evidence"]
+    assert kpi(result, "similar_block")["status"] == "pass" and "vérifié" in kpi(result, "similar_block")["summary"]
+    assert result["compared_with"]["name"] == "Écharpe"
     assert kpi(result, "behavior_block")["status"] == "fail"
     assert kpi(result, "personalization")["status"] == "fail"
     assert kpi(result, "block_size")["summary"] == "4 produits affichés par bloc"
@@ -122,7 +135,7 @@ FIXED_SECTION_PAGE = """<html><head><script src="https://cdn.shopify.com/x.js"><
 <link rel="canonical" href="https://sacs.example/fr/products/castellana-burgundy">
 <script type="application/ld+json">{"@type":"Product","name":"CASTELLANA","image":"c.jpg","offers":{"price":"95","availability":"InStock"}}</script></head>
 <body><h1>CASTELLANA</h1>
-<div id="shopify-section-template--1__product_template_product_list_x" class="shopify-section section-product-template-product-grid">
+<div id="shopify-section-template--1__main_x" class="shopify-section">
  <carousel-slider><h2><button>Précédent</button><span class="has-paging__title">POUR TOI:</span><button>Suivant</button></h2>
  <div class="grid">""" + "".join(
     f'<product-block><a class="product-link" href="/fr/products/{h}"><img alt=""></a><a class="btn quickbuy-toggle" href="/fr/products/{h}">Coup d\'oeil</a>'
@@ -131,16 +144,21 @@ FIXED_SECTION_PAGE = """<html><head><script src="https://cdn.shopify.com/x.js"><
 ) + """</div></carousel-slider></div></body></html>"""
 
 
-def test_a_fixed_pour_toi_collection_is_neither_similar_nor_personal():
+def test_a_pour_toi_block_is_proven_fixed_on_another_product_page():
     url = "https://sacs.example/fr/products/castellana-burgundy"
-    result = run_audit(url, fake_fetch({url: (200, FIXED_SECTION_PAGE)}))
+    other = (FIXED_SECTION_PAGE
+             .replace('href="https://sacs.example/fr/products/castellana-burgundy"', 'href="https://sacs.example/fr/products/filles-du-calvaire-dore"')
+             .replace("<h1>CASTELLANA</h1>", "<h1>FILLES DU CALVAIRE</h1>").replace('"name":"CASTELLANA"', '"name":"FILLES DU CALVAIRE"'))
+    result = run_audit(url, fake_fetch({url: (200, FIXED_SECTION_PAGE), "https://sacs.example/fr/products/filles-du-calvaire-dore": (200, other)}))
     block = result["blocks"][0]
+    # nothing in the markup says "fixed": the second product page shows the same four bags
     assert block["title"] == "POUR TOI" and block["kind"] == "fixed" and block["claims_personal"] is True
+    assert block["verified"] == "fixed" and "FILLES DU CALVAIRE" in block["evidence"]
     assert kpi(result, "self_reco")["status"] == "fail"
-    assert kpi(result, "similar_block")["status"] == "fail" and "collection fixe" in kpi(result, "similar_block")["summary"]
+    assert kpi(result, "similar_block")["status"] == "fail" and "constaté" in kpi(result, "similar_block")["summary"]
     assert kpi(result, "behavior_block")["status"] == "fail"
     personalization = kpi(result, "personalization")
-    assert personalization["status"] == "fail" and "« POUR TOI » s'intitule « pour vous »" in personalization["detail"]
+    assert personalization["status"] == "fail" and "« POUR TOI » s'intitule « pour vous », mais affiche les mêmes produits" in personalization["detail"]
     assert kpi(result, "duplicates")["status"] == "warn" and "même modèle" in kpi(result, "duplicates")["summary"]
     assert result["grade"] == "E" and result["score"] <= site_audit.SELF_RECO_SCORE_CAP
 
@@ -164,7 +182,7 @@ def test_article_page_and_heading_detected_block():
     assert "L'article affiché" in kpi(result, "self_reco")["summary"]
     assert kpi(result, "unavailable")["status"] == "unknown"
     assert result["blocks"][0]["kind"] == "similar"
-    assert kpi(result, "similar_block")["status"] == "pass"
+    assert kpi(result, "similar_block")["status"] == "warn"  # the other article could not be opened: not verified
 
 
 def test_third_party_tool_filled_by_javascript():
@@ -402,7 +420,7 @@ def test_book_page_sub_blocks_cards_and_broken_markup():
     assert titles == [("Ceux qui ont aimé ce livre ont aussi aimé", "behavior", 3), ("Autres livres de Frank Herbert (12)", "similar", 2)]
     # image + title of one card = one item; author links and "Voir plus" are not items
     assert kpi(result, "duplicates")["status"] == "pass"
-    assert kpi(result, "similar_block")["status"] == "pass" and kpi(result, "behavior_block")["status"] == "pass"
+    assert kpi(result, "similar_block")["status"] == "warn" and kpi(result, "behavior_block")["status"] == "pass"
     assert kpi(result, "personalization")["status"] == "fail"
     assert kpi(result, "structured_data")["status"] == "pass"  # a book page that sells nothing needs no offer
 
@@ -450,3 +468,35 @@ def test_report_reads_are_capped_and_guessing_is_cut_short(http, audits):
         http.get(f"/audits/{token}", headers=headers)
     assert http.get(f"/audits/{token}", headers=headers).status_code == 429
     assert http.get(f"/audits/{token}", headers={"X-Forwarded-For": "198.51.100.200"}).status_code == 200
+
+
+RANDOM_PAGE = """<html><head><meta name="generator" content="WooCommerce 9"><script type="application/ld+json">{"@type":"Product","name":"Tente","image":"t.jpg","offers":{"price":"1","availability":"InStock"}}</script></head>
+<body><h1>Tente</h1><section class="related products"><h2>Produits apparentés</h2><ul>ITEMS</ul></section></body></html>"""
+
+
+def _related(*slugs):
+    return RANDOM_PAGE.replace("ITEMS", "".join(f'<li class="product instock"><a href="/produit/{s}/"><h2 class="woocommerce-loop-product__title">{s}</h2></a></li>' for s in slugs))
+
+
+def test_a_block_that_changes_on_reload_is_seen_as_random():
+    url = "https://camping.example/produit/tente/"
+    pages = {
+        url: [(200, _related("duvet", "lampe", "gourde", "sac")), (200, _related("matelas", "rechaud", "gourde", "sac"))],
+        "https://camping.example/produit/duvet/": (200, _related("tente", "lampe", "pompe", "sac")),
+    }
+    result = run_audit(url, fake_fetch(pages))
+    block = result["blocks"][0]
+    assert block["verified"] == "random" and block["kind"] == "random"
+    assert kpi(result, "similar_block")["status"] == "warn" and "hasard" in kpi(result, "similar_block")["summary"]
+
+
+def test_a_block_that_follows_the_product_is_verified():
+    url = "https://camping.example/produit/tente/"
+    pages = {
+        url: (200, _related("duvet", "lampe", "gourde", "sac")),
+        "https://camping.example/produit/duvet/": (200, _related("oreiller", "matelas", "tente", "drap")),
+    }
+    result = run_audit(url, fake_fetch(pages))
+    assert result["blocks"][0]["verified"] == "varies"
+    assert kpi(result, "similar_block")["status"] == "pass"
+    assert result["compared_with"]["url"] == "https://camping.example/produit/duvet/"
