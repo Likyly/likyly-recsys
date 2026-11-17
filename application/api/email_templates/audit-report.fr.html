@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="fr" xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="supported-color-schemes" content="light">
+  <title>{{ .Title }}</title>
+</head>
+<body style="margin:0;padding:0;background:#F7F9FC;-webkit-text-size-adjust:100%;">
+  <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;">{{ .Preheader }}&#8199;&#847; &#8199;&#847; &#8199;&#847; &#8199;&#847;</div>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#F7F9FC" style="background:#F7F9FC;">
+    <tr>
+      <td align="center" style="padding:32px 16px;">
+        <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0"
+               style="width:100%;max-width:600px;background:#ffffff;border:1px solid #E3E9F2;border-radius:16px;overflow:hidden;">
+          <tr>
+            <td>
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td width="25%" height="4" bgcolor="#2F6BFF" style="height:4px;line-height:4px;font-size:0;">&nbsp;</td>
+                  <td width="25%" height="4" bgcolor="#20C6A5" style="height:4px;line-height:4px;font-size:0;">&nbsp;</td>
+                  <td width="25%" height="4" bgcolor="#F6A92A" style="height:4px;line-height:4px;font-size:0;">&nbsp;</td>
+                  <td width="25%" height="4" bgcolor="#FF5B72" style="height:4px;line-height:4px;font-size:0;">&nbsp;</td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:32px 40px 0;">
+              <a href="https://www.likyly.com" target="_blank">
+                <img src="https://www.likyly.com/brand/likyly-logo-email.png" width="110" height="38" alt="Likyly" style="display:block;border:0;outline:none;height:auto;">
+              </a>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:28px 40px 8px;">
+              <h1 style="margin:0 0 20px;font:700 26px/1.25 Sora, Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif;color:#071A3D;">{{ .Title }}</h1>
+              {{ .Body }}
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:0 40px 32px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-top:1px solid #E3E9F2;">
+                <tr>
+                  <td style="padding-top:20px;font:400 12px/1.6 Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif;color:#5C6B82;">
+                    Vous recevez cet email parce que l'audit de {{ .Host }} a été demandé avec cette adresse ({{ .Email }}) sur likyly.com/audit.<br>
+                    Likyly &middot; Transformez vos catalogues en expériences personnalisées.<br>
+                    <a href="https://www.likyly.com" target="_blank" style="color:#5C6B82;">likyly.com</a>
+                    &nbsp;&middot;&nbsp;
+                    <a href="mailto:support@likyly.com" style="color:#5C6B82;">support@likyly.com</a>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

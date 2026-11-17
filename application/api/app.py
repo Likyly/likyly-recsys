@@ -122,6 +122,7 @@ from db import get_client_and_scopes_by_developer_key as _developer_key_client  
 from alerts import deleted_account_message, new_account_message, send_team_alert
 from welcome import send_welcome
 from placements import router as placements_router
+from site_audits import router as site_audits_router
 # The console routes below share the window clamping and usage numbers with /analytics/*.
 from analytics import router as analytics_router, resolve_analytics_window as _resolve_analytics_window, usage_summary as _usage_summary
 from scoped_auth import require_scope
@@ -548,7 +549,12 @@ def run_generate_model_job(job_id: str, client_id: int, product_type: str, trigg
     try:
         result = train_and_maybe_promote_model(product_type, client_id=client_id, triggered_by=triggered_by)
 
-        if result["promoted"]:
+        if result["promoted"] and result.get("settings_from_active"):
+            detail = (
+                f"Model trained on today's data with the live version's settings, which scored better than the "
+                f"ones searched (precision@10={result['precision_at_k']:.4f}), and promoted to production"
+            )
+        elif result["promoted"]:
             detail = f"Model trained (precision@10={result['precision_at_k']:.4f}) and promoted to production"
         else:
             detail = (
@@ -692,6 +698,7 @@ app = FastAPI(title="LIKYLY Recommendations API",
 app.include_router(data_sources_router)
 app.include_router(placements_router)
 app.include_router(analytics_router)
+app.include_router(site_audits_router)
 
 
 def _errors(*codes: int) -> dict:

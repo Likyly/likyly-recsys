@@ -578,6 +578,33 @@ class UpgradeRequestModel(Base):
     )
 
 
+class SiteAuditModel(Base):
+    """A free recommendation audit run from www.likyly.com/audit (application/utils/site_audit.py).
+    Anyone can run one, no account: `token` is the unguessable id the page and the emailed report
+    link use. `result` is the full audit; the API hides the explanations until an `email` is given
+    (the lead), then emails the report - the email columns record whether it went out. `ip_hash`
+    (salted, never the address) only serves the per-visitor rate limits."""
+    __tablename__ = "site_audits"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    token = Column(String, nullable=False, unique=True)
+    url = Column(String, nullable=False)
+    host = Column(String, nullable=True)
+    score = Column(Integer, nullable=True)
+    result = Column(JSONB, nullable=False)
+    ip_hash = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    email = Column(String, nullable=True)
+    email_submitted_at = Column(DateTime(timezone=True), nullable=True)
+    emailed_at = Column(DateTime(timezone=True), nullable=True)
+    email_error = Column(String, nullable=True)
+
+    __table_args__ = (
+        Index("ix_site_audits_ip", "ip_hash", "created_at"),
+        Index("ix_site_audits_email", "email"),
+    )
+
+
 class DataSourceModel(Base):
     """A configured, recurring catalog integration ("this is where my catalog comes from"),
     as opposed to the caller-driven one-off writes of PUT /items - see
@@ -2204,6 +2231,56 @@ def mark_upgrade_request_emailed(request_id: int) -> None:
 def mark_upgrade_request_email_failed(request_id: int, error: str) -> None:
     with SessionLocal() as session:
         session.query(UpgradeRequestModel).filter_by(id=request_id).update({"email_error": error[:500]})
+        session.commit()
+
+
+def _site_audit_row(row: "SiteAuditModel") -> dict:
+    return {
+        "id": row.id, "token": row.token, "url": row.url, "host": row.host, "score": row.score, "result": row.result,
+        "created_at": row.created_at, "email": row.email, "email_submitted_at": row.email_submitted_at,
+        "emailed_at": row.emailed_at, "email_error": row.email_error,
+    }
+
+
+def create_site_audit(url: str, host: Optional[str], score: Optional[int], result: dict, ip_hash: Optional[str]) -> dict:
+    with SessionLocal() as session:
+        row = SiteAuditModel(token=secrets.token_urlsafe(18), url=url[:2000], host=(host or "")[:255] or None, score=score, result=result, ip_hash=ip_hash)
+        session.add(row)
+        session.commit()
+        return _site_audit_row(row)
+
+
+def get_site_audit(token: str) -> Optional[dict]:
+    with SessionLocal() as session:
+        row = session.query(SiteAuditModel).filter_by(token=token).first()
+        return _site_audit_row(row) if row else None
+
+
+def count_site_audits_since(ip_hash: str, since: datetime, with_email: bool = False) -> int:
+    with SessionLocal() as session:
+        query = session.query(SiteAuditModel).filter(SiteAuditModel.ip_hash == ip_hash)
+        if with_email:
+            query = query.filter(SiteAuditModel.email_submitted_at >= since)
+        else:
+            query = query.filter(SiteAuditModel.created_at >= since)
+        return query.count()
+
+
+def set_site_audit_email(token: str, email: str) -> None:
+    with SessionLocal() as session:
+        session.query(SiteAuditModel).filter_by(token=token).update({"email": email[:320], "email_submitted_at": utcnow()})
+        session.commit()
+
+
+def mark_site_audit_emailed(token: str) -> None:
+    with SessionLocal() as session:
+        session.query(SiteAuditModel).filter_by(token=token).update({"emailed_at": utcnow(), "email_error": None})
+        session.commit()
+
+
+def mark_site_audit_email_failed(token: str, error: str) -> None:
+    with SessionLocal() as session:
+        session.query(SiteAuditModel).filter_by(token=token).update({"email_error": error[:500]})
         session.commit()
 
 

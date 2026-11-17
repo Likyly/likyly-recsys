@@ -149,6 +149,9 @@ jobs:
           SMTP_PASSWORD=${{ secrets.SMTP_PASSWORD }}
           SMTP_FROM=${{ secrets.SMTP_FROM }}
           SMTP_SECURITY=${{ secrets.SMTP_SECURITY }}
+          # Free audit (www.likyly.com/audit): Cloudflare Turnstile check on POST /audits. Empty =
+          # no check (the per-visitor rate limits still apply).
+          TURNSTILE_SECRET_KEY=${{ secrets.TURNSTILE_SECRET_KEY }}
           SENTRY_DSN=${{ secrets.SENTRY_DSN }}
           SENTRY_ENVIRONMENT=production
           TEAM_ALERT_WEBHOOK_URL=${{ secrets.TEAM_ALERT_WEBHOOK_URL }}
