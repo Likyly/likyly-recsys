@@ -200,6 +200,11 @@ def preview_placement(client_id: int, slug: str, context, limit: Optional[int]) 
 SESSION_BLEND_PLANS = {db.PLAN_PRO, db.PLAN_UNLIMITED}
 
 
+def _session_has_history(client_id: int, product_type: str, context: dict[str, Any]) -> bool:
+    session = context.get("session_id") or context.get("anonymous_id")
+    return bool(session) and bool(db.get_recent_viewed_work_ids_for_session(client_id, product_type, session, limit=1))
+
+
 def run_recommend(client_id: int, slug: str, context, limit: Optional[int]) -> tuple[dict[str, Any], engine.PlacementResult, list[dict], dict[str, Any], str]:
     """Returns (placement, engine_result, filtered_presented_items, context_dict, cache) - the
     route layer does the attribution/finalize step (it needs app.py's _finalize_recommendation,
@@ -218,6 +223,10 @@ def run_recommend(client_id: int, slug: str, context, limit: Optional[int]) -> t
     # Pro feature: anonymous recommendations that follow the visitor's session.
     blend_session = db.get_client_plan(client_id) in SESSION_BLEND_PLANS
     cacheable = rec_cache.is_cacheable_request(context_dict, follows_session=blend_session)
+    # With no current product (a home or listing block), a visitor who has already looked at
+    # products gets what her session points to: that answer is hers, never the shared one.
+    if cacheable and not context_dict.get("current_item_id") and _session_has_history(client_id, placement["product_type"], context_dict):
+        cacheable = False
     cache_key = rec_cache.key(client_id, {**placement, "slug": slug}, context_dict, effective_limit) if cacheable else None
     if cache_key is not None:
         cached = rec_cache.get(cache_key)

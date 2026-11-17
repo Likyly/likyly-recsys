@@ -85,3 +85,24 @@ def test_entries_expire():
     rec_cache.put(k, "value", ttl=10, now=100.0)
     assert rec_cache.get(k, now=105.0) == "value"
     assert rec_cache.get(k, now=111.0) is None
+
+
+def test_a_home_block_follows_the_visit_even_after_a_first_visitor_filled_the_cache(http, seeded):
+    """A home block (no current product) for an anonymous visitor: the first one, with no history,
+    gets the popular items, and they are cached. A visitor who has since looked at products must
+    still get what her session points to (session history), not that shared list - on the Magento
+    sandbox's study of the home page, the block has to change once she has seen a product."""
+    create_pdp_placement(http, seeded, slug="home", context_type="homepage", signals={"required": [], "optional": ["session_id", "user_id"]})
+    first = call_slug(http, seeded, "home", {"session_id": "sess_new"})
+    assert first.json()["strategy_used"] == "popular"
+    assert call_slug(http, seeded, "home", {"session_id": "sess_other"}).headers["X-Likyly-Cache"] == "HIT"  # still shared
+    http.post("/events/view", params=Q, headers=seeded.public, json={"session_id": "sess_browsing", "item_id": "SKU-SALOMON-010"})
+    after = call_slug(http, seeded, "home", {"session_id": "sess_browsing"})
+    assert after.headers["X-Likyly-Cache"] != "HIT"
+    assert after.json()["strategy_used"] == "session"
+
+
+def call_slug(http, tenant, slug, context):
+    response = http.post(f"/placements/{slug}/recommend", headers=tenant.public, json={"context": context})
+    assert response.status_code == 200, response.text
+    return response
