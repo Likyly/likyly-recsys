@@ -176,6 +176,10 @@ const SYSTEM_XML = xml(
                     <label>API address</label>
                     <comment>Leave empty for https://api.likyly.com.</comment>
                 </field>
+                <field id="catalog" translate="label comment" type="text" sortOrder="30" showInDefault="1" showInWebsite="1" showInStore="1">
+                    <label>Catalog</label>
+                    <comment>The LIKYLY catalog of this store. Leave empty: the one the wizard created for it (named after the store's address, "magento" on this computer).</comment>
+                </field>
             </group>
         </section>
     </system>`,
@@ -269,6 +273,24 @@ class Recommendations extends Template implements BlockInterface
         return rtrim(trim((string) $this->_scopeConfig->getValue('likyly/general/api_url', ScopeInterface::SCOPE_STORE)), '/');
     }
 
+    /**
+     * The LIKYLY catalog of this store, sent with every call: once the account has several
+     * catalogs, an event that does not name its own is refused. The one set in the admin, else the
+     * one the wizard created for this store (same rule as its magentoCatalogName).
+     */
+    public function getCatalog(): string
+    {
+        $configured = trim((string) $this->_scopeConfig->getValue('likyly/general/catalog', ScopeInterface::SCOPE_STORE));
+        if ($configured !== '') {
+            return $configured;
+        }
+        $host = preg_replace('/^www\\./', '', (string) parse_url((string) $this->_storeManager->getStore()->getBaseUrl(), PHP_URL_HOST));
+        if ($host === '' || $host === 'localhost' || preg_match('/^[\\d.]+$/', $host)) {
+            return 'magento';
+        }
+        return substr(preg_replace('/[^a-zA-Z0-9_-]+/', '-', $host), 0, 64);
+    }
+
     public function getPlacement(): string
     {
         return trim((string) $this->getData('placement'));
@@ -327,6 +349,7 @@ $heading = $block->getHeading();
 <div class="block likyly-recs" id="<?= $escaper->escapeHtmlAttr($id) ?>"
      data-key="<?= $escaper->escapeHtmlAttr($block->getPublicKey()) ?>"
      data-api-url="<?= $escaper->escapeHtmlAttr($block->getApiUrl()) ?>"
+     data-catalog="<?= $escaper->escapeHtmlAttr($block->getCatalog()) ?>"
      data-placement="<?= $escaper->escapeHtmlAttr($placement) ?>"
      data-limit="<?= (int) $block->getLimit() ?>"
      data-item-id="<?= $escaper->escapeHtmlAttr($block->getItemId()) ?>"
@@ -351,11 +374,11 @@ $heading = $block->getHeading();
 import { Likyly, LikylySession } from "https://cdn.jsdelivr.net/npm/@likyly/sdk@1/+esm";
 
 const root = document.getElementById("__ID__");
-const { key, apiUrl, placement, itemId, currency, locale } = root.dataset;
+const { key, apiUrl, catalog, placement, itemId, currency, locale } = root.dataset;
 if (!key.startsWith("pk_")) {
   console.warn("LIKYLY: no public key (Stores > Configuration > Catalog > LIKYLY)");
 } else {
-  const likyly = new Likyly(apiUrl ? { apiKey: key, baseUrl: apiUrl } : { apiKey: key });
+  const likyly = new Likyly({ apiKey: key, ...(apiUrl ? { baseUrl: apiUrl } : {}), ...(catalog ? { catalog } : {}) });
   const sessionId = new LikylySession().getAnonymousId();
   // The signed-in customer (tracking.phtml, in the page head), none for a guest.
   const tracker = window.likyly || {};
@@ -833,6 +856,7 @@ const TRACKING_PHTML = String.raw`<?php
 $config = [
     'key' => $block->getPublicKey(),
     'apiUrl' => $block->getApiUrl(),
+    'catalog' => $block->getCatalog(),
     'order' => $block->getOrder(),
 ];
 $json = json_encode($config, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_SLASHES);
@@ -899,7 +923,7 @@ window.likyly = Object.assign(window.likyly || {}, {
 });
 
 if (config.key && config.key.indexOf("pk_") === 0) {
-  const likyly = new Likyly(config.apiUrl ? { apiKey: config.key, baseUrl: config.apiUrl } : { apiKey: config.key });
+  const likyly = new Likyly({ apiKey: config.key, ...(config.apiUrl ? { baseUrl: config.apiUrl } : {}), ...(config.catalog ? { catalog: config.catalog } : {}) });
   const sessionId = new LikylySession().getAnonymousId();
   visitor.then(({ userId }) => {
     const who = userId ? { userId, sessionId } : { sessionId };
