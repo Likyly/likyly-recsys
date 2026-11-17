@@ -6062,6 +6062,62 @@
         "title": "PreviewResultOut",
         "type": "object"
       },
+      "PurchaseTrackingOut": {
+        "description": "Whether this workspace's purchases reach LIKYLY and can be counted - on any plan, counts\nonly. A purchase counts in the attributed revenue when it carries the `recommendation_id` of\nthe click it came from, and adds `properties.price` (a JSON number) x `quantity`.",
+        "properties": {
+          "add_to_cart": {
+            "description": "Add-to-cart events received in the window.",
+            "title": "Add To Cart",
+            "type": "integer"
+          },
+          "attributed_purchases": {
+            "description": "Of those, the ones carrying a `recommendation_id`.",
+            "title": "Attributed Purchases",
+            "type": "integer"
+          },
+          "last_purchase_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Purchase At"
+          },
+          "purchases": {
+            "description": "Purchase events received in the window.",
+            "title": "Purchases",
+            "type": "integer"
+          },
+          "purchases_with_price": {
+            "description": "Of those, the ones whose `properties.price` is a number.",
+            "title": "Purchases With Price",
+            "type": "integer"
+          },
+          "recommendation_clicks": {
+            "description": "Clicks on a recommended item (carrying a `recommendation_id`) in the window.",
+            "title": "Recommendation Clicks",
+            "type": "integer"
+          },
+          "window_days": {
+            "title": "Window Days",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "window_days",
+          "purchases",
+          "attributed_purchases",
+          "purchases_with_price",
+          "add_to_cart",
+          "recommendation_clicks"
+        ],
+        "title": "PurchaseTrackingOut",
+        "type": "object"
+      },
       "PushPayload": {
         "description": "Body of POST /data-sources/{id}/push - the webhook/generic push ingress.",
         "properties": {
@@ -14946,6 +15002,116 @@
           }
         ],
         "summary": "Revoke a site public key",
+        "tags": [
+          "selfServiceClient"
+        ]
+      }
+    },
+    "/clients/me/purchase-tracking": {
+      "get": {
+        "description": "The console's \"Suivi des achats\" panel: purchases received, how many carry a\nrecommendation_id and a numeric price (the two things the attributed revenue needs), the add\nto cart and the clicks on recommendations. Counts only, so every plan gets it - it says what\nis missing in an integration, not what it earns.",
+        "operationId": "get_my_purchase_tracking",
+        "parameters": [
+          {
+            "description": "How many days back to count.",
+            "in": "query",
+            "name": "days",
+            "required": false,
+            "schema": {
+              "default": 30,
+              "description": "How many days back to count.",
+              "maximum": 90,
+              "minimum": 1,
+              "title": "Days",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Which of this account's workspaces this call is about. Omitted: the primary (oldest) one.",
+            "in": "header",
+            "name": "X-Workspace-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Which of this account's workspaces this call is about. Omitted: the primary (oldest) one.",
+              "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PurchaseTrackingOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing, invalid or revoked `X-API-Key`."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The referenced resource does not exist for this account."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The request is malformed - `detail` lists the offending fields."
+          },
+          "429": {
+            "description": "Rate limit exceeded at the API gateway - retry shortly."
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Are my purchases reaching LIKYLY?",
         "tags": [
           "selfServiceClient"
         ]

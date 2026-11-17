@@ -2842,6 +2842,35 @@ def recommendation_attributed_revenue(client_id: int, since, until=None, placeme
     return {"purchases": purchases, "revenue": round(revenue, 2)}
 
 
+def purchase_tracking_status(client_id: int, since) -> dict[str, Any]:
+    """Is this workspace sending its purchases, and can LIKYLY count them? Counts, on any plan
+    (no revenue): every purchase event since `since`, those that carry a recommendation_id (what
+    the attributed revenue counts), those whose properties.price is a JSON number (what it adds
+    up), the add to cart and the clicks on a recommendation (a click with no purchase after it
+    is the sign a purchase is missing), and the last purchase's time. What the console's
+    "Suivi des achats" panel reads to say which step is missing."""
+    sql = text(
+        "SELECT "
+        "  COUNT(*) FILTER (WHERE i.event_type = 'purchase') AS purchases, "
+        "  COUNT(*) FILTER (WHERE i.event_type = 'purchase' AND i.recommendation_id IS NOT NULL) AS attributed, "
+        "  COUNT(*) FILTER (WHERE i.event_type = 'purchase' AND jsonb_typeof(i.properties->'price') = 'number') AS with_price, "
+        "  COUNT(*) FILTER (WHERE i.event_type = 'add_to_cart') AS add_to_cart, "
+        "  COUNT(*) FILTER (WHERE i.event_type = 'click' AND i.recommendation_id IS NOT NULL) AS clicks, "
+        "  MAX(i.occurred_at) FILTER (WHERE i.event_type = 'purchase') AS last_purchase_at "
+        "FROM interactions i WHERE i.client_id = :client_id AND i.occurred_at >= :since"
+    )
+    with SessionLocal() as session:
+        row = session.execute(sql, {"client_id": client_id, "since": since}).mappings().one()
+    return {
+        "purchases": int(row["purchases"] or 0),
+        "attributed_purchases": int(row["attributed"] or 0),
+        "purchases_with_price": int(row["with_price"] or 0),
+        "add_to_cart": int(row["add_to_cart"] or 0),
+        "recommendation_clicks": int(row["clicks"] or 0),
+        "last_purchase_at": row["last_purchase_at"],
+    }
+
+
 # Same convention as recommendation_attributed_revenue's Python loop, in SQL: properties.price
 # counts only when it is a JSON number, times the event's quantity (1 when unset).
 _ATTRIBUTED_PRICE_SQL = (

@@ -63,7 +63,7 @@ from schemas import (
     DeveloperKey, DeveloperKeyCreate, DeveloperKeyCreated, SitePublicKey, SitePublicKeyCreate, SitePublicKeyCreated,
     IdentifyRequest, IdentifyResult,
     DataSource, PlanLimits, Placement, PlacementUpdate, PlacementHealthOut, TrackingRequirementsOut,
-    AnalyticsSummaryOut, AnalyticsDetailOut,
+    AnalyticsSummaryOut, AnalyticsDetailOut, PurchaseTrackingOut,
     UpgradeRequestCreate, UpgradeRequestReceived,
     SyncRun, SyncTriggerRequest, DataSourceUpdate, PushSecretIssued,
 )
@@ -104,6 +104,7 @@ from db import (
     recommendation_performance_summary, recommendation_performance_timeseries,
     recommendation_performance_by_strategy, recommendation_performance_by_placement_with_revenue,
     recommendation_attributed_revenue_by_day, recommendation_top_items,
+    purchase_tracking_status,
 )
 from ids import new_recommendation_id
 from observability import coerce_request_id, get_logger, log_event, request_id_var
@@ -1015,6 +1016,19 @@ async def get_my_analytics_summary(
     since, until, start_date, end_date = _resolve_analytics_window(plan, start, end, default_days=7)
     summary = recommendation_performance_summary(client_id, since, until=until)
     return {"start": start_date.isoformat(), "end": end_date.isoformat(), **summary}
+
+@app.get("/clients/me/purchase-tracking", tags=["selfServiceClient"], response_model=PurchaseTrackingOut, summary="Are my purchases reaching LIKYLY?", responses=_errors(401, 404, 422))
+async def get_my_purchase_tracking(
+    days: int = Query(30, ge=1, le=90, description="How many days back to count."),
+    supabase_user_id: str = Depends(get_current_supabase_user_id), x_workspace_id: WorkspaceIdHeader = None,
+):
+    """The console's "Suivi des achats" panel: purchases received, how many carry a
+    recommendation_id and a numeric price (the two things the attributed revenue needs), the add
+    to cart and the clicks on recommendations. Counts only, so every plan gets it - it says what
+    is missing in an integration, not what it earns."""
+    client_id = await _resolve_my_client_id(supabase_user_id, x_workspace_id)
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    return {"window_days": days, **purchase_tracking_status(client_id, since)}
 
 def _performance_totals(client_id: int, since, until, placement: Optional[str]) -> tuple[dict, dict[str, dict]]:
     """Totals over [since, until] (served, impressions, clicks, CTR, attributed purchases and

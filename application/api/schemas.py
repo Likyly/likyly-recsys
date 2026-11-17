@@ -1352,6 +1352,19 @@ class AnalyticsSummaryOut(BaseModel):
     ctr: float
 
 
+class PurchaseTrackingOut(BaseModel):
+    """Whether this workspace's purchases reach LIKYLY and can be counted - on any plan, counts
+    only. A purchase counts in the attributed revenue when it carries the `recommendation_id` of
+    the click it came from, and adds `properties.price` (a JSON number) x `quantity`."""
+    window_days: int
+    purchases: int = Field(description="Purchase events received in the window.")
+    attributed_purchases: int = Field(description="Of those, the ones carrying a `recommendation_id`.")
+    purchases_with_price: int = Field(description="Of those, the ones whose `properties.price` is a number.")
+    add_to_cart: int = Field(description="Add-to-cart events received in the window.")
+    recommendation_clicks: int = Field(description="Clicks on a recommended item (carrying a `recommendation_id`) in the window.")
+    last_purchase_at: Optional[datetime] = None
+
+
 class AnalyticsTimeseriesPoint(BaseModel):
     date: str
     recommendations_served: int
