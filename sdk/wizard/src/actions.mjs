@@ -3,11 +3,12 @@
 
 import { relative } from "node:path";
 import { EDITORS, editorById } from "./frameworks.mjs";
-import { approveClaudeServer, configPath, writeMcpConfig } from "./mcp.mjs";
-import { commandExists, runAsync, writeClaudeCommands, writeCredentials, writeEnv, writeKeyFile, writeSkill, writeStarter } from "./setup.mjs";
+import { approveClaudeServer, configPath, removalStep, unapproveStep, writeMcpConfig } from "./mcp.mjs";
+import { CLAUDE_COMMANDS, commandExists, runAsync, writeClaudeCommands, writeCredentials, writeEnv, writeKeyFile, writeSkill, writeStarter } from "./setup.mjs";
 import { checkCompat, describeCompat } from "./compat.mjs";
 import { checkKey, installedPackages } from "./verify.mjs";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync, rmdirSync, rmSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { DOCS_URL, WP_PLUGIN_URL } from "./constants.mjs";
 import { APP_URL } from "./auth.mjs";
 
@@ -109,6 +110,49 @@ export function connectEditors(opts, editors) {
     else if (approval.status === "invalid") results.push(warn(`${relative(opts.dir, approval.path)} is not valid JSON: Claude Code will ask once before starting the likyly server`));
     const command = writeClaudeCommands(opts.dir, { dryRun: opts.dryRun });
     results.push(ok(`Claude Code commands ${command.names.join(", ")} → ${relative(opts.dir, command.path)}`));
+  }
+  return results;
+}
+
+/**
+ * Take back the connection of assistants the developer unticked when changing their choice: the
+ * likyly server in their MCP config (a file left empty goes), the skill in a folder no remaining
+ * assistant reads, Claude Code's approval and commands.
+ */
+export function disconnectEditors(opts, removed, kept = []) {
+  const results = [];
+  for (const id of removed) {
+    const rel = relative(opts.dir, configPath(opts.dir, id));
+    const step = removalStep(opts.dir, id, rel);
+    if (step?.kept) results.push(warn(step.kept));
+    else if (step) {
+      if (!opts.dryRun) step.run();
+      results.push(info(`${editorLabel(id)} disconnected (${rel})`));
+    }
+  }
+  const keptDirs = new Set(kept.map((id) => editorById(id)?.skillDir));
+  for (const skillDir of new Set(removed.map((id) => editorById(id)?.skillDir).filter(Boolean))) {
+    const path = join(opts.dir, skillDir, "likyly");
+    if (keptDirs.has(skillDir) || !existsSync(path)) continue;
+    if (!opts.dryRun) rmSync(path, { recursive: true, force: true });
+    results.push(info(`LIKYLY skill removed from ${skillDir}`));
+  }
+  if (removed.includes("claude-code") && !kept.includes("claude-code")) {
+    const approval = unapproveStep(opts.dir);
+    if (approval && !opts.dryRun) approval.run();
+    for (const f of CLAUDE_COMMANDS) if (!opts.dryRun) rmSync(join(opts.dir, ".claude/commands", f), { force: true });
+  }
+  // The folders this left empty (.codex, .agents/skills...), up to the project: no trace of a
+  // choice taken back. A folder with anything else in it stays.
+  if (!opts.dryRun) {
+    const folders = removed.flatMap((id) => [dirname(configPath(opts.dir, id)), join(opts.dir, editorById(id)?.skillDir ?? ".")]);
+    if (removed.includes("claude-code")) folders.push(join(opts.dir, ".claude/commands"));
+    for (let dir of folders) {
+      while (dir.startsWith(opts.dir + "/") && existsSync(dir) && !readdirSync(dir).length) {
+        rmdirSync(dir);
+        dir = dirname(dir);
+      }
+    }
   }
   return results;
 }

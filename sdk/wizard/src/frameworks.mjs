@@ -392,7 +392,7 @@ export function findProjectsBelow(dir, { depth = 3, limit = 10, maxDirs = 400 } 
  */
 const JETBRAINS_IDES = ["IntelliJ IDEA", "IntelliJ IDEA Ultimate", "IntelliJ IDEA CE", "PhpStorm", "WebStorm", "PyCharm", "PyCharm Professional Edition", "PyCharm CE", "GoLand", "Rider", "RubyMine", "CLion", "RustRover"];
 export const EDITORS = [
-  { id: "claude-code", label: "Claude Code", file: ".mcp.json", format: "json", serversKey: "mcpServers", keyRef: "${LIKYLY_DEVELOPER_KEY:-}", skillDir: ".claude/skills", detect: (dir) => has(dir, ".mcp.json", ".claude", "CLAUDE.md"), commands: ["claude"], apps: [] },
+  { id: "claude-code", label: "Claude Code", file: ".mcp.json", format: "json", serversKey: "mcpServers", keyRef: "${LIKYLY_DEVELOPER_KEY:-}", skillDir: ".claude/skills", detect: (dir) => has(dir, ".mcp.json", ".claude", "CLAUDE.md"), commands: ["claude"], apps: ["Claude"], homeMarkers: [".claude/projects"] },
   { id: "cursor", label: "Cursor", file: ".cursor/mcp.json", format: "json", serversKey: "mcpServers", keyRef: "${env:LIKYLY_DEVELOPER_KEY}", workspaceVar: "${workspaceFolder}", skillDir: ".agents/skills", detect: (dir) => has(dir, ".cursor", ".cursorrules"), commands: ["cursor"], apps: ["Cursor"] },
   { id: "vscode", label: "VS Code (Copilot)", file: ".vscode/mcp.json", format: "json", serversKey: "servers", keyRef: "${env:LIKYLY_DEVELOPER_KEY}", workspaceVar: "${workspaceFolder}", skillDir: ".github/skills", detect: (dir) => has(dir, ".vscode"), commands: ["code"], apps: ["Visual Studio Code"] },
   { id: "codex", label: "Codex (OpenAI)", file: ".codex/config.toml", format: "codex-toml", skillDir: ".agents/skills", detect: (dir) => has(dir, ".codex"), commands: ["codex"], apps: ["Codex"], trust: true },
@@ -413,7 +413,10 @@ function onPath(bin) {
 export function installedEditors({ home = homedir(), platform = process.platform, commandExists = onPath } = {}) {
   const appInstalled = (app) =>
     platform === "darwin" && [join("/Applications", `${app}.app`), join(home, "Applications", `${app}.app`)].some((p) => existsSync(p));
-  return EDITORS.filter((e) => e.commands.some(commandExists) || e.apps.some(appInstalled)).map((e) => e.id);
+  // Claude Code also runs inside VS Code and the Claude app, without a `claude` command: the
+  // sessions it keeps in ~/.claude/projects show it is used on this machine.
+  const usedHere = (e) => (e.homeMarkers ?? []).some((m) => existsSync(join(home, m)));
+  return EDITORS.filter((e) => e.commands.some(commandExists) || e.apps.some(appInstalled) || usedHere(e)).map((e) => e.id);
 }
 
 export function detectEditors(dir) {

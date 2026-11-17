@@ -19,6 +19,7 @@ import {
   applyStarter,
   connectEditors,
   describePlan,
+  disconnectEditors,
   editorLabel,
   installMode,
   installSdk,
@@ -235,17 +236,22 @@ function DonePanel({ editors, dryRun, level, devKey, dir }) {
 }
 
 /** The one remaining choice, Enter by default: hand over to the assistant. */
-function NextAction({ editors, canReview, onPick, signedIn, preview }) {
+function NextAction({ editors, canReview, reviewed, onPick, signedIn, preview, canChangeEditors }) {
   const items = [];
   // Without a developer key the assistant cannot reach LIKYLY: signing in comes first.
   if (editors.length && !signedIn) items.push({ label: "Connect your LIKYLY account first", value: "signin", hint: "your assistant needs it to reach LIKYLY" });
-  if (editors.includes("claude-code") && commandExists("claude")) items.push({ label: "Launch Claude Code now", value: "claude", hint: "it starts on this prompt" });
-  if (canReview) items.push({ label: "Review the changes first", value: "review", hint: "git diff of what LIKYLY changed" });
+  const claudeCli = commandExists("claude");
+  if (editors.includes("claude-code") && claudeCli) items.push({ label: "Launch Claude Code now", value: "claude", hint: "it starts on this prompt" });
+  // Claude Code in VS Code or the Claude app: no command to start, the prompt goes in its chat.
+  if (editors.includes("claude-code") && !claudeCli) items.push({ label: "Copy the prompt for Claude Code and exit", value: "copy", hint: "paste it in Claude Code: the VS Code panel or the Claude app" });
+  if (canReview) items.push({ label: reviewed ? "Show the changes again" : "Review the changes first", value: "review", hint: "what LIKYLY changed, shown here" });
   // In this terminal, never a new window: Ctrl+C stops it and gives the shell back.
   if (preview) items.push({ label: "Start the site's preview here", value: "preview", hint: `${preview.command} · Ctrl+C gives you your terminal back` });
   if (editors.includes("codex") && commandExists("codex")) items.push({ label: "Launch Codex now", value: "codex", hint: "it starts on this prompt" });
   if (editors.includes("cursor") && commandExists("cursor")) items.push({ label: "Open Cursor", value: "cursor", hint: "the prompt is copied, paste it in the chat" });
-  items.push({ label: "Copy the prompt and exit", value: "copy" });
+  if (canChangeEditors)
+    items.push({ label: "Change the assistants", value: "assistants", hint: editors.length ? `back to the choice · now: ${editors.map(editorLabel).join(", ")}` : "back to the choice" });
+  if (!items.some((i) => i.value === "copy")) items.push({ label: "Copy the prompt and exit", value: "copy" });
   items.push({ label: "Exit", value: "exit" });
   return <Select items={items} onSubmit={onPick} />;
 }
@@ -283,6 +289,7 @@ function App({ opts: initialOpts, result }) {
   const [log, setLog] = useState([]);
   const keys = useRef({ publicKey: opts.publicKey || null, devKey: null });
   const reviewRef = useRef([]);
+  const [reviewed, setReviewed] = useState(false);
   const [chosenEditors, setChosenEditors] = useState([]);
   // Everything finished is printed once and never redrawn: only the live step is.
   const [printed, setPrinted] = useState(opts.continued ? [] : [{ key: "header", kind: "header" }]);
@@ -291,10 +298,13 @@ function App({ opts: initialOpts, result }) {
 
   const shopRef = useRef(null); // the store the catalog step connected, for the preview
   const [preview, setPreview] = useState(null);
+  // Printed items need keys of their own: a step can run twice (the developer went back to it).
+  const seq = useRef(0);
+  const key = (id) => `${id}-${++seq.current}`;
   const finish = (id, results, summary, status) => {
     const st = { status: status ?? statusOf(results), results, summary };
     setSteps((s) => ({ ...s, [id]: st }));
-    setPrinted((p) => [...p, { key: id, kind: "step", title: order.find(([k]) => k === id)[1], ...st }]);
+    setPrinted((p) => [...p, { key: key(id), kind: "step", title: order.find(([k]) => k === id)[1], ...st }]);
   };
   const failed = Object.values(steps).some((s) => s.status === "fail");
   // Leaving is deferred to after the next render: calling exit() right after finish() would
@@ -352,7 +362,7 @@ function App({ opts: initialOpts, result }) {
         finish("verify", r, { fail: "needs attention", warn: "one thing left to do", ok: "all good" }[level]);
         const review = repo && !opts.dryRun ? git.changesSince(opts.dir, repo.before) : null;
         const notInGit = repo ? git.ignored(opts.dir, [project?.envFile, ".likyly/credentials.env"].filter(Boolean)) : [];
-        setPrinted((p) => [...p, { key: "done", kind: "done", level, review: review && { ...review, branch: workBranch.current, notInGit } }]);
+        setPrinted((p) => [...p, { key: key("done"), kind: "done", level, review: review && { ...review, branch: workBranch.current, notInGit } }]);
         reviewRef.current = review?.mine ?? [];
         // Offer the site's preview first: the developer sees the changes as their assistant makes them.
         previewPlan(project, opts.dir, { store: shopRef.current })
@@ -360,7 +370,7 @@ function App({ opts: initialOpts, result }) {
           .then((plan) => {
             if (plan?.running && !opts.dryRun) {
               // Started earlier and still going: say where, start nothing (the port is taken).
-              setPrinted((p) => [...p, { key: "preview", kind: "step", title: "Preview your site", status: "ok", summary: "already running", results: [{ level: "ok", text: `Your preview is already running: ${plan.running}` }, ...plan.notes.map((text) => ({ level: "info", text }))] }]);
+              setPrinted((p) => [...p, { key: key("preview"), kind: "step", title: "Preview your site", status: "ok", summary: "already running", results: [{ level: "ok", text: `Your preview is already running: ${plan.running}` }, ...plan.notes.map((text) => ({ level: "info", text }))] }]);
               return setPhase("next");
             }
             const usable = plan?.command && !opts.dryRun && (!plan.requires || commandExists(plan.requires));
@@ -373,10 +383,13 @@ function App({ opts: initialOpts, result }) {
   }, [phase]);
 
   function connect(editors) {
+    // Back to the choice: the assistants unticked this time lose what this run gave them.
+    const removed = chosenEditors.filter((id) => !editors.includes(id));
     setChosenEditors(editors);
-    const results = editors.length
+    const results = removed.length ? disconnectEditors(opts, removed, editors) : [];
+    results.push(...(editors.length
       ? connectEditors(opts, editors)
-      : [{ level: "warn", text: "No assistant connected. Later:", hint: "npx @likyly/wizard mcp add" }];
+      : [{ level: "warn", text: "No assistant connected. Later:", hint: "npx @likyly/wizard mcp add" }]));
     finish("mcp", results, editors.map(editorLabel).join(", ") || undefined);
     setPhase("verify");
   }
@@ -541,8 +554,12 @@ function App({ opts: initialOpts, result }) {
                 badge: detected.includes(e.id) ? "in this project" : installed.includes(e.id) ? "installed" : undefined,
               }))}
               initial={(() => {
-                const ticked = EDITORS.map((e) => e.id).filter((id) => detected.includes(id) || installed.includes(id));
-                return ticked.length ? ticked : ["claude-code"];
+                // Going back: what was chosen. Else only what this project already uses, or one
+                // assistant installed here (Claude Code first): ticking every installed one
+                // connected tools the developer never meant to pick.
+                if (chosenEditors.length) return chosenEditors;
+                if (detected.length) return detected;
+                return [installed.includes("claude-code") ? "claude-code" : (installed[0] ?? "claude-code")];
               })()}
               onSubmit={connect}
             />
@@ -563,6 +580,17 @@ function App({ opts: initialOpts, result }) {
                 {item.results.length ? <Results items={item.results} /> : null}
               </Step>
             ) : null}
+            {item.kind === "diff" ? (
+              <Box flexDirection="column" marginBottom={1}>
+                <Text bold>What LIKYLY changed</Text>
+                {item.lines.map((line, i) => (
+                  <Text key={i} wrap="truncate-end">
+                    {line || " "}
+                  </Text>
+                ))}
+                <Text color={C.muted}>Side by side: VS Code Source Control (Ctrl/Cmd+Shift+G). Nothing is committed.</Text>
+              </Box>
+            ) : null}
             {item.kind === "done" ? (
               <>
                 {item.review ? <ReviewPanel review={item.review} /> : null}
@@ -582,7 +610,25 @@ function App({ opts: initialOpts, result }) {
       ) : null}
       {phase === "next" ? (
         <Box paddingX={1} marginTop={1} display={tooSmall ? "none" : "flex"}>
-          <NextAction editors={chosenEditors} canReview={reviewRef.current.length > 0} signedIn={opts.dryRun || Boolean(keys.current.devKey) || hasDeveloperKey(opts.dir)} preview={preview} onPick={(v) => end(failed ? 1 : 0, v, reviewRef.current)} />
+          <NextAction
+            key={seq.current}
+            editors={chosenEditors}
+            canReview={reviewRef.current.length > 0}
+            reviewed={reviewed}
+            canChangeEditors={order.some(([id]) => id === "mcp") && !opts.editors}
+            signedIn={opts.dryRun || Boolean(keys.current.devKey) || hasDeveloperKey(opts.dir)}
+            preview={preview}
+            onPick={(v) => {
+              // Both stay in the wizard: the changes are shown here, the choice is made again.
+              if (v === "review") {
+                setReviewed(true);
+                setPrinted((p) => [...p, { key: key("diff"), kind: "diff", lines: git.diffLines(opts.dir, reviewRef.current) }]);
+                return;
+              }
+              if (v === "assistants") return setPhase("mcp");
+              end(failed ? 1 : 0, v, reviewRef.current);
+            }}
+          />
         </Box>
       ) : null}
     </>
@@ -603,15 +649,6 @@ function launch(choice, dir, files = [], editors = [], preview = null) {
     const cmd = `${wizardInvocation()} mcp --editor ${editors.join(",")}`;
     console.log(`\n  ${cmd}\n`);
     spawnSync(cmd, { cwd: dir, stdio: "inherit", shell: true });
-    return;
-  }
-  if (choice === "review") {
-    // Modified files as a diff (in the developer's pager), new ones listed: git diff skips them.
-    const tracked = files.filter((f) => f.code !== "A").map((f) => f.path);
-    const added = files.filter((f) => f.code === "A").map((f) => f.path);
-    if (tracked.length) spawnSync("git", ["diff", "--", ...tracked], { cwd: dir, stdio: "inherit" });
-    if (added.length) console.log(`\n  New files (open them to read): \n${added.map((f) => `    + ${f}`).join("\n")}`);
-    console.log("\n  In VS Code: Source Control (Ctrl/Cmd+Shift+G) shows each change side by side.\n  Then: npx @likyly/wizard again is not needed - run `claude` to let your assistant continue.\n");
     return;
   }
   if (choice === "claude") {

@@ -552,8 +552,23 @@ test("installed assistants: a command on the PATH or a macOS app", () => {
   mkdirSync(join(home, "Applications", "Kiro.app"), { recursive: true });
   const found = installedEditors({ home, platform: "darwin", commandExists: (bin) => bin === "codex" || bin === "vibe" });
   assert.ok(found.includes("codex") && found.includes("mistral-vibe") && found.includes("kiro"), found.join(","));
-  assert.ok(!found.includes("claude-code"));
   assert.deepEqual(installedEditors({ home, platform: "linux", commandExists: () => false }), [], "apps only count on macOS");
+  // Claude Code in VS Code or the Claude app has no `claude` command: its sessions folder shows it.
+  mkdirSync(join(home, ".claude", "projects"), { recursive: true });
+  assert.deepEqual(installedEditors({ home, platform: "linux", commandExists: () => false }), ["claude-code"]);
+});
+
+test("changing the assistants: the unticked ones lose their MCP config and skill, the kept ones keep theirs", async () => {
+  const { connectEditors, disconnectEditors } = await import("../src/actions.mjs");
+  const dir = project(pkg({}));
+  const opts = { dir, dryRun: false, hosted: false };
+  connectEditors(opts, ["claude-code", "codex", "cursor"]);
+  assert.ok(existsSync(join(dir, ".codex/config.toml")) && existsSync(join(dir, ".agents/skills/likyly/SKILL.md")));
+  disconnectEditors(opts, ["codex"], ["claude-code", "cursor"]);
+  assert.equal(existsSync(join(dir, ".codex")), false, "an emptied folder goes too");
+  assert.ok(existsSync(join(dir, ".agents/skills/likyly/SKILL.md")), "Cursor still reads .agents/skills");
+  disconnectEditors(opts, ["cursor", "claude-code"], []);
+  for (const f of [".cursor", ".mcp.json", ".agents", ".claude", ".codex"]) assert.equal(existsSync(join(dir, f)), false, f);
 });
 
 
@@ -1463,4 +1478,25 @@ test("every detected stack has a mark, with lines of one width and no double-wid
     assert.ok(logo.art.every((l) => !/\p{Extended_Pictographic}/u.test(l)), `${id}: emoji`);
   }
   assert.equal(logoFor({ id: "unknown" }), null);
+});
+
+test("the review shown in the wizard: the site's files whole, the assistant's tooling and lock files only counted", async () => {
+  const git = await import("../src/git.mjs");
+  const dir = project(pkg({}));
+  spawnSync("git", ["init", "-q"], { cwd: dir });
+  spawnSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qam", "x", "--allow-empty"], { cwd: dir });
+  spawnSync("git", ["add", "."], { cwd: dir });
+  spawnSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "base"], { cwd: dir });
+  writeFileSync(join(dir, "package.json"), JSON.stringify({ dependencies: { "@likyly/sdk": "1" } }));
+  writeFileSync(join(dir, ".env"), "LIKYLY_KEY=pk_test\n");
+  mkdirSync(join(dir, ".claude/skills/likyly"), { recursive: true });
+  writeFileSync(join(dir, ".claude/skills/likyly/SKILL.md"), "long\n".repeat(500));
+  writeFileSync(join(dir, "package-lock.json"), "{}");
+  const files = [{ path: "package.json", code: "M" }, { path: ".env", code: "A" }, { path: ".claude/skills/likyly/SKILL.md", code: "A" }, { path: "package-lock.json", code: "A" }];
+  const out = git.diffLines(dir, files, { color: false }).join("\n");
+  assert.match(out, /@likyly\/sdk/);
+  assert.match(out, /\+LIKYLY_KEY=pk_test/);
+  assert.match(out, /package-lock.json: lock file updated/);
+  assert.match(out, /1 file\(s\) for your assistant, not shown/);
+  assert.doesNotMatch(out, /long/);
 });

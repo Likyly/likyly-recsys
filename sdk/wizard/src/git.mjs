@@ -89,3 +89,36 @@ export function changesSince(dir, before) {
     .map(([path, code]) => ({ path, code }));
   return { mine, alreadyModified: Object.keys(before).length };
 }
+
+// Lock files: thousands of lines nobody reviews by eye; named, not shown.
+const TOOLING = /(^|\/)skills\/likyly\/|^\.claude\/commands\/likyly-/;
+const LOCKFILES = /(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|bun\.lockb?|composer\.lock|poetry\.lock|uv\.lock|Gemfile\.lock|Cargo\.lock|go\.sum)$/;
+
+/**
+ * The changes `files` ([{ path, code }]) as coloured diff lines, to show inside the wizard: the
+ * modified files' diff, each new file's content, lock files only named. Long output is cut
+ * (`max` lines) with a pointer to the full view.
+ */
+export function diffLines(dir, files, { max = 150, color = true } = {}) {
+  const lines = [];
+  const opts = color ? ["--color=always"] : ["--no-color"];
+  const run = (args) => {
+    const r = spawnSync("git", ["--no-pager", "-C", dir, ...args], { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
+    return r.stdout ?? "";
+  };
+  const locks = files.filter((f) => LOCKFILES.test(f.path));
+  // The assistant's own tooling (the LIKYLY skill, Claude Code's commands): long, the same in every
+  // project, nothing of the site in them. Counted, not shown.
+  const tooling = files.filter((f) => TOOLING.test(f.path));
+  const shown = files.filter((f) => !LOCKFILES.test(f.path) && !TOOLING.test(f.path));
+  const tracked = shown.filter((f) => f.code !== "A").map((f) => f.path);
+  const added = shown.filter((f) => f.code === "A").map((f) => f.path);
+  if (tracked.length) lines.push(...run(["diff", ...opts, "--", ...tracked]).split("\n"));
+  // A new file is not in git yet: compared with nothing, it shows whole, as added lines.
+  for (const path of added) lines.push(...run(["diff", "--no-index", ...opts, "--", "/dev/null", path]).split("\n"));
+  for (const f of locks) lines.push(`${f.path}: lock file updated (not shown)`);
+  if (tooling.length) lines.push(`+ ${tooling.length} file(s) for your assistant, not shown: the LIKYLY skill${tooling.some((f) => f.path.startsWith(".claude/commands/")) ? " and Claude Code's /likyly commands" : ""}`);
+  const out = lines.filter((l, i) => l !== "" || i < lines.length - 1);
+  if (out.length <= max) return out;
+  return [...out.slice(0, max), `… ${out.length - max} more lines: git diff, or VS Code Source Control (Ctrl/Cmd+Shift+G)`];
+}
