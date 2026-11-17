@@ -254,6 +254,15 @@ def _button(label: str, href: str) -> str:
     )
 
 
+def score_label(r: dict[str, Any]) -> str:
+    """"58/100" - or, when too little could be read to grade the page, says so."""
+    return f"{int(r['score'])}/100" if r.get("score") is not None else "sans note (audit partiel)"
+
+
+PARTIAL_NOTE = ("Les recommandations de cette page se chargent dans le navigateur : l'audit n'a pas pu en lire assez pour donner une note. "
+                "Les contrôles mesurés sont détaillés ci-dessous.")
+
+
 def report_body(row: dict[str, Any]) -> str:
     r = row["result"]
     report_link = f"{site_url()}/audit/r/{row['token']}"
@@ -263,14 +272,19 @@ def report_body(row: dict[str, Any]) -> str:
            f'analysé depuis la page « {e(r.get("item_name") or r["page_type"]["label"])} ».'),
         f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 24px;background:{C["bg"]};border:1px solid {C["border"]};border-radius:12px;">'
         f'<tr><td width="110" align="center" style="padding:18px 8px;border-right:1px solid {C["border"]};">'
-        f'<div style="font:800 40px/1 Sora, {FONT};color:{color};">{int(r["score"])}</div>'
-        f'<div style="font:600 12px/1.6 {FONT};color:{C["muted"]};">/ 100 · note {e(r["grade"])}</div></td>'
-        f'<td style="padding:14px 18px;font:400 14px/1.7 {FONT};color:{C["ink"]};">'
+        + (f'<div style="font:800 40px/1 Sora, {FONT};color:{color};">{int(r["score"])}</div>'
+           f'<div style="font:600 12px/1.6 {FONT};color:{C["muted"]};">/ 100 · note {e(r["grade"])}</div></td>'
+           if r.get("score") is not None else
+           f'<div style="font:800 32px/1 Sora, {FONT};color:{C["muted"]};">—</div>'
+           f'<div style="font:600 12px/1.6 {FONT};color:{C["muted"]};">audit partiel</div></td>')
+        + f'<td style="padding:14px 18px;font:400 14px/1.7 {FONT};color:{C["ink"]};">'
         f'<strong>Technologie</strong> : {e(r["cms"]["label"])}<br>'
         f'<strong>Page</strong> : {e(r["page_type"]["label"])}<br>'
         f'<strong>Outil de recommandation</strong> : {e(", ".join(v["label"] for v in r.get("vendors") or []) or "aucun détecté")}<br>'
         f'<strong>Blocs trouvés</strong> : {len(r.get("blocks") or [])}</td></tr></table>',
     ]
+    if r.get("score") is None:
+        parts.append(_p(e(PARTIAL_NOTE), f"font-size:14px;color:{C['muted']};"))
     for kpi in sorted(r["kpis"], key=lambda k: STATUS_ORDER.get(k["status"], 9)):
         label, accent, tint = STATUS_STYLE.get(kpi["status"], STATUS_STYLE["unknown"])
         about = f'<br><span style="font-size:12px;color:{C["muted"]};">{e(kpi.get("about"))}</span><br>' if kpi.get("about") else ""
@@ -303,7 +317,7 @@ def report_body(row: dict[str, Any]) -> str:
 def report_text(row: dict[str, Any]) -> str:
     r = row["result"]
     lines = [
-        f"Audit des recommandations de {r['host']} - {r['score']}/100 (note {r['grade']})",
+        f"Audit des recommandations de {r['host']} - {score_label(r)}" + (f" (note {r['grade']})" if r.get("grade") else ""),
         f"Page analysée : {r['final_url']}",
         f"Technologie : {r['cms']['label']} · Page : {r['page_type']['label']}",
         "",
@@ -323,8 +337,8 @@ def report_text(row: dict[str, Any]) -> str:
 def build_report_email(row: dict[str, Any], sender: str) -> EmailMessage:
     r = row["result"]
     shell = (TEMPLATES / "audit-report.fr.html").read_text(encoding="utf-8")
-    title = f"Votre audit : {int(r['score'])}/100"
-    preheader = f"Score {int(r['score'])}/100 pour {r['host']} - le détail de chaque contrôle et quoi corriger."
+    title = f"Votre audit : {score_label(r)}"
+    preheader = f"{score_label(r).capitalize()} pour {r['host']} - le détail de chaque contrôle et quoi corriger."
     filled = (
         shell.replace("{{ .Body }}", report_body(row))
         .replace("{{ .Title }}", e(title))
@@ -333,7 +347,7 @@ def build_report_email(row: dict[str, Any], sender: str) -> EmailMessage:
         .replace("{{ .Email }}", e(row["email"]))
     )
     message = EmailMessage()
-    message["Subject"] = f"Votre audit de recommandations : {int(r['score'])}/100 pour {r['host']}"
+    message["Subject"] = f"Votre audit de recommandations : {score_label(r)} pour {r['host']}"
     message["From"] = formataddr(("LIKYLY", sender))
     message["To"] = row["email"]
     message["Reply-To"] = "contact@likyly.com"
@@ -345,7 +359,7 @@ def build_report_email(row: dict[str, Any], sender: str) -> EmailMessage:
 def build_lead_email(row: dict[str, Any], sender: str) -> EmailMessage:
     r = row["result"]
     message = EmailMessage()
-    message["Subject"] = f"[Likyly] Audit : {row['email']} - {r['host']} ({r['score']}/100)"
+    message["Subject"] = f"[Likyly] Audit : {row['email']} - {r['host']} ({score_label(r)})"
     message["From"] = formataddr(("Likyly", sender))
     message["To"] = os.environ.get("UPGRADE_REQUEST_TO", DEFAULT_RECIPIENT)
     message["Reply-To"] = row["email"]
@@ -356,7 +370,7 @@ def build_lead_email(row: dict[str, Any], sender: str) -> EmailMessage:
         f"Page : {r['final_url']}",
         f"Technologie : {r['cms']['label']} · Page : {r['page_type']['label']}",
         f"Outils détectés : {', '.join(v['label'] for v in r.get('vendors') or []) or 'aucun'}",
-        f"Score : {r['score']}/100 (note {r['grade']})",
+        f"Score : {score_label(r)}" + (f" (note {r['grade']})" if r.get("grade") else ""),
         "",
         *(f"[{k['status']}] {k['label']} - {k['summary']}" for k in r["kpis"]),
         "",

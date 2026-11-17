@@ -170,6 +170,7 @@ CMS_LABELS = {
 
 # (vendor id, label, personalizes per visitor?, patterns searched in the raw HTML)
 VENDORS: list[tuple[str, str, bool, tuple[str, ...]]] = [
+    ("inhouse", "Moteur de personnalisation du site", True, ("p13n-", "p13n_", "personalized-recommendations", "personalised-recommendations")),
     ("likyly", "LIKYLY", True, ("api.likyly.com", "cdn.likyly.com", "likyly-recommendations", "@likyly/")),
     ("nosto", "Nosto", True, ("connect.nosto.com", "nosto_element", "nostojs")),
     ("clerk", "Clerk.io", True, ("cdn.clerk.io", "clerk.io/", 'class="clerk')),
@@ -188,32 +189,63 @@ VENDORS: list[tuple[str, str, bool, tuple[str, ...]]] = [
     ("taboola", "Taboola (contenus sponsorisés)", False, ("cdn.taboola.com",)),
 ]
 
-# Headings that announce a recommendation block. Lowercased, accents kept (we compare lowercased text).
-HEADING_PATTERNS = [
-    r"vous aimerez (aussi|peut-être|également)", r"vous (pourriez|devriez) aimer", r"tu (aimeras|vas aimer|pourrais aimer)", r"produits? (similaires|apparentés|associés|liés|recommandés|complémentaires)",
-    r"articles? (similaires|recommandés|liés|associés)", r"(à|a) lire aussi", r"lire (aussi|ensuite)", r"sur le même (thème|sujet)",
-    r"(les )?(clients|lecteurs|internautes|visiteurs)( qui)? ont (aussi|également) (acheté|aimé|consulté|lu|vu|regardé)",
-    r"(souvent|fréquemment) achetés? ensemble", r"complétez (votre|le|ton) (look|panier|commande)", r"recommandés? pour (vous|toi)", r"(sélectionnés?|choisis) pour (vous|toi)",
-    r"^\W*pour (vous|toi)\W*$", r"nos recommandations", r"(récemment|derniers?) (consultés|vus)", r"vus récemment", r"(autres|d'autres) (produits|articles|livres|spectacles|événements)",
-    r"vous avez aimé", r"ça pourrait (vous|te) plaire", r"ont aussi (aimé|acheté|lu|vu|consulté|regardé|réservé)", r"que (lire|voir|écouter) (après|ensuite)",
-    r"autres? (livres|produits|articles|œuvres|titres|albums|spectacles|événements) (de|du|des|classés|dans)", r"dans la même (catégorie|collection|série|gamme|rubrique)",
-    r"du même (auteur|artiste|rayon|univers|thème)", r"suggestions? (pour (vous|toi)|de produits|d'articles)", r"^\W*accessoires?( recommandés)?\W*$",
-    r"you (may|might|will|could) (also )?(like|love|enjoy)", r"related (products|items|articles|posts|stories|books|events)", r"similar (products|items|articles|books|events)",
-    r"customers (who|also)", r"(frequently|often) bought together", r"recommended (for you|products|items|reading)", r"(read|watch) next", r"more like this",
-    r"recently viewed", r"complete the look", r"(people|readers|shoppers) also (bought|liked|viewed|read)", r"picked for you", r"^\W*for you\W*$",
-    r"\bupsell", r"cross-?sell",
-]
-HEADING_RE = re.compile("|".join(f"(?:{p})" for p in HEADING_PATTERNS), re.IGNORECASE)
+# Headings that announce a recommendation block, by family (French and English). What a block's
+# title says about how it is chosen:
+#   behavior   what other customers did with this item ("ont aussi acheté", "bought together")
+#   complement what goes with it ("complétez le look", "get everything you need") - a cross-sell
+#   popular    what everybody reads or buys ("les plus lus", "most read", "meilleures ventes")
+#   personal   what this visitor did ("vus récemment") - adapts to each visitor by nature
+#   similar    everything else that announces recommendations - related to the item shown
+# (a title saying "pour vous" is kept as a claim: what a block really does is checked by opening a
+# second item page and reloading the page - see compare_blocks)
+BEHAVIOR_HEADING_RE = re.compile(
+    r"ont (aussi|également) (aimé|acheté|lu|vu|consulté|regardé|réservé|écouté)|clients (ayant|qui ont) (consulté|acheté|vu|aimé)|clients achètent|achètent après|"
+    r"(souvent|fréquemment) achetés?|achetés? ensemble|lecteurs ont aussi|also (bought|liked|viewed|read|enjoyed|purchased)|customers (who|also)|bought together|"
+    r"(people|readers|shoppers|others|fans) (also|who)|what (other )?(customers|people) (buy|bought)|you might also need",
+    re.IGNORECASE)
+COMPLEMENT_HEADING_RE = re.compile(
+    r"compl(é|e)tez|complète(z)? (le|votre|ton)|complete (the|your) (look|set|outfit|purchase)|pairs? (well )?with|get everything you need|"
+    r"accessoires? (recommandés|compatibles|indispensables|associés)|style it with|shop the look|à associer|vous aurez aussi besoin|you'?ll (also )?need|goes well with|wear it with",
+    re.IGNORECASE)
+POPULAR_HEADING_RE = re.compile(
+    r"most (read|viewed|popular|shared|watched)|les plus (lus|vus|populaires|partagés|consultés|vendus)|trending|tendances?\b|top stories|à la une|"
+    r"best[- ]?sellers?|meilleures ventes|top ventes|popular (now|right now|products|items|stories)|populaires|nos coups de c(œ|oe)ur",
+    re.IGNORECASE)
+PERSONAL_HEADING_RE = re.compile(
+    r"récemment (consultés|vus)|derniers? (articles )?(consultés|vus)|vus récemment|recently viewed|inspired by your|inspiré de votre|"
+    r"based on your (browsing|history|recent)|d'après votre (historique|navigation)|your browsing history",
+    re.IGNORECASE)
+CLAIMS_PERSONAL_RE = re.compile(
+    r"^\W*(rien que |juste |spécialement |sélection )?pour (vous|toi)\W*$|(recommandés?|sélectionnés?|choisis|selected|picked|recommended|chosen) (rien que )?(pour|for) (vous|toi|you)|"
+    r"^\W*(just )?for you\W*$|just for you|spécialement pour (vous|toi)", re.IGNORECASE)
+SIMILAR_HEADING_RE = re.compile(
+    r"vous aimerez (aussi|peut-être|également)|vous (pourriez|devriez) aimer|tu (aimeras|vas aimer|pourrais aimer)|ça pourrait (vous|te) plaire|"
+    r"produits? (similaires|apparentés|associés|liés|recommandés|complémentaires|alternatifs)|articles? (similaires|recommandés|liés|associés)|"
+    r"(à|a) lire (aussi|également)|lire (aussi|ensuite|également)|sur le même (thème|sujet)|dans la même (catégorie|collection|série|gamme|rubrique)|"
+    r"du même (auteur|artiste|rayon|univers|thème|créateur)|autres? (livres|produits|articles|œuvres|titres|albums|spectacles|événements|modèles) (de|du|des|classés|dans)|"
+    r"(autres|d'autres) (produits|articles|livres|spectacles|événements)|que (lire|voir|écouter) (après|ensuite)|nous vous (conseillons|recommandons)|"
+    r"nos recommandations|suggestions?( pour| de| d')|comparez|découvrez (aussi|également)|à découvrir (aussi|également)|vous avez aimé|"
+    r"you (may|might|will|could|'ll) (also )?(like|love|enjoy)|related (products|items|articles|posts|stories|books|events|content|coverage|reading)|"
+    r"similar (products|items|articles|books|events|styles)|compare (with )?similar|more (like this|to explore|on this|about this|from this|in this)|"
+    r"(read|watch|listen) next|explore more|discover more|other (products|items) (from|in|by)|recommended (products|items|reading|for you)|products related to",
+    re.IGNORECASE)
+HEADING_RE = re.compile("|".join(r.pattern for r in (BEHAVIOR_HEADING_RE, COMPLEMENT_HEADING_RE, POPULAR_HEADING_RE, PERSONAL_HEADING_RE, CLAIMS_PERSONAL_RE, SIMILAR_HEADING_RE)), re.IGNORECASE)
+# Titles that look like the above but announce tags, topics or searches, not items.
+NOISE_HEADING_RE = re.compile(r"related (topics|tags|searches|categories|links)|(on )?these topics|more on this topic\b|sujets? (associés|liés)|mots[- ]clés|tags?\b|catégories (associées|liées)|recherches (associées|liées)|more about (us|the)", re.IGNORECASE)
 
-# What a block's title says about how it is chosen.
-#   behavior: what other customers did ("ont aussi aimé", "achetés ensemble") - the second block
-#   personal: what this visitor did ("vus récemment") - adapts to each visitor by nature
-#   (a title saying "pour vous" is kept as a claim: what a block really does is checked by
-#   opening a second item page and reloading the page - see compare_blocks)
-#   similar: everything else that announces recommendations - related to the item shown
-BEHAVIOR_HEADING_RE = re.compile(r"ont (aussi|également) (aimé|acheté|lu|vu|consulté|regardé|réservé)|also (bought|liked|viewed|read)|customers who|bought together|achetés? ensemble", re.IGNORECASE)
-PERSONAL_HEADING_RE = re.compile(r"récemment (consultés|vus)|derniers? (consultés|vus)|vus récemment|recently viewed", re.IGNORECASE)
-CLAIMS_PERSONAL_RE = re.compile(r"pour (vous|toi)|for you|picked for you|choisis pour|sélectionnés? pour", re.IGNORECASE)
+
+# Lists built on a shared trait (same collection, author, section): identical on another member of
+# the group by design - not a fixed collection.
+GROUPED_LIST_RE = re.compile(r"même (collection|auteur|série|rubrique|catégorie|gamme|artiste|marque)|du même|autres? \w+ (de|du|des|classés)|more from|same (collection|author|series|brand)", re.IGNORECASE)
+
+
+def heading_kind(text: str) -> str:
+    for kind, regex in (("behavior", BEHAVIOR_HEADING_RE), ("complement", COMPLEMENT_HEADING_RE), ("personal", PERSONAL_HEADING_RE),
+                        ("popular", POPULAR_HEADING_RE)):
+        if regex.search(text):
+            return kind
+    return "similar"
+
 
 # CMS-native recommendation containers: (platform, css selector, title used when it has no heading, kind)
 # kind: "similar" (related to the item: same category, content, platform's "related"),
@@ -241,7 +273,8 @@ VENDOR_PLACEHOLDERS = ".nosto_element, [id^='nosto-'], .clerk, span.clerk, [data
 
 NON_ITEM_PATH = re.compile(
     r"(^|/)(cart|panier|checkout|commande|account|mon-compte|my-account|login|connexion|register|wishlist|compare|search|recherche|"
-    r"tag|tags|author|auteur|feed|wp-admin|wp-login|cdn-cgi)(/|$)|add-to-cart|\.(jpe?g|png|webp|gif|svg|css|js|pdf)$",
+    r"tag|tags|topics?|bestsellers|best-sellers|author|authors|auteur|auteurs|feed|wp-admin|wp-login|cdn-cgi|product-reviews|reviews|avis|help|aide|faq|contact|stores?|magasins?)(/|$)|"
+    r"add-to-cart|addtocart|\.(jpe?g|png|webp|gif|svg|css|js|pdf)$",
     re.IGNORECASE,
 )
 MORE_LINK_RE = re.compile(r"^(voir|tout voir|afficher|découvrir|see|view|show|shop)?\s*(plus|tout|tous|toutes|la suite|all|more)?\s*[›»→>]*$", re.IGNORECASE)
@@ -285,10 +318,27 @@ class Block:
         }
 
 
+# Marketplaces put an item id in the path and decorate it (slug, /ref=… tracking): the id is the item.
+ITEM_ID_PATTERNS = [
+    (re.compile(r"/(?:dp|gp/product|gp/aw/d)/([a-z0-9]{10})(?:[/?]|$)", re.IGNORECASE), "/dp/{}"),  # Amazon ASIN
+    (re.compile(r"/itm/(?:[^/]+/)?(\d{9,})"), "/itm/{}"),  # eBay
+    (re.compile(r"/listing/(\d+)"), "/listing/{}"),  # Etsy
+    (re.compile(r"/ip/(?:[^/]+/)?(\d{5,})"), "/ip/{}"),  # Walmart
+    (re.compile(r"/site/[^/]+/(\d+)\.p"), "/site/{}.p"),  # Best Buy
+    (re.compile(r"/(?:[^/]+/)?p/[^/]*?-?(\d{6,})(?:\.html?)?$"), "/p/{}"),  # many retailers: /p/slug-123456
+]
+
+
 def item_key(url: str) -> str:
-    """Two links to the same item compare equal: no scheme/host/query/fragment/trailing slash,
-    and Shopify's /collections/x/products/y is /products/y."""
-    path = urlsplit(url).path.lower().rstrip("/") or "/"
+    """Two links to the same item compare equal: no scheme/host/query/fragment/trailing slash or
+    /ref=… tracking segment; Shopify's /collections/x/products/y is /products/y; a marketplace
+    item id (Amazon, eBay, Etsy, Walmart…) stands for the whole link."""
+    path = urlsplit(url).path
+    for regex, template in ITEM_ID_PATTERNS:
+        match = regex.search(path)
+        if match:
+            return template.format(match.group(1).upper() if template.startswith("/dp/") else match.group(1))
+    path = re.sub(r"/ref=[^/]*", "", path.lower()).rstrip("/") or "/"
     shopify = re.search(r"/products/([^/]+)$", path)
     if shopify:
         return "/products/" + shopify.group(1)
@@ -329,6 +379,7 @@ def _types(node: dict[str, Any]) -> set[str]:
 GENERIC_LD_TYPES = {"WebPage", "WebSite", "Organization", "BreadcrumbList", "SearchAction", "ItemPage", "CollectionPage", "ImageObject", "ListItem", "SiteNavigationElement", "Person", "LocalBusiness", "PerformingArtsTheater", "Place", "PostalAddress", "ReadAction", "EntryPoint"}
 EVENT_TYPES = {"Event", "MusicEvent", "TheaterEvent", "SportsEvent", "ComedyEvent", "DanceEvent", "Festival", "ScreeningEvent", "ExhibitionEvent", "BusinessEvent", "EducationEvent", "SocialEvent", "LiteraryEvent", "ChildrensEvent"}
 ARTICLE_TYPES = {"Article", "NewsArticle", "BlogPosting", "Report", "ScholarlyArticle", "TechArticle", "AnalysisNewsArticle", "OpinionNewsArticle", "ReviewNewsArticle"}
+ADD_TO_CART_RE = re.compile(r"id=[\"']add-?to-?cart|name=[\"']add-to-cart|data-action=[\"']add-to-cart|>\s*(ajouter au panier|add to (cart|basket|bag)|acheter maintenant|buy now)\s*<", re.IGNORECASE)
 TICKETING_RE = re.compile(r"billetterie|représentations?|réserv(?:er|ez) (?:vos|des) places|acheter (?:vos|des) billets|tickets?\b|spectacle", re.IGNORECASE)
 PAGE_TYPE_LABELS = {"product": "Fiche produit", "book": "Fiche livre", "event": "Événement / billetterie", "article": "Article", "home": "Page d'accueil", "category": "Page catégorie", "other": "Autre page"}
 
@@ -345,6 +396,8 @@ class PageFacts:
     blocks: list[Block]
     shopify_product_id: Optional[str] = None
     lang: str = ""
+    js_reco_signals: bool = False  # the page's scripts talk about recommendations it renders itself
+    text_chars: int = 0
 
 
 def detect_cms(html: str, soup: BeautifulSoup) -> str:
@@ -438,6 +491,8 @@ def detect_page_type(soup: BeautifulSoup, html: str, url: str, nodes: list[dict[
             page_type = "home"
         elif "archive" in body_class or "catalog-category-view" in body_class or body_id == "category" or "/collections/" in url:
             page_type = "category"
+        elif ADD_TO_CART_RE.search(html) or soup.find("meta", attrs={"property": "product:price:amount"}):
+            page_type = "product"  # an add-to-cart button or a product price: a product page whose markup doesn't say so
         elif len(TICKETING_RE.findall(low)) >= 5:
             page_type = "event"  # a show or event page whose markup doesn't say so (ticketing words all over it)
         else:
@@ -482,16 +537,31 @@ def _item_link(anchor: Tag, base_url: str, host: str) -> Optional[tuple[str, str
 
 def _card_of(anchor: Tag, node: Tag, base_url: str, host: str, key: str) -> Tag:
     """The item's card: the largest element under `node` whose item links all point to this item
-    (the image link and the title link of one card share it; two cards for the same item don't)."""
+    (the image link and the title link of one card share it; two cards for the same item don't).
+    Climbs at most 8 levels, and remembers each element's item links (pages of 2 MB have
+    thousands of anchors)."""
     card: Tag = anchor
-    for parent in anchor.parents:
-        if parent is node or not isinstance(parent, Tag):
+    for depth, parent in enumerate(anchor.parents):
+        if parent is node or not isinstance(parent, Tag) or depth >= 8:
             break
-        keys = {link[0] for a in parent.find_all("a", href=True) if (link := _item_link(a, base_url, host))}
+        keys = _link_keys_cached(parent, base_url, host)
         if keys - {key}:
             break
         card = parent
     return card
+
+
+_KEYS_CACHE: dict[int, tuple[Tag, set[str]]] = {}
+
+
+def _link_keys_cached(element: Tag, base_url: str, host: str) -> set[str]:
+    """Item links under `element`, computed once per element (cleared for each page analyzed)."""
+    hit = _KEYS_CACHE.get(id(element))
+    if hit is not None and hit[0] is element:
+        return hit[1]
+    keys = {link[0] for a in element.find_all("a", href=True) if (link := _item_link(a, base_url, host))}
+    _KEYS_CACHE[id(element)] = (element, keys)
+    return keys
 
 
 TITLE_CLASS_RE = re.compile(r"(^|[-_ ])(title|name|heading)($|[-_ ])|__title|__name|card__heading", re.IGNORECASE)
@@ -512,6 +582,11 @@ def _card_name(card: Tag, anchor: Tag) -> str:
     return max(texts, key=len)[:160] if texts else ""
 
 
+def _is_list_card(element: Any) -> bool:
+    """A list item or an article is a card of its own: two of them are two cards."""
+    return isinstance(element, Tag) and element.name in ("li", "article")
+
+
 def _items_in(node: Tag, base_url: str) -> list[Item]:
     """Links to items of the same site inside `node`, one per card: the image and the title of a
     card usually both link to the item, and count once; two cards for the same item count twice
@@ -530,6 +605,8 @@ def _items_in(node: Tag, base_url: str) -> list[Item]:
         card_classes = " ".join(card.get("class", [])) if isinstance(card, Tag) else ""
         unavailable = "outofstock" in card_classes or "out-of-stock" in card_classes or bool(OUT_OF_STOCK_RE.search(card_text))
         same_card = next((i for i, (it, c) in enumerate(zip(items, cards)) if it.key == key and c is card), None)
+        if same_card is None and items and items[-1].key == key and not (cards[-1] is not card and _is_list_card(cards[-1]) and _is_list_card(card)):
+            same_card = len(items) - 1  # the next link of the same card (image, then title), however deep the markup
         if same_card is not None:
             existing = items[same_card]
             existing.name = existing.name or name
@@ -547,7 +624,8 @@ def _nearest_heading_text(node: Tag) -> str:
 
 def _clean_title(text: str) -> str:
     """Drop slider button labels a heading carries ("Précédent POUR TOI: Suivant")."""
-    cleaned = re.sub(r"^(précédent|previous)\s+|\s+(suivant|next)$", "", text, flags=re.IGNORECASE).strip(" :")
+    # only when the title sits between a slider's two buttons
+    cleaned = re.sub(r"^(précédent|previous)\s+(.*?)\s+(suivant|next)$", r"\2", text, flags=re.IGNORECASE).strip(" :")
     return cleaned or text
 
 
@@ -580,12 +658,17 @@ def find_blocks(soup: BeautifulSoup, base_url: str, cms: str, vendors: list[dict
     # 3. Headings that announce recommendations: climb to the smallest container holding item links.
     page_title = soup.find("h1")
     candidates: list[Block] = []
+    js_titled: list[Block] = []
     for heading in soup.find_all(["h2", "h3", "h4", "h5", "p", "span", "div"]):
         if heading.find(["h2", "h3", "h4", "div", "ul", "section"]) or heading.find_parent("a") is not None or len(heading.find_all("a")) > 1:
             continue  # a wrapper, a link, or a menu line - not a block title
         text = _text(heading)
-        if not (3 <= len(text) <= 90) or not HEADING_RE.search(text):
+        if not (3 <= len(text) <= 120) or not HEADING_RE.search(text) or NOISE_HEADING_RE.search(text):
             continue
+        if _in_breadcrumb(heading) or _in_reviews(heading):
+            continue
+        if heading_kind(text) == "popular" and not _looks_like_title(heading) and len(text.split()) <= 2:
+            continue  # "Best seller" on a product card is a badge, not the title of a block
         chrome = heading.find_parent(["nav", "footer", "header", "form"])
         if chrome is not None and (page_title is None or chrome not in page_title.parents):
             continue  # site navigation - unless broken markup wrapped the whole page in it
@@ -598,10 +681,23 @@ def find_blocks(soup: BeautifulSoup, base_url: str, cms: str, vendors: list[dict
             items = _items_in(container, base_url)
             if len({i.key for i in items}) >= 2:
                 break
+        if len({i.key for i in items}) > MAX_BLOCK_ITEMS:
+            # climbed into a whole listing: the block is there, its own items aren't readable
+            js_titled.append(Block(title=_clean_title(text), source="js", kind=heading_kind(text), js_only=True,
+                                   claims_personal=bool(CLAIMS_PERSONAL_RE.search(text)), element=heading.parent or heading))
+            continue
         if container is None or container.name in ("body", "html", "main") or len({i.key for i in items}) < 2:
+            # A real title (h2-h4 or a "title" element) whose own box holds no link at all: the
+            # block is there, filled in by the browser. Its title still says what kind it is.
+            box = heading.find_parent(["section", "aside", "div", "li"]) if _looks_like_title(heading) else None
+            if box is not None and box.name != "body" and not box.find("a", href=True) and len(_text(box)) < 200 and not _in_breadcrumb(box):
+                js_titled.append(Block(title=_clean_title(text), source="js", kind=heading_kind(text), js_only=True,
+                                       claims_personal=bool(CLAIMS_PERSONAL_RE.search(text)), element=box))
+            continue
+        if _in_breadcrumb(container):
             continue
         claims = bool(CLAIMS_PERSONAL_RE.search(text))
-        kind = "behavior" if BEHAVIOR_HEADING_RE.search(text) else "personal" if PERSONAL_HEADING_RE.search(text) else "similar"
+        kind = heading_kind(text)
         candidates.append(Block(title=_clean_title(text), source="heading", kind=kind, items=items, claims_personal=claims, element=container))
 
     # A section title ("Que lire après ?") and its sub-blocks ("Ceux qui ont aimé…", "Du même
@@ -609,10 +705,68 @@ def find_blocks(soup: BeautifulSoup, base_url: str, cms: str, vendors: list[dict
     innermost = [b for b in candidates if not any(o is not b and o.element is not b.element and b.element in o.element.parents for o in candidates)]
     for block in innermost:
         add(block)
+    for block in js_titled[:4]:
+        add(block)
+
+    # 4. Empty containers named after recommendations, filled in by the site's own JavaScript.
+    for element in _js_reco_containers(soup)[:40]:
+        if element.name not in ("div", "section", "aside", "ul") or _in_breadcrumb(element) or len(_text(element)) > 60:
+            continue
+        if _items_in(element, base_url):
+            continue
+        add(Block(title=_nearest_heading_text(element) or "Bloc chargé en JavaScript", source="js", kind="unknown", js_only=True, element=element))
+        if sum(1 for b in blocks if b.source == "js") >= 3:
+            break
     return blocks
 
 
+JS_RECO_ATTR_RE = re.compile(
+    r"recommend|related-?products?|similar-?products?|also-(bought|viewed)|you-?may-?also|\bymal\b|cross-?sell|upsell|p13n|frequently-bought", re.IGNORECASE)
+
+
+def _js_reco_containers(soup: BeautifulSoup) -> list[Tag]:
+    """Elements whose id, class or data-testid/component/module names recommendations - one pass
+    over the page (a CSS selector with these 75 variants took seconds on a 1 MB page)."""
+    found = []
+    for element in soup.find_all(["div", "section", "aside", "ul"]):
+        attrs = element.attrs
+        names = " ".join(str(v) if not isinstance(v, list) else " ".join(v) for k, v in attrs.items()
+                         if k in ("id", "class", "data-testid", "data-component", "data-module"))
+        if names and JS_RECO_ATTR_RE.search(names):
+            found.append(element)
+    return found
+
+
+MAX_BLOCK_ITEMS = 40  # a recommendation block shows a handful to a few dozen items, not a whole listing
+
+
+def _in_reviews(node: Tag) -> bool:
+    """Customer reviews and comments: their titles are sentences, not block titles."""
+    for depth, element in enumerate([node, *node.parents]):
+        if not isinstance(element, Tag) or depth > 12:
+            break
+        attrs = f"{element.get('id', '')} {' '.join(element.get('class', []))} {element.get('data-hook', '')}".lower()
+        if re.search(r"review|avis-client|customer-?reviews|comments?\b|commentaires|rating-list|testimonial", attrs):
+            return True
+    return False
+
+
+def _looks_like_title(node: Tag) -> bool:
+    return node.name in ("h2", "h3", "h4") or bool(re.search(r"title|heading|headline", " ".join(node.get("class", [])), re.IGNORECASE))
+
+
+def _in_breadcrumb(node: Tag) -> bool:
+    for element in [node, *node.parents]:
+        if not isinstance(element, Tag):
+            continue
+        attrs = f"{element.get('id', '')} {' '.join(element.get('class', []))} {element.get('aria-label', '')}".lower()
+        if "breadcrumb" in attrs or "ariane" in attrs or element.get("itemtype", "").endswith("BreadcrumbList"):
+            return True
+    return False
+
+
 def analyze_page(page: Page, soup: Optional[BeautifulSoup] = None) -> PageFacts:
+    _KEYS_CACHE.clear()
     soup = soup or BeautifulSoup(page.text, "lxml")
     html = page.text
     cms = detect_cms(html, soup)
@@ -626,11 +780,19 @@ def analyze_page(page: Page, soup: Optional[BeautifulSoup] = None) -> PageFacts:
         match = re.search(r'"product"\s*:\s*\{\s*"id"\s*:\s*(\d+)', html) or re.search(r"product_id=(\d+)", html) or re.search(r'"productId"\s*:\s*"?(\d+)', html)
         shopify_id = match.group(1) if match else None
     html_tag = soup.find("html")
+    scripts = " ".join(script.get_text() for script in soup.find_all("script"))
     return PageFacts(
         url=page.url, canonical_key=canonical_key, page_type=page_type, item_name=name, structured=structured,
         cms=cms, vendors=vendors, blocks=blocks, shopify_product_id=shopify_id,
         lang=(html_tag.get("lang", "") if html_tag else "")[:10],
+        js_reco_signals=bool(SCRIPT_RECO_RE.search(scripts)),
+        text_chars=len(soup.get_text(" ", strip=True)),
     )
+
+
+SCRIPT_RECO_RE = re.compile(r"you (may|might) also like|customers (also|who)|also (bought|viewed|enjoyed)|frequently bought|similar (products|items)|"
+                            r"vous aimerez aussi|recommendations?\W{1,3}(widget|carousel|placement|slot)|ont aussi (aimé|acheté)|readers also|more like this|"
+                            r"(à |a )?lire aussi|related (articles|stories|content)|\brecommendations\b|\brecommandations\b|read next|most (read|viewed)", re.IGNORECASE)
 
 
 def shopify_section_items(fetch: Fetch, page_url: str, data_url: str) -> Optional[list[Item]]:
@@ -700,23 +862,28 @@ def compare_blocks(facts: PageFacts, reload: Optional[PageFacts], other: Optiona
         sig = _signature(block.title)
         twin = reloaded.get(sig)
         if twin is not None and _keys(twin) != _keys(block):
-            block.verified, block.kind = "random", "random"
-            block.evidence = "Rechargée, la page affiche d'autres éléments dans ce bloc : il est tiré au hasard à chaque affichage."
-            continue
+            if block.kind == "similar":
+                block.verified, block.kind = "random", "random"
+                block.evidence = "Rechargée, la page affiche d'autres éléments dans ce bloc : il est tiré au hasard à chaque affichage."
+                continue
+            # a block learned from customers that rotates is still that block: say so, judge it as titled
+            block.evidence = "Rechargée, la page affiche d'autres éléments dans ce bloc : sa sélection tourne d'un affichage à l'autre. "
         if other is None:
-            block.evidence = "Pas comparé à une autre fiche : elle n'a pas pu être ouverte."
+            block.evidence += "Pas comparé à une autre fiche : elle n'a pas pu être ouverte."
             continue
         peer = elsewhere.get(sig)
         if peer is None:
-            block.evidence = f"Pas comparé : le bloc n'apparaît pas sur la fiche {other_label}."
+            block.evidence += f"Pas comparé : le bloc n'apparaît pas sur la fiche {other_label}."
             continue
         mine, theirs = _keys(block, facts.canonical_key, other.canonical_key), _keys(peer, facts.canonical_key, other.canonical_key)
-        if mine and mine == theirs:
-            block.verified, block.kind = "fixed", "fixed"
-            block.evidence = f"Sur la fiche {other_label}, ce bloc affiche exactement les mêmes éléments : il ne dépend pas de la fiche affichée."
+        if len(mine) >= 3 and mine == theirs and not GROUPED_LIST_RE.search(block.title):
+            block.verified = "fixed"
+            if block.kind in ("similar", "behavior", "complement"):
+                block.kind = "fixed"
+            block.evidence += f"Sur la fiche {other_label}, ce bloc affiche exactement les mêmes éléments : il ne dépend pas de la fiche affichée."
         else:
             block.verified = "varies"
-            block.evidence = f"Sur la fiche {other_label}, ce bloc affiche d'autres éléments : il dépend bien de la fiche affichée."
+            block.evidence += f"Sur la fiche {other_label}, ce bloc affiche d'autres éléments : il dépend bien de la fiche affichée."
 
 
 def _comparison_target(facts: PageFacts) -> Optional[Item]:
@@ -804,14 +971,23 @@ def build_kpis(page: PageFacts, ucp: Optional[bool], stock_checked: bool = False
     personal_vendor = next((v for v in page.vendors if v["personalized"]), None)
     readable = [b for b in page.blocks if b.items]
     js_only = [b for b in page.blocks if b.js_only]
+    # Recommendations the page renders in the browser: an empty block in the HTML - or, when no block
+    # can be read at all, the page's scripts talking about recommendations.
+    # (best-of lists don't count: they're site chrome, not the item's own recommendations)
+    in_javascript = bool(js_only) or (page.js_reco_signals and not [b for b in readable if b.kind != "popular"])
+    js_summary = "Non lisible sans navigateur : les recommandations de la page se chargent en JavaScript"
+    js_detail = ("La page remplit ses blocs de recommandations dans le navigateur : on ne peut pas les lire ici, donc on ne note pas ce contrôle. "
+                 "Les moteurs de recherche et les assistants IA ne les voient pas non plus.")
     by_kind = lambda *kinds: [b for b in page.blocks if b.kind in kinds]  # noqa: E731
     kpis: list[Kpi] = []
 
     # 1. The item recommended on its own page - the first thing to get right.
-    if page.page_type not in ("home", "category") and readable:
-        same = [b for b in readable if any(i.key == page.canonical_key for i in b.items)]
+    # Best-of lists ("les plus lus") and comparison tables include the item shown by nature.
+    checked = [b for b in readable if b.kind != "popular" and not re.search(r"compar", b.title, re.IGNORECASE)]
+    if page.page_type not in ("home", "category") and checked:
+        same = [b for b in checked if any(i.key == page.canonical_key for i in b.items)]
         name = page.item_name.strip().lower()
-        twins = [b for b in readable if name and any(i.key != page.canonical_key and i.name.strip().lower() == name for i in b.items)]
+        twins = [b for b in checked if name and any(i.key != page.canonical_key and i.name.strip().lower() == name for i in b.items)]
         if same:
             kpis.append(Kpi("self_reco", "Auto-recommandation", 25, FAIL,
                             f"{The} affiché est recommandé sur sa propre page, dans {_quote(same)}",
@@ -836,6 +1012,7 @@ def build_kpis(page: PageFacts, ucp: Optional[bool], stock_checked: bool = False
     # seen: on another item page, on a second load - never on the CMS or the theme's names.
     similar = [b for b in by_kind("similar") if b.items]
     proven = [b for b in similar if b.verified == "varies"]
+    similar_js = [b for b in by_kind("similar") if b.js_only and b.source == "js" and b.title != "Bloc chargé en JavaScript"]
     manual = [b for b in by_kind("manual") if b.items]
     random_blocks, fixed = by_kind("random"), by_kind("fixed")
     label = "Recommandations similaires"
@@ -858,27 +1035,38 @@ def build_kpis(page: PageFacts, ucp: Optional[bool], stock_checked: bool = False
         kpis.append(Kpi("similar_block", label, 20, FAIL, f"Absent : {_quote(fixed)} affiche les mêmes {many} sur une autre fiche (constaté)",
                         f"{fixed[0].evidence} C'est une collection fixe, sans rapport avec {the} que le visiteur regarde.",
                         f"Remplacez-la par des {many} proches de celui affiché : même usage, même style, même gamme de prix."))
-    elif js_only:
-        kpis.append(Kpi("similar_block", label, 20, WARN,
-                        f"{_plural(len(js_only), 'bloc chargé', 'blocs chargés')} en JavaScript : contenu illisible pour les robots",
-                        "Un emplacement existe, mais il ne se remplit qu'une fois la page affichée dans un navigateur : son contenu ne peut pas être contrôlé ici, "
-                        "et les moteurs de recherche comme les agents IA n'y voient rien.",
-                        "Rendez au moins ce bloc côté serveur."))
+    elif similar_js:
+        kpis.append(Kpi("similar_block", label, 20, WARN, f"Présent : {_quote(similar_js)}, chargé en JavaScript (contenu non lisible)",
+                        "Le bloc existe sur la page, mais il se remplit dans le navigateur : on ne peut pas vérifier ce qu'il montre, "
+                        "et les moteurs de recherche comme les assistants IA ne le voient pas.",
+                        "Rendez ce bloc côté serveur pour qu'il soit lisible par tous."))
+    elif in_javascript:
+        kpis.append(Kpi("similar_block", label, 20, UNKNOWN, js_summary, js_detail, "Rendez au moins ce bloc côté serveur."))
     else:
         kpis.append(Kpi("similar_block", label, 20, FAIL, "Absent",
                         f"Le visiteur qui hésite sur {the} n'a aucune alternative proche sous les yeux : s'il ne trouve pas son bonheur, il repart.",
                         f"Ajoutez sous {the} un bloc de 4 à 8 {many} proches (contenu, catégorie, attributs)."))
 
-    # 3. Block 2: learned from what other customers did.
+    # 3. Block 2: learned from what other customers did (or a cross-sell of what goes with the item).
     behavior = by_kind("behavior")
+    complement = by_kind("complement")
+    popular = by_kind("popular")
     if behavior:
+        unreadable = all(b.js_only for b in behavior)
         kpis.append(Kpi("behavior_block", behavior_label, 20, PASS,
-                        f"Présent : {_quote(behavior)}",
-                        "Un bloc appris de ce que font les autres clients : il révèle des associations que la fiche seule ne dit pas."))
-    elif js_only:
+                        f"Présent : {_quote(behavior)}" + (", chargé en JavaScript" if unreadable else ""),
+                        "Un bloc appris de ce que font les autres clients : il révèle des associations que la fiche seule ne dit pas. " + behavior[0].evidence))
+    elif complement:
+        kpis.append(Kpi("behavior_block", behavior_label, 20, PASS,
+                        f"Présent, en ventes croisées : {_quote(complement)}",
+                        f"Un bloc propose ce qui va avec {the} (accessoires, compléments) : c'est le rôle du second bloc, qui augmente le panier. " + complement[0].evidence))
+    elif popular:
         kpis.append(Kpi("behavior_block", behavior_label, 20, WARN,
-                        f"Non lisible : {_plural(len(js_only), 'bloc chargé', 'blocs chargés')} en JavaScript",
-                        "Un bloc se remplit dans le navigateur : on ne peut pas dire ici s'il montre ce que les autres clients ont aimé ou acheté.",
+                        f"Seulement la popularité : {_quote(popular)}",
+                        f"Ce bloc montre ce que tout le monde regarde, pas ce que les clients intéressés par {the} ont choisi ensuite : il est le même partout.",
+                        f"Ajoutez un bloc {behavior_title}, propre à chaque fiche."))
+    elif in_javascript:
+        kpis.append(Kpi("behavior_block", behavior_label, 20, UNKNOWN, js_summary, js_detail,
                         f"Vérifiez qu'un des blocs est bien {behavior_title}, appris des visites, paniers et commandes."))
     else:
         kpis.append(Kpi("behavior_block", behavior_label, 20, FAIL,
@@ -900,6 +1088,14 @@ def build_kpis(page: PageFacts, ucp: Optional[bool], stock_checked: bool = False
                         f"Seulement l'historique du visiteur : {_quote(personal)}",
                         "Montrer ce que le visiteur a déjà vu l'aide à revenir en arrière, mais ne lui fait rien découvrir.",
                         "Ajoutez des suggestions qui partent de son historique pour proposer d'autres éléments."))
+    elif behavior or in_javascript:
+        # The site computes its recommendations itself (from purchases, or in its own scripts): whether
+        # they adapt to each visitor can't be seen by a robot without history. Not scored.
+        kpis.append(Kpi("personalization", "Personnalisation", 20, UNKNOWN,
+                        "Non mesurable de l'extérieur : le site calcule ses recommandations lui-même",
+                        "Aucun outil de personnalisation connu n'est chargé, mais le site produit ses propres recommandations "
+                        + ("à partir des achats de ses clients" if behavior else "dans ses scripts")
+                        + ". Si elles s'adaptent à chaque visiteur, cela ne se voit pas depuis une visite sans historique : ce contrôle n'est pas noté."))
     else:
         proven_fixed = [b for b in claims if b.verified == "fixed"]
         why = (f"Le bloc {_quote(proven_fixed)} s'intitule « pour vous », mais affiche les mêmes produits sur une autre fiche : ce n'est pas une sélection pour le visiteur. "
@@ -955,7 +1151,8 @@ def build_kpis(page: PageFacts, ucp: Optional[bool], stock_checked: bool = False
     if readable:
         counts = [len({i.key for i in b.items}) for b in readable]
         span = f"{min(counts)} {many}" if min(counts) == max(counts) else f"entre {min(counts)} et {max(counts)} {many}"
-        if min(counts) < 4:
+        # a "bought together" bundle of 2 or 3 is fine: judged on the largest block
+        if max(counts) < 4:
             kpis.append(Kpi("block_size", "Nombre de recommandations par bloc", 3, WARN, f"{span.capitalize()} recommandés par bloc : pas assez",
                             "Avec moins de 4 suggestions, un bloc laisse peu de chances de trouver quelque chose.", f"Visez 4 à 8 {many} par bloc."))
         elif max(counts) > 16:
@@ -1024,17 +1221,38 @@ def build_kpis(page: PageFacts, ucp: Optional[bool], stock_checked: bool = False
     return kpis
 
 
-def score(kpis: Iterable[Kpi]) -> int:
+MIN_MEASURED_WEIGHT = 50  # below half of the points measured, a score would mean nothing
+
+
+def measured_weight(kpis: Iterable[Kpi]) -> int:
+    return sum(k.weight for k in kpis if k.status in STATUS_VALUE and k.weight)
+
+
+# The checks that make the audit: when one can't be measured (blocks drawn by the browser, a site's
+# own engine), it counts as half - neither a win nor a loss. Excluding it would reward the sites
+# that can't be read.
+NEUTRAL_WHEN_UNKNOWN = {"similar_block", "behavior_block", "personalization"}
+
+
+def score(kpis: Iterable[Kpi]) -> Optional[int]:
     kpis = list(kpis)
+    by_id = {k.id: k for k in kpis}
+    if all(by_id.get(i) is None or by_id[i].status == UNKNOWN for i in ("self_reco", "similar_block", "behavior_block")):
+        return None  # nothing about the recommendations themselves could be read
     weighted = [(k.weight, STATUS_VALUE[k.status]) for k in kpis if k.status in STATUS_VALUE and k.weight]
+    weighted += [(k.weight, 0.5) for k in kpis if k.status == UNKNOWN and k.id in NEUTRAL_WHEN_UNKNOWN]
     total = sum(w for w, _ in weighted)
+    if total < MIN_MEASURED_WEIGHT:
+        return None
     value = round(100 * sum(w * v for w, v in weighted) / total) if total else 0
     if any(k.id == "self_reco" and k.status == FAIL for k in kpis):
         value = min(value, SELF_RECO_SCORE_CAP)
     return value
 
 
-def grade(value: int) -> str:
+def grade(value: Optional[int]) -> Optional[str]:
+    if value is None:
+        return None
     return "A" if value >= 85 else "B" if value >= 70 else "C" if value >= 55 else "D" if value >= 40 else "E"
 
 
@@ -1058,6 +1276,8 @@ def run_audit(raw_url: str, fetch: Fetch, allow_private: bool = False) -> dict[s
     if "html" not in (page.content_type or "text/html").lower():
         raise AuditError("Cette adresse ne mène pas à une page web.")
     facts = analyze_page(page)
+    if facts.text_chars < 600 and not facts.blocks:
+        raise AuditError("Cette page est construite entièrement en JavaScript : son contenu n'est pas lisible sans navigateur, l'audit ne peut pas l'analyser.")
     notes: list[str] = []
     stock_checked = False
 
@@ -1096,15 +1316,13 @@ def run_audit(raw_url: str, fetch: Fetch, allow_private: bool = False) -> dict[s
         notes.append(f"{_plural(len(js_blocks), 'bloc se remplit', 'blocs se remplissent')} en JavaScript : leur contenu n'a pas pu être lu sans navigateur.")
 
     origin = f"{urlsplit(page.url).scheme}://{urlsplit(page.url).netloc}/"
-    # A yes or a no: published (200 with a JSON profile) or not - one retry on a network error.
+    # A yes or a no: published (200 with a JSON profile) or not - a file that doesn't answer isn't published.
     ucp = False
-    for _ in range(2):
-        try:
-            well_known = fetch(origin + ".well-known/ucp")
-        except AuditError:
-            continue
+    try:
+        well_known = fetch(origin + ".well-known/ucp")
         ucp = well_known.status == 200 and well_known.text.lstrip().startswith("{")
-        break
+    except AuditError:
+        ucp = False
 
     kpis = build_kpis(facts, ucp, stock_checked)
     total = score(kpis)
@@ -1118,6 +1336,7 @@ def run_audit(raw_url: str, fetch: Fetch, allow_private: bool = False) -> dict[s
         "vendors": facts.vendors,
         "score": total,
         "grade": grade(total),
+        "partial": total is None,
         "kpis": [k.public(full=True) for k in kpis],
         "blocks": [b.public() for b in facts.blocks],
         "notes": notes,
@@ -1129,7 +1348,7 @@ def run_audit(raw_url: str, fetch: Fetch, allow_private: bool = False) -> dict[s
 def teaser(result: dict[str, Any]) -> dict[str, Any]:
     """What the page shows before the email: the verdicts, not the explanations or the evidence."""
     return {
-        **{k: result[k] for k in ("url", "final_url", "host", "cms", "page_type", "item_name", "vendors", "score", "grade")},
+        **{k: result.get(k) for k in ("url", "final_url", "host", "cms", "page_type", "item_name", "vendors", "score", "grade", "partial")},
         "kpis": [{k: v for k, v in kpi.items() if k in ("id", "label", "about", "status", "summary", "weight", "method")} for kpi in result["kpis"]],
         "block_count": len(result["blocks"]),
     }

@@ -83,7 +83,7 @@ def test_woocommerce_product_page_errors_are_found():
 SHOPIFY_PRODUCT = """<html><head><script src="https://cdn.shopify.com/s/files/theme.js"></script>
 <script>var meta = {"product":{"id":4242,"vendor":"X"}};</script>
 <meta property="og:type" content="product"><meta property="og:title" content="Bonnet"></head>
-<body><h1>Bonnet</h1><product-recommendations class="product-recommendations" data-url="/recommendations/products?product_id=4242&section_id=x&limit=4"></product-recommendations></body></html>"""
+<body><h1>Bonnet</h1><p>Un bonnet en laine mérinos, tricoté en France, doux et chaud. Un bonnet en laine mérinos, tricoté en France, doux et chaud. Un bonnet en laine mérinos, tricoté en France, doux et chaud. Un bonnet en laine mérinos, tricoté en France, doux et chaud. Un bonnet en laine mérinos, tricoté en France, doux et chaud. Un bonnet en laine mérinos, tricoté en France, doux et chaud. Un bonnet en laine mérinos, tricoté en France, doux et chaud. Un bonnet en laine mérinos, tricoté en France, doux et chaud. Un bonnet en laine mérinos, tricoté en France, doux et chaud. Un bonnet en laine mérinos, tricoté en France, doux et chaud. Un bonnet en laine mérinos, tricoté en France, doux et chaud. Un bonnet en laine mérinos, tricoté en France, doux et chaud. Un bonnet en laine mérinos, tricoté en France, doux et chaud. Un bonnet en laine mérinos, tricoté en France, doux et chaud. </p><product-recommendations class="product-recommendations" data-url="/recommendations/products?product_id=4242&section_id=x&limit=4"></product-recommendations></body></html>"""
 
 # What the theme's section shows (4 cards), not what the JSON endpoint could list.
 SHOPIFY_SECTION = """<div><h2>Vous aimerez aussi</h2><ul>""" + "".join(
@@ -140,7 +140,8 @@ FIXED_SECTION_PAGE = """<html><head><script src="https://cdn.shopify.com/x.js"><
  <div class="grid">""" + "".join(
     f'<product-block><a class="product-link" href="/fr/products/{h}"><img alt=""></a><a class="btn quickbuy-toggle" href="/fr/products/{h}">Coup d\'oeil</a>'
     f'<a class="product-link" href="/fr/products/{h}"><div class="product-block__title">{t}</div></a></product-block>'
-    for h, t in [("castellana-burgundy", "CASTELLANA"), ("filles-du-calvaire-dore", "FILLES DU CALVAIRE"), ("ranelagh-rose", "RANELAGH"), ("filles-du-calvaire-noir", "FILLES DU CALVAIRE")]
+    for h, t in [("castellana-burgundy", "CASTELLANA"), ("filles-du-calvaire-dore", "FILLES DU CALVAIRE"), ("ranelagh-rose", "RANELAGH"), ("filles-du-calvaire-noir", "FILLES DU CALVAIRE"),
+                 ("goya-chocolate", "GOYA"), ("chamberi-noir", "CHAMBERI")]
 ) + """</div></carousel-slider></div></body></html>"""
 
 
@@ -193,8 +194,9 @@ def test_third_party_tool_filled_by_javascript():
 
     assert [v["id"] for v in result["vendors"]] == ["nosto"]
     assert result["blocks"][0]["js_only"] is True
-    assert kpi(result, "similar_block")["status"] == "warn"
-    assert kpi(result, "behavior_block")["status"] == "warn"  # unreadable, not absent
+    # drawn by the browser: not readable, so not judged (not "absent")
+    assert kpi(result, "similar_block")["status"] == "unknown"
+    assert kpi(result, "behavior_block")["status"] == "unknown"
     assert kpi(result, "personalization")["status"] == "pass"
     assert kpi(result, "self_reco")["status"] == "unknown"
     assert kpi(result, "structured_data")["status"] == "warn"
@@ -202,7 +204,7 @@ def test_third_party_tool_filled_by_javascript():
 
 
 def test_no_recommendations_at_all():
-    page = """<html><body><h1>Concert</h1><script type="application/ld+json">{"@type":"MusicEvent","name":"Concert",
+    page = """<html><body><h1>Concert</h1><p>Un concert exceptionnel, une soirée inoubliable avec un orchestre réputé. Un concert exceptionnel, une soirée inoubliable avec un orchestre réputé. Un concert exceptionnel, une soirée inoubliable avec un orchestre réputé. Un concert exceptionnel, une soirée inoubliable avec un orchestre réputé. Un concert exceptionnel, une soirée inoubliable avec un orchestre réputé. Un concert exceptionnel, une soirée inoubliable avec un orchestre réputé. Un concert exceptionnel, une soirée inoubliable avec un orchestre réputé. Un concert exceptionnel, une soirée inoubliable avec un orchestre réputé. Un concert exceptionnel, une soirée inoubliable avec un orchestre réputé. Un concert exceptionnel, une soirée inoubliable avec un orchestre réputé. </p><script type="application/ld+json">{"@type":"MusicEvent","name":"Concert",
     "startDate":"2026-12-01","image":"c.jpg","offers":{"price":"30","availability":"InStock"}}</script></body></html>"""
     result = run_audit("https://billets.example/concert", fake_fetch({"https://billets.example/concert": (200, page)}))
     assert result["page_type"]["id"] == "event"
@@ -423,7 +425,8 @@ def test_book_page_sub_blocks_cards_and_broken_markup():
     # image + title of one card = one item; author links and "Voir plus" are not items
     assert kpi(result, "duplicates")["status"] == "pass"
     assert kpi(result, "similar_block")["status"] == "warn" and kpi(result, "behavior_block")["status"] == "pass"
-    assert kpi(result, "personalization")["status"] == "fail"
+    # the site computes "readers also liked" itself: whether it adapts to the visitor can't be seen
+    assert kpi(result, "personalization")["status"] == "unknown"
     assert kpi(result, "structured_data")["status"] == "pass"  # a book page that sells nothing needs no offer
 
 
@@ -536,3 +539,57 @@ def test_a_page_with_no_structured_data_at_all_fails_that_check():
     url = "https://opera.example/saison/opera/turandot"
     result = run_audit(url, fake_fetch({url: (200, page)}))
     assert kpi(result, "structured_data")["status"] == "fail" and kpi(result, "structured_data")["summary"] == "Aucune donnée structurée schema.org"
+
+
+# Calibration (Amazon, BBC, The Independent…): what a marketplace page and a news page look like.
+MARKET_PAGE = """<html><head><title>Manette</title></head><body>
+<div id="wayfinding-breadcrumbs_feature_div"><ul><li><a href="/jeux-video/b/1">Jeux vidéo</a></li><li><a href="/pc/b/2">PC</a></li>
+<li><h3>Accessoires</h3><a href="/accessoires/b/3">Accessoires</a></li><li><a href="/manettes/b/4">Contrôleurs</a></li></ul></div>
+<h1>Manette Pro 2</h1><span id="add-to-cart-button">Ajouter au panier</span>
+<p>""" + "Une manette sans fil précise, avec joysticks à effet Hall et une autonomie de vingt heures. " * 8 + """</p>
+<div class="p13n-sc-carousel"><h2>Quels sont les autres articles que les clients achètent après avoir consulté cet article ?</h2><ol>""" + "".join(
+    f'<li><div class="p13n-card"><div><div><div><a href="/Manette-{n}/dp/B0000000{n}{n}/ref=pd_vtp_{n}"><img alt="Manette {n}"></a></div></div></div>'
+    f'<div><div><div><a href="/Manette-{n}/dp/B0000000{n}{n}/ref=pd_vtp_t{n}"><span>Manette {n}</span></a></div></div></div>'
+    f'<a href="/product-reviews/B0000000{n}{n}">4,5 étoiles</a></div></li>' for n in range(1, 6)
+) + """</ol></div></body></html>"""
+
+
+def test_a_marketplace_page_is_read_like_a_marketplace():
+    url = "https://shop.example/Manette-Pro/dp/B0CSPGMGBT?th=1"
+    result = run_audit(url, fake_fetch({url: (200, MARKET_PAGE)}))
+    assert result["page_type"]["id"] == "product"  # no schema.org, but an add-to-cart button
+    titles = [b["title"] for b in result["blocks"]]
+    assert "Accessoires" not in titles  # the breadcrumb is not a block
+    block = next(b for b in result["blocks"] if b["title"].startswith("Quels sont"))
+    assert block["kind"] == "behavior" and block["item_count"] == 5  # image + title + reviews link = one product
+    assert kpi(result, "behavior_block")["status"] == "pass"
+    assert kpi(result, "duplicates")["status"] == "pass"
+    assert kpi(result, "personalization")["status"] == "pass"  # the site's own "p13n" engine
+    assert site_audit.item_key("https://x.example/Some-Slug/dp/b0cspgmgbt/ref=abc?th=1") == "/dp/B0CSPGMGBT"
+
+
+NEWS_PAGE = """<html><head><script type="application/ld+json">{"@type":"NewsArticle","headline":"Un sujet","image":"a.jpg","datePublished":"2026-11-17"}</script></head>
+<body><article><h1>Un sujet</h1><p>""" + "Le texte de l'article, assez long pour être un vrai article de presse. " * 12 + """</p></article>
+<aside><h2>Read next</h2></aside>
+<section><h2>Most read</h2><ol><li><a href="/news/un-sujet">Un sujet</a></li><li><a href="/news/autre">Autre</a></li><li><a href="/news/encore">Encore</a></li></ol></section>
+<span class="badge">Best seller</span></body></html>"""
+
+
+def test_a_news_page_with_a_block_drawn_in_javascript_and_a_best_of_list():
+    url = "https://news.example/news/un-sujet"
+    result = run_audit(url, fake_fetch({url: (200, NEWS_PAGE)}))
+    kinds = {b["title"]: (b["kind"], b["js_only"]) for b in result["blocks"]}
+    assert kinds["Read next"] == ("similar", True)  # a title with nothing under it: filled in by the browser
+    assert kinds["Most read"] == ("popular", False)
+    assert "Best seller" not in kinds  # a badge, not a block
+    assert kpi(result, "similar_block")["status"] == "warn" and "JavaScript" in kpi(result, "similar_block")["summary"]
+    assert kpi(result, "behavior_block")["status"] == "warn" and "popularité" in kpi(result, "behavior_block")["summary"]
+    assert kpi(result, "self_reco")["status"] == "unknown"  # the article in "Most read" is not a self-recommendation
+
+
+def test_no_score_when_no_recommendation_can_be_read():
+    page = """<html><body><h1>Produit</h1><p>""" + "Description du produit, assez longue pour une vraie page. " * 15 + """</p>
+    <div class="product-recommendations-carousel" data-testid="recommendations"></div></body></html>"""
+    url = "https://spa.example/p/produit-123456"
+    result = run_audit(url, fake_fetch({url: (200, page)}))
+    assert result["score"] is None and result["grade"] is None and result["partial"] is True
