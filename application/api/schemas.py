@@ -177,6 +177,7 @@ class RecommendationStrategy(str, Enum):
     session = "session"
     popular = "popular"
     content_session = "content_session"
+    also_bought = "also_bought"  # "customers who bought this also bought", topped up by content
     none = "none"  # nothing served on purpose: the product page's own item is not in the catalog
 
 
@@ -370,7 +371,7 @@ class ModelStatus(BaseModel):
 class StrategyPerformance(BaseModel):
     """What one engine did in production over the window - counted from LIKYLY's own
     recommendation traces and the events attributed to them."""
-    strategy: str = Field(description="The engine that produced the items, after any fallback: hybrid, content, collaborative, session or popular.")
+    strategy: str = Field(description="The engine that produced the items, after any fallback: hybrid, content, collaborative, session, also_bought or popular.")
     recommendations_served: int
     impressions: int
     clicks: int
@@ -1106,8 +1107,8 @@ class PushPayload(BaseModel):
 # selection). See application/api/placement_engine.py and docs/placements.md.
 # ---------------------------------------------------------------------------
 
-PlacementStrategy = Literal["auto", "content", "session", "collaborative", "hybrid", "popular"]
-PlacementFallbackStrategy = Literal["content", "session", "collaborative", "hybrid", "popular", "auto"]
+PlacementStrategy = Literal["auto", "content", "session", "collaborative", "hybrid", "popular", "also_bought"]
+PlacementFallbackStrategy = Literal["content", "session", "collaborative", "hybrid", "popular", "also_bought", "auto"]
 PlacementContextType = Literal[
     "product_page", "listing_page", "category_page", "homepage", "cart", "account",
     "content_page", "custom",

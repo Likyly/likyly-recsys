@@ -37,7 +37,7 @@ from db import (  # noqa: E402
 
 import recommender as rec  # noqa: E402
 
-NAMED_STRATEGIES = ("content", "session", "collaborative", "hybrid", "popular")
+NAMED_STRATEGIES = ("content", "session", "collaborative", "hybrid", "popular", "also_bought")
 ALL_STRATEGIES = NAMED_STRATEGIES + ("auto",)
 
 
@@ -96,6 +96,8 @@ def _run_named_strategy(strategy: str, client_id: str, product_type: str, count:
         return rec.rec_hybrid(client_id, product_type, signals.internal_user, signals.anchor, count) if signals.anchor is not None else []
     if strategy == "popular":
         return rec.rec_popular(client_id, product_type, count, exclude_work_ids=signals.exclude, catalog_fallback=True)
+    if strategy == "also_bought":
+        return rec.rec_also_bought(client_id, product_type, signals.anchor, count) if signals.anchor is not None else []
     raise ValueError(f"Unknown strategy '{strategy}' - one of {NAMED_STRATEGIES}")
 
 

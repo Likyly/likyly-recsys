@@ -29,8 +29,11 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
+    case,
+    cast,
     create_engine,
     func,
+    literal,
     or_,
     select,
     text,
@@ -1368,6 +1371,33 @@ def get_purchased_work_ids(client_id: int, product_type: str, user_id: int) -> s
             )
         ).all()
     return {int(row[0]) for row in rows if row[0] is not None}
+
+
+def co_purchased_work_ids(client_id: int, product_type: str, work_id: int, limit: int = 100) -> list[tuple[int, int]]:
+    """"Customers who bought this also bought": the other items bought by the buyers of
+    `work_id`, as (work_id, buyers), most buyers first. A buyer is the identified customer, or the
+    session of an anonymous purchase."""
+    buyer = case(
+        (InteractionModel.user_id.isnot(None), literal("u") + cast(InteractionModel.user_id, String)),
+        else_=literal("s") + InteractionModel.session_id,
+    )
+    scope = (
+        InteractionModel.client_id == client_id,
+        InteractionModel.product_type == product_type,
+        InteractionModel.event_type == PURCHASE,
+        or_(InteractionModel.user_id.isnot(None), InteractionModel.session_id.isnot(None)),
+    )
+    buyers_of_it = select(buyer).where(*scope, InteractionModel.work_id == work_id)
+    buyers = func.count(func.distinct(buyer)).label("buyers")
+    query = (
+        select(InteractionModel.work_id, buyers)
+        .where(*scope, InteractionModel.work_id != work_id, buyer.in_(buyers_of_it))
+        .group_by(InteractionModel.work_id)
+        .order_by(buyers.desc(), InteractionModel.work_id)
+        .limit(limit)
+    )
+    with engine.connect() as conn:
+        return [(int(w), int(n)) for w, n in conn.execute(query).all()]
 
 
 def fetch_interactions(

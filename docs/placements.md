@@ -35,7 +35,7 @@ choice given a name.
 | `product_type` | Catalog namespace to recommend from - omit it when the account has one catalog. |
 | `limit` | Default result count (a `/recommend` call can override it). |
 | `audience` | `all` \| `anonymous` \| `identified` - documents intent. |
-| `strategy` | `auto` \| `content` \| `session` \| `collaborative` \| `hybrid` \| `popular`. |
+| `strategy` | `auto` \| `content` \| `session` \| `collaborative` \| `hybrid` \| `popular` \| `also_bought`. |
 | `signals` | `{required: [...], optional: [...]}` - see below. |
 | `fallback_strategy` | Tried if `strategy` returns nothing. `popular` is always the final safety net regardless. |
 | `filters` | Attribute-based inclusion rules - `category_in`, `category_not_in`, `in_stock_only`, `include_attributes`, `exclude_attributes`. |
@@ -67,7 +67,7 @@ cart_item_ids, locale, custom_context`.
   session) -> `session`; a known user with a trained model -> `collaborative`; nothing
   usable -> `popular`. This covers most real placements, including the brief's canonical PDP
   example (anonymous: item + session -> `content`/`session`; identified: adds history).
-- **An explicit strategy** (`content`/`session`/`collaborative`/`hybrid`/`popular`): runs that
+- **An explicit strategy** (`content`/`session`/`collaborative`/`hybrid`/`popular`/`also_bought`): runs that
   one engine only. If it returns nothing (e.g. `content` with no `current_item_id`,
   `collaborative` with no trained model yet), `fallback_strategy` is tried next; if that also
   comes back empty (or none was configured), `popular` always runs as the final safety net -
@@ -155,6 +155,13 @@ The server cache is in process memory: right for the single API process the Dock
 several workers or replicas would need a shared store (Redis).
 
 ### Pro: anonymous recommendations that follow the visit
+
+`strategy: "also_bought"` ("customers who bought this also bought", a product page block next to
+"you may also like"): the items bought by the buyers of `current_item_id` - an identified
+customer, or the session of an anonymous order - most buyers first, topped up by the most similar
+items when they are fewer than the limit. A signed-in customer is not offered what she bought
+(`business_rules.exclude_purchased_items`). A product nobody bought anything with yet returns
+nothing, so set `fallback_strategy: "content"`: `strategy_used` then says which one answered.
 
 On the Pro and Unlimited plans, `strategy: "auto"` with a `current_item_id`, no `user_id` and a
 session that already viewed other products returns `strategy_used: "content_session"`: the

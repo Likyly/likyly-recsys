@@ -290,6 +290,42 @@ def test_a_signed_in_visitor_is_never_offered_back_what_she_bought(http, seeded)
     assert set(bought) <= set(again)
 
 
+def test_also_bought_ranks_what_the_buyers_of_this_product_bought(http, seeded):
+    """"Customers who bought this also bought": the items bought by the buyers of the current
+    product, most buyers first, topped up by the most similar ones; a signed-in customer is not
+    offered what she bought; a product nobody bought anything with falls back."""
+    create_pdp_placement(http, seeded, slug="also-bought", strategy="also_bought", fallback_strategy="content", limit=4,
+                         signals={"required": ["current_item_id"], "optional": ["user_id", "session_id"]})
+    baskets = {
+        "b1": ["SKU-NIKE-001", "SKU-VANS-004"],
+        "b2": ["SKU-NIKE-001", "SKU-VANS-004", "SKU-ASICS-003"],
+        "b3": ["SKU-NIKE-001", "SKU-CONVERSE-002"],
+        "b4": ["SKU-SALOMON-010", "SKU-ASICS-003"],
+    }
+    for buyer, items in baskets.items():
+        for item in items:
+            assert http.post("/events/purchase", params=Q, headers=seeded.public, json={"user_id": buyer, "item_id": item}).status_code < 300
+    # An anonymous order counts too: its session is the buyer.
+    for item in ["SKU-NIKE-001", "SKU-VANS-004"]:
+        http.post("/events/purchase", params=Q, headers=seeded.public, json={"session_id": "order_77", "item_id": item})
+
+    result = recommend(http, seeded, {"current_item_id": "SKU-NIKE-001"}, slug="also-bought")
+    ids = [i["item_id"] for i in result["items"]]
+    assert result["strategy_used"] == "also_bought"
+    assert ids[0] == "SKU-VANS-004"  # 3 buyers of the Nike bought it (b1, b2, the anonymous order)
+    assert set(ids[1:3]) == {"SKU-ASICS-003", "SKU-CONVERSE-002"}  # one buyer each
+    assert len(ids) == 4 and "SKU-NIKE-001" not in ids  # topped up by content, never the product itself
+    assert "SKU-SALOMON-010" not in ids[:3]  # bought by someone who did not buy the Nike
+
+    # b2 bought the Vans and the Asics: she is offered the rest.
+    mine = [i["item_id"] for i in recommend(http, seeded, {"current_item_id": "SKU-NIKE-001", "user_id": "b2"}, slug="also-bought")["items"]]
+    assert "SKU-VANS-004" not in mine and "SKU-ASICS-003" not in mine and mine[0] == "SKU-CONVERSE-002"
+
+    # Nothing bought with it: the placement's fallback answers, and says so.
+    lonely = recommend(http, seeded, {"current_item_id": "SKU-ADIDAS-007"}, slug="also-bought")
+    assert lonely["strategy_used"] == "content"
+
+
 # ---------------------------------------------------------------------------
 # get_placement_requirements / preview_placement debug shape
 # ---------------------------------------------------------------------------

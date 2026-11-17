@@ -34,7 +34,7 @@ from modelData import (  # noqa: E402
     get_cosine_similarities_cached, load_model, predict_items_from_user_api,
 )
 from db import (  # noqa: E402
-    KIND_ITEM, KIND_USER, PURCHASE, count_user_signal_interactions, fetch_item_properties,
+    KIND_ITEM, KIND_USER, PURCHASE, co_purchased_work_ids, count_user_signal_interactions, fetch_item_properties,
     find_similar_by_embedding, get_active_model_version, get_dominant_event_type,
     get_recent_viewed_work_ids, get_recent_viewed_work_ids_for_session, resolve_external_ids,
     resolve_internal_ids,
@@ -230,6 +230,32 @@ def rec_content(client_id: int, product_type: str, work_id: int, count: int) -> 
             "interaction_count": interaction_count,
             "interaction_label": label,
         }
+    return records
+
+
+def rec_also_bought(client_id: int, product_type: str, work_id: int, count: int) -> list[dict]:
+    """"Customers who bought this also bought": the items bought by the buyers of the anchor,
+    most buyers first, then - when they are fewer than `count` - the items most similar to it by
+    content. [] when nobody has bought anything with it yet (the placement's fallback_strategy
+    takes over, so analytics never credit this engine with what content did on its own)."""
+    data_works = get_data(product_type, product_id=None, count=None, client_id=client_id)
+    catalog = data_works.set_index('work_id', drop=False)
+    if work_id not in catalog.index:
+        return []
+    pairs = [(w, n) for w, n in co_purchased_work_ids(client_id, product_type, work_id) if w in catalog.index]
+    if not pairs:
+        return []
+    title = catalog.loc[work_id, 'title']
+    records = _records(catalog.loc[[w for w, _ in pairs]].reset_index(drop=True))
+    for record, (_, buyers) in zip(records, pairs):
+        record['score'] = float(buyers)
+        record['explanation'] = {
+            "reason": f"Acheté aussi par {buyers} client{'s' if buyers > 1 else ''} qui {'ont' if buyers > 1 else 'a'} acheté « {title} »",
+            "co_purchase_count": buyers,
+        }
+    if len(records) < count:
+        taken = {w for w, _ in pairs} | {work_id}
+        records += [r for r in rec_content(client_id, product_type, work_id, count * 2) if int(r['work_id']) not in taken][: count - len(records)]
     return records
 
 
