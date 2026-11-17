@@ -244,6 +244,8 @@ def audits(monkeypatch):
     monkeypatch.delenv("UPGRADE_REQUEST_TO", raising=False)
     sent = []
     monkeypatch.setattr(site_audits, "deliver", lambda message, settings: sent.append(message))
+    site_audits.reads.reset()
+    site_audits.misses.reset()
     return {"sent": sent, "headers": {"X-Forwarded-For": f"203.0.113.{uuid.uuid4().int % 250}, 10.0.0.1"}}
 
 
@@ -364,3 +366,39 @@ def test_ipv4_is_preferred_when_a_site_has_both(monkeypatch):
     seen = []
     mock_fetcher(lambda r: seen.append(r) or httpx.Response(200, text="<html></html>")).get("https://dual.example/")
     assert seen[0].url.host == "93.184.216.34"
+
+
+
+def _new_report(http, headers) -> str:
+    return http.post("/audits", json={"url": "boutique.example/produit/chaussure-trail/"}, headers=headers).json()["token"]
+
+
+def test_report_links_expire_after_ten_days(http, audits):
+    import db
+    headers = audits["headers"]
+    token = _new_report(http, headers)
+    report = http.get(f"/audits/{token}", headers=headers).json()
+    assert report["expires_at"].startswith(str((db.get_site_audit(token)["created_at"] + site_audits.timedelta(days=10)).date()))
+    assert http.post(f"/audits/{token}/email", json={"email": "camille@boutique.example"}, headers=headers).status_code == 200
+    assert "jusqu'au" in audits["sent"][0].get_body(("plain",)).get_content()
+
+    with db.SessionLocal() as session:
+        session.query(db.SiteAuditModel).filter_by(token=token).update({"created_at": db.utcnow() - site_audits.timedelta(days=10, minutes=1)})
+        session.commit()
+    expired = http.get(f"/audits/{token}", headers=headers)
+    assert expired.status_code == 410 and "10 jours" in expired.json()["detail"]
+    assert http.post(f"/audits/{token}/email", json={"email": "x@y.example"}, headers=headers).status_code == 410
+
+
+def test_report_reads_are_capped_and_guessing_is_cut_short(http, audits):
+    headers = audits["headers"]
+    token = _new_report(http, headers)
+    for _ in range(site_audits.MISSES_PER_HOUR):
+        assert http.get("/audits/devine-moi", headers=headers).status_code == 404
+    assert http.get("/audits/encore-une", headers=headers).status_code == 429
+    assert http.get(f"/audits/{token}", headers=headers).status_code == 200  # real links still open
+
+    for _ in range(site_audits.READS_PER_HOUR - site_audits.MISSES_PER_HOUR - 2):
+        http.get(f"/audits/{token}", headers=headers)
+    assert http.get(f"/audits/{token}", headers=headers).status_code == 429
+    assert http.get(f"/audits/{token}", headers={"X-Forwarded-For": "198.51.100.200"}).status_code == 200

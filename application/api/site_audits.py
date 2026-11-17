@@ -6,9 +6,10 @@
     GET  /audits/{token}                                  the report again: full once an email was given
                                                           (the link in the email), teaser before
 
-The audit itself is application/utils/site_audit.py. `token` is unguessable and is the only key to
-a report. Limits per visitor (salted hash of the IP, never the address): a few audits an hour and a
-few emails a day. When TURNSTILE_SECRET_KEY is set, POST /audits also needs a Cloudflare Turnstile
+The audit itself is application/utils/site_audit.py. `token` is unguessable (144 random bits) and is
+the only key to a report; a report link works for REPORT_TTL_DAYS after the audit, then answers 410.
+Limits per visitor (salted hash of the IP, never the address): a few audits an hour, a few emails a
+day, and a cap on report reads - tighter on unknown tokens, so guessing links goes nowhere. When TURNSTILE_SECRET_KEY is set, POST /audits also needs a Cloudflare Turnstile
 token (the site sends it); without it, the check is skipped (local development).
 
 Marketing surface of the website, not part of the public API: hidden from /openapi.json.
@@ -46,6 +47,9 @@ AUDITS_PER_HOUR = 6
 AUDITS_PER_DAY = 20
 EMAILS_PER_DAY = 5
 AUDIT_DEADLINE_SECONDS = 30
+REPORT_TTL_DAYS = 10
+READS_PER_HOUR = 60
+MISSES_PER_HOUR = 10
 EMAIL_RE = re.compile(r"^[^@\s<>()\[\],;:\"]{1,64}@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$")
 TEMPLATES = Path(__file__).resolve().parent / "email_templates"
 
@@ -100,13 +104,60 @@ async def verify_captcha(token: Optional[str], request: Request) -> None:
         raise HTTPException(status_code=400, detail="La vérification anti-robot a échoué : rechargez la page et réessayez.")
 
 
+class HourlyLimiter:
+    """Per-visitor counts over the last hour, in memory: enough for one API container (a restart
+    only forgives the current hour). Used for report reads, which leave no row to count."""
+
+    def __init__(self, limit: int):
+        self.limit = limit
+        self.hits: dict[str, list[float]] = {}
+
+    def allow(self, visitor: str) -> bool:
+        now = time.monotonic()
+        recent = [t for t in self.hits.get(visitor, []) if now - t < 3600]
+        if len(recent) >= self.limit:
+            self.hits[visitor] = recent
+            return False
+        recent.append(now)
+        self.hits[visitor] = recent
+        if len(self.hits) > 50_000:  # never grows without bound
+            self.hits = {k: v for k, v in self.hits.items() if v and now - v[-1] < 3600}
+        return True
+
+    def reset(self) -> None:
+        self.hits.clear()
+
+
+reads = HourlyLimiter(READS_PER_HOUR)
+misses = HourlyLimiter(MISSES_PER_HOUR)
+
+
+def expires_at(row: dict[str, Any]):
+    return row["created_at"] + timedelta(days=REPORT_TTL_DAYS)
+
+
+def find_report(token: str, request: Request) -> dict[str, Any]:
+    """The report behind a link, or the reason it can't be shown (429 / 404 / 410)."""
+    visitor = ip_hash(request)
+    if not reads.allow(visitor):
+        raise HTTPException(status_code=429, detail="Trop de consultations depuis cette connexion : réessayez dans une heure.")
+    row = db.get_site_audit(token[:64])
+    if row is None:
+        if not misses.allow(visitor):
+            raise HTTPException(status_code=429, detail="Trop de liens invalides depuis cette connexion : réessayez dans une heure.")
+        raise HTTPException(status_code=404, detail="Ce rapport n'existe pas.")
+    if db.utcnow() >= expires_at(row):
+        raise HTTPException(status_code=410, detail=f"Ce rapport a expiré : un lien d'audit reste valable {REPORT_TTL_DAYS} jours. Relancez un audit pour un rapport à jour.")
+    return row
+
+
 def public_report(row: dict[str, Any], full: bool) -> dict[str, Any]:
     result = row["result"]
     body = result if full else site_audit.teaser(result)
     if full:
         body = {**result, "block_count": len(result.get("blocks", []))}
     return {
-        "token": row["token"], "created_at": row["created_at"], "unlocked": full,
+        "token": row["token"], "created_at": row["created_at"], "expires_at": expires_at(row), "unlocked": full,
         "report_url": f"{site_url()}/audit/r/{row['token']}",
         **body,
     }
@@ -146,20 +197,16 @@ async def create_audit(payload: AuditCreate, request: Request):
 
 
 @router.get("/{token}", summary="Get an audit report")
-async def get_audit(token: str):
+async def get_audit(token: str, request: Request):
     """The report: in full once an email was given for it, the verdicts only before."""
-    row = db.get_site_audit(token[:64])
-    if row is None:
-        raise HTTPException(status_code=404, detail="Ce rapport n'existe pas ou plus.")
+    row = find_report(token, request)
     return public_report(row, full=bool(row.get("email")))
 
 
 @router.post("/{token}/email", summary="Get the full audit report by email")
 async def email_audit(token: str, payload: AuditEmail, request: Request, background_tasks: BackgroundTasks):
     """Records the email (the lead), answers the full report and emails it in the background."""
-    row = db.get_site_audit(token[:64])
-    if row is None:
-        raise HTTPException(status_code=404, detail="Ce rapport n'existe pas ou plus.")
+    row = find_report(token, request)
     email = payload.email.strip()
     if not EMAIL_RE.match(email):
         raise HTTPException(status_code=422, detail="Cette adresse email n'est pas valide.")
@@ -246,7 +293,8 @@ def report_body(row: dict[str, Any]) -> str:
     parts.append(f'<h2 style="margin:24px 0 12px;font:700 19px/1.3 Sora, {FONT};color:{C["ink"]};">Et maintenant ?</h2>')
     parts.append(_p(f'<strong>{e(step.get("title"))}</strong>. {e(step.get("text"))} Gratuit jusqu\'à 50 produits, sans carte bancaire.'))
     parts.append(_button(step.get("cta") or "Découvrir LIKYLY", f'{site_url()}{step.get("href") or "/"}'))
-    parts.append(_p(f'Votre rapport reste consultable en ligne : <a href="{e(report_link)}" style="color:{C["blue"]};word-break:break-all;">{e(report_link)}</a>. '
+    until = expires_at(row).strftime("%d/%m/%Y")
+    parts.append(_p(f'Votre rapport reste consultable en ligne jusqu\'au {until} : <a href="{e(report_link)}" style="color:{C["blue"]};word-break:break-all;">{e(report_link)}</a>. '
                     f'Une question ? Répondez simplement à cet email.', f"font-size:13px;color:{C['muted']};"))
     return "".join(parts)
 
@@ -267,7 +315,7 @@ def report_text(row: dict[str, Any]) -> str:
             lines.append(f"    À faire : {kpi['advice']}")
     step = r.get("next_step") or {}
     lines += ["", f"Et maintenant ? {step.get('title')} : {step.get('text')}", f"{site_url()}{step.get('href') or '/'}", "",
-              f"Votre rapport en ligne : {site_url()}/audit/r/{row['token']}", "Une question ? Répondez à cet email."]
+              f"Votre rapport en ligne, jusqu'au {expires_at(row).strftime('%d/%m/%Y')} : {site_url()}/audit/r/{row['token']}", "Une question ? Répondez à cet email."]
     return "\n".join(lines)
 
 
