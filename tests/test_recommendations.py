@@ -477,6 +477,61 @@ def test_a_retrain_is_compared_with_the_active_version_on_the_same_data(http, se
     assert db.get_active_model_version(seeded.client_id, Q["data_product_type"])["id"] == second["version_id"]
 
 
+def test_a_retrain_keeps_the_live_settings_when_the_search_finds_worse_but_learns_today_s_data(http, seeded, tmp_path, monkeypatch):
+    """Seen on the Magento sandbox: the search picked settings scoring 0.744 on today's data while
+    the live version's scored more, so the live model - which didn't know 16 new customers - was
+    kept. Now the new version learns today's data with the better settings, and goes live."""
+    import shutil
+    monkeypatch.setattr(shutil, "which", lambda *a, **k: None)
+    monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
+    monkeypatch.setattr(modelData, "_versioned_model_path", lambda t, c, v: str(tmp_path / f"{t}_{c}_v{v}.npz"))
+    live = {"factors": 4, "regularization": 0.1, "iterations": 10}
+    for u in range(6):
+        track(http, seeded, "purchase", {"user_id": f"u{u}", "item_id": ["SKU-NIKE-001", "SKU-VANS-004"][u % 2]})
+    first = modelData.train_and_maybe_promote_model(Q["data_product_type"], client_id=seeded.client_id, **live)
+    assert first["promoted"]
+
+    searched = {"factors": 32, "regularization": 10.0, "iterations": 15}
+    monkeypatch.setattr(modelData, "tune_als", lambda m, k=10: (searched, []))
+    real = modelData.evaluate_against_baseline
+
+    def scored(matrix, factors, regularization, iterations, k=10, **kw):
+        scores = real(matrix, factors=factors, regularization=regularization, iterations=iterations, k=k, **kw)
+        scores["precision_at_k"] = 0.9 if factors == live["factors"] else 0.5  # the search found worse settings
+        return scores
+
+    monkeypatch.setattr(modelData, "evaluate_against_baseline", scored)
+    for u in range(6, 12):
+        track(http, seeded, "purchase", {"user_id": f"u{u}", "item_id": "SKU-CONVERSE-002"})
+    second = modelData.train_and_maybe_promote_model(Q["data_product_type"], client_id=seeded.client_id)
+    assert second["promoted"] and second["settings_from_active"] and second["precision_at_k"] == 0.9
+    version = db.get_active_model_version(seeded.client_id, Q["data_product_type"])
+    assert version["id"] == second["version_id"]
+    assert (version["factors"], version["regularization"], version["iterations"]) == (4, 0.1, 10)
+    assert version["num_users"] == 12  # today's customers, all of them
+
+
+def test_explicit_settings_that_score_worse_than_the_live_ones_do_not_go_live(http, seeded, tmp_path, monkeypatch):
+    import shutil
+    monkeypatch.setattr(shutil, "which", lambda *a, **k: None)
+    monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
+    monkeypatch.setattr(modelData, "_versioned_model_path", lambda t, c, v: str(tmp_path / f"{t}_{c}_v{v}.npz"))
+    for u in range(6):
+        track(http, seeded, "purchase", {"user_id": f"u{u}", "item_id": ["SKU-NIKE-001", "SKU-VANS-004"][u % 2]})
+    first = modelData.train_and_maybe_promote_model(Q["data_product_type"], client_id=seeded.client_id, factors=4, regularization=0.1, iterations=10)
+    real = modelData.evaluate_against_baseline
+
+    def scored(matrix, factors, regularization, iterations, k=10, **kw):
+        scores = real(matrix, factors=factors, regularization=regularization, iterations=iterations, k=k, **kw)
+        scores["precision_at_k"] = 0.9 if factors == 4 else 0.5
+        return scores
+
+    monkeypatch.setattr(modelData, "evaluate_against_baseline", scored)
+    second = modelData.train_and_maybe_promote_model(Q["data_product_type"], client_id=seeded.client_id, factors=16, regularization=1.0, iterations=10)
+    assert not second["promoted"] and not second["settings_from_active"]
+    assert db.get_active_model_version(seeded.client_id, Q["data_product_type"])["id"] == first["version_id"]
+
+
 def test_training_is_recorded_in_a_sqlite_mlflow_store(http, seeded, tmp_path, monkeypatch):
     """Production records MLflow runs in a SQLite file on the model volume (no server):
     the run, its model file under MLFLOW_ARTIFACT_ROOT (never ./mlruns inside the

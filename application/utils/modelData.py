@@ -290,17 +290,13 @@ def tune_als(interactions_matrix, k=10, grid=None, splits=ALS_TUNING_SPLITS, tim
     return {key: best[key] for key in keys}, trials
 
 
-def _precision_on(interactions_matrix, version, k):
-    """precision@k of a version's settings on this matrix and the control split - the
-    candidate's own measure, so the two can be compared."""
-    value = evaluate_against_baseline(
-        interactions_matrix,
-        factors=version.get("factors") or ALS_FACTORS,
-        regularization=version.get("regularization") if version.get("regularization") is not None else ALS_REGULARIZATION,
-        iterations=version.get("iterations") or ALS_ITERATIONS,
-        k=k,
-    )["precision_at_k"]
-    return value
+def _settings_of(version):
+    """A version's ALS settings, the defaults for any it didn't record."""
+    return {
+        "factors": version.get("factors") or ALS_FACTORS,
+        "regularization": version.get("regularization") if version.get("regularization") is not None else ALS_REGULARIZATION,
+        "iterations": version.get("iterations") or ALS_ITERATIONS,
+    }
 
 
 def train_and_maybe_promote_model(
@@ -312,17 +308,24 @@ def train_and_maybe_promote_model(
     k=10,
     triggered_by=MANUAL,
 ):
-    """Trains a new ALS model, evaluates it against a held-out split, and only promotes
-    it to be the one actually served if it's at least as good as the currently active
-    version - so a bad retrain (e.g. after a burst of noisy interactions) never silently
-    degrades production. Every run is recorded regardless of outcome, so a rejected
-    candidate stays visible in the version history instead of disappearing."""
+    """Trains a new ALS model on today's data and puts it in production. Every run is recorded,
+    so the history shows each one with its precision@k and the data it learned from.
+
+    Settings: the ones searched on today's data (tune_als) compete with the live version's,
+    both scored on today's matrix and the same control split, and the better ones train the new
+    version - the live model's settings stay when the search found worse ones, but never its
+    stale data: a model that doesn't know the newest customers can't stay in production because
+    of a figure measured on a smaller matrix (seen on the Magento sandbox).
+
+    Settings passed explicitly are used as they are, and that version only goes live if it
+    scores at least as well as the live version's settings on the same data."""
     interactions = build_user_item_matrix(product_type, client_id=client_id)
+    explicit = factors is not None and regularization is not None and iterations is not None
 
     # Settings left out are searched on this catalogue's own data (tune_als); passing all
     # three trains with exactly those.
     tuning_trials = []
-    if factors is None or regularization is None or iterations is None:
+    if not explicit:
         best, tuning_trials = tune_als(interactions, k=k)
         factors = best["factors"] if factors is None else factors
         regularization = best["regularization"] if regularization is None else regularization
@@ -333,21 +336,31 @@ def train_and_maybe_promote_model(
     )
     candidate_precision = control_scores["precision_at_k"]
 
-    # The held-out split above is only for an honest precision@k figure - the artifact we
-    # actually serve is trained on 100% of the available data.
-    final_model = create_model(interactions, factors=factors, regularization=regularization, iterations=iterations)
-
-    # Compared on the same data: the active version's settings are scored on today's matrix and
-    # control split, like the candidate. Its stored figure was measured on the data of its own
-    # day - fewer visitors, other pairs held out - and is not comparable: a model knowing every
-    # new customer could be turned down forever against a figure from a smaller matrix.
+    # The live version's settings, scored on the same data and split as the candidate. Its stored
+    # figure was measured on the data of its own day and is not comparable.
     active = get_active_model_version(client_id, product_type)
-    active_precision = _precision_on(interactions, active, k) if active is not None else None
+    active_precision = None
+    settings_from_active = False
+    if active is not None:
+        active_settings = _settings_of(active)
+        if active_settings == {"factors": factors, "regularization": regularization, "iterations": iterations}:
+            active_scores = control_scores
+        else:
+            active_scores = evaluate_against_baseline(interactions, k=k, **active_settings)
+        active_precision = active_scores["precision_at_k"]
+        if not explicit and active_precision is not None and (candidate_precision is None or active_precision > candidate_precision):
+            factors, regularization, iterations = active_settings["factors"], active_settings["regularization"], active_settings["iterations"]
+            control_scores, candidate_precision, settings_from_active = active_scores, active_precision, True
+
     is_improvement = (
         active is None
         or active_precision is None
         or (candidate_precision is not None and candidate_precision >= active_precision)
     )
+
+    # The held-out split above is only for an honest precision@k figure - the artifact we
+    # actually serve is trained on 100% of the available data.
+    final_model = create_model(interactions, factors=factors, regularization=regularization, iterations=iterations)
 
     # The matrix is sized by the largest ids (max id + 1), not by how many visitors and
     # products it holds: count the rows and columns that actually carry an interaction.
@@ -384,6 +397,7 @@ def train_and_maybe_promote_model(
         "precision_at_k": candidate_precision,
         "promoted": is_improvement,
         "previous_precision_at_k": active_precision,
+        "settings_from_active": settings_from_active,
     }
 
 
