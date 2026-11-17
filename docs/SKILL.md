@@ -215,7 +215,12 @@ commit only the files you changed (not their pending work), push the branch and 
    - A Magento store (`bin/magento`, `app/code/Likyly/Recommendations` written by the wizard,
      with the public key in its `etc/config.xml`): write no new block code - the module's block
      loads the SDK, sends the product view, renders the cards from LIKYLY (title, image, price
-     and link come from the `magento` source) and tracks impressions and clicks. Place it with a
+     and link come from the `magento` source) and tracks impressions and clicks. The module also
+     tracks, on every page (its `default.xml` and `tracking.phtml`): the signed-in customer (their
+     Magento customer id is the LIKYLY user id, read from Magento's customer data - pages stay
+     cached), each add to cart, and on the order confirmation page each purchase with its price,
+     quantity and the recommendation it came from (LIKYLY's revenue). Write no tracking code for
+     a Magento store. Place the block with a
      layout file **inside that module**, one per page type, the placement slug as argument:
      `view/frontend/layout/catalog_product_view.xml` (product page: `<referenceContainer
      name="content.aside">`, where Magento puts related products), `cms_index_index.xml` (home:
@@ -230,8 +235,8 @@ commit only the files you changed (not their pending work), push the branch and 
      `bin/magento module:enable Likyly_Recommendations && bin/magento setup:upgrade && bin/magento
      cache:flush` (in production mode, `setup:di:compile` and `setup:static-content:deploy` too).
      A merchant can also add it from the admin: Content → Widgets → "LIKYLY recommendations".
-     Purchases: an observer on `checkout_onepage_controller_success_action` calling LIKYLY's
-     purchase event server-side with the secret key - only if the developer asks.
+     A home page block for the signed-in customer: a `homepage` placement, `cms_index_index.xml`
+     - the module gives LIKYLY the customer's id, so it recommends from her own history.
    - Anything else: `likyly.recommend({ placement, context })`, render the items yourself,
      call `likyly.events.recommendationImpression`/`recommendationClick` for the events
      `<LikylyRecommendations>` would have handled automatically.

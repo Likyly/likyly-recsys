@@ -134,9 +134,11 @@ Run it at the root of a Magento 2 store (Open Source, Mage-OS or Adobe Commerce:
 `composer.json` requires the product metapackage). Nothing goes through Composer: the wizard
 writes a small module, `app/code/Likyly/Recommendations` - a block and its template (the SDK comes
 from jsDelivr; it sends the product view, shows the recommended products with their image, price
-and link, and tracks impressions and clicks), a widget (*Content → Widgets → LIKYLY
-recommendations*) and settings (*Stores → Configuration → Catalog → LIKYLY*) - with the public key
-in its `etc/config.xml`. Your assistant then places the block with one layout file per page and
+and link, and tracks impressions and clicks), tracking on every page (the signed-in customer, so
+recommendations follow their own history; each add to cart; each purchase on the order
+confirmation page, with its price and the recommendation it came from - LIKYLY's revenue), a
+widget (*Content → Widgets → LIKYLY recommendations*) and settings (*Stores → Configuration →
+Catalog → LIKYLY*) - with the public key in its `etc/config.xml`. Your assistant then places the block with one layout file per page and
 flushes the cache.
 
 Right after you sign in, the wizard connects the store's catalog, with nothing to do in the Magento
