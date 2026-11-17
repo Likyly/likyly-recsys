@@ -62,8 +62,13 @@ integration", "empty the LIKYLY cache"), there are no commands to learn.
 
 In Claude Code the same are `/likyly-clear-cache [placement]` and `/likyly-uninstall`, plus
 `/likyly-help` (the list of commands), installed with the skill: Claude Code runs the command
-itself and shows its result. Four read-only reports come with them:
+itself and shows its result. Five read-only reports come with them:
 
+- `/likyly-info` - which LIKYLY account the project is connected to: the account and workspace,
+  the key it uses (its name and rights, never its value), the plan - free or paid - and every
+  limit of Free and Pro side by side with what you use (products, catalogs, sources, syncs and
+  trainings per day, workspaces, performance history). The limits are the ones the API enforces,
+  read by `npx @likyly/wizard info` (also `--json`) with the developer key - never hard-coded.
 - `/likyly-inventory` - what LIKYLY added to the site: each recommendation block, the page it is
   on and how it is set up in LIKYLY; the events the code sends; the setup files. It starts from
   `inventory` (below), then reads the code and asks LIKYLY.

@@ -191,6 +191,11 @@ test("end to end: mcp add for Claude Code installs the skill", () => {
   const impact = readFileSync(join(dir, ".claude/commands/likyly-impact.md"), "utf8");
   assert.match(impact, /likyly-wizard\.mjs impact --json \$ARGUMENTS`/);
   assert.match(impact, /never estimate/);
+  assert.match(help, /\/likyly-info/);
+  const info = readFileSync(join(dir, ".claude/commands/likyly-info.md"), "utf8");
+  assert.match(info, /likyly-wizard\.mjs info --json`/);
+  assert.match(info, /never invent a price/);
+  assert.doesNotMatch(info, /\\`/, "markdown backticks, not escaped ones");
   const model = readFileSync(join(dir, ".claude/commands/likyly-model.md"), "utf8");
   assert.match(model, /mcp__likyly__get_model_overview/);
   for (const text of [inventory, model]) assert.doesNotMatch(text, /LIKYLY_DEVELOPER_KEY/, "never reads the key line");
@@ -347,7 +352,7 @@ test("uninstall removes only what the wizard added, after a dry run that removes
   assert.equal(existsSync(join(dir, "components/likyly-provider.tsx")), false);
   assert.equal(existsSync(join(dir, ".mcp.json")), false, "only LIKYLY was in it");
   assert.deepEqual(JSON.parse(readFileSync(join(dir, ".cursor/mcp.json"), "utf8")), { mcpServers: { other: { command: "x" } } });
-  for (const gone of [".claude/skills/likyly", ".claude/commands/likyly-help.md", ".claude/commands/likyly-inventory.md", ".claude/commands/likyly-pages.md", ".claude/commands/likyly-impact.md", ".claude/commands/likyly-model.md", ".claude/commands/likyly-clear-cache.md", ".claude/commands/likyly-uninstall.md", ".likyly"]) {
+  for (const gone of [".claude/skills/likyly", ".claude/commands/likyly-help.md", ".claude/commands/likyly-info.md", ".claude/commands/likyly-inventory.md", ".claude/commands/likyly-pages.md", ".claude/commands/likyly-impact.md", ".claude/commands/likyly-model.md", ".claude/commands/likyly-clear-cache.md", ".claude/commands/likyly-uninstall.md", ".likyly"]) {
     assert.equal(existsSync(join(dir, gone)), false, gone);
   }
   assert.equal(readFileSync(join(dir, "src/page.tsx"), "utf8"), 'import { LikylyRecommendations } from "@likyly/react";\n', "code is never edited");
@@ -1078,6 +1083,88 @@ test("impact: no key, a key without the right, a bad argument - each said plainl
   assert.match(JSON.parse(res.stdout).error, /No developer key/);
 });
 
+
+import { formatInfo, readInfo } from "../src/info.mjs";
+
+/** GET /analytics/plan as LIKYLY answers it, for a plan. */
+function planApi(plan, { usage = {}, legacy = false } = {}) {
+  const LIM = {
+    free: { product_limit: 50, index_limit: 1, data_source_limit: 1, manual_sync_daily_limit: 1, manual_training_daily_limit: 1, auto_retrain_daily_limit: 1, workspace_limit: 1, analytics_window_days: 7, analytics_detail: false },
+    pro: { product_limit: 500, index_limit: 5, data_source_limit: 10, manual_sync_daily_limit: 24, manual_training_daily_limit: 5, auto_retrain_daily_limit: 5, workspace_limit: 5, analytics_window_days: 90, analytics_detail: true },
+  };
+  const calls = [];
+  const body = {
+    plan, plan_name: plan === "pro" ? "Pro" : "Free", limits: { plan, ...LIM[plan] },
+    usage: { plan, product_count: 8, index_count: 1, data_source_count: 0, ...usage },
+    upgrade_url: "https://likyly.com/account/upgrade",
+  };
+  if (!legacy) Object.assign(body, {
+    plans: [{ plan: "free", ...LIM.free }, { plan: "pro", ...LIM.pro }],
+    workspace: { id: "li_7f3k2q", name: "My shop", created_at: "2026-11-03T10:00:00Z" },
+    key: { kind: "developer", name: "Claude Code", hint: "lk_dev…_dev", scopes: ["analytics:read", "placements:read"], created_at: "2026-11-03T10:00:00Z" },
+  });
+  const fetchImpl = async (url, init) => {
+    calls.push({ path: new URL(url).pathname, key: init.headers["X-API-Key"] });
+    return { status: 200, ok: true, json: async () => body };
+  };
+  return { calls, fetchImpl };
+}
+
+test("info, Free plan: the account, its key (never the value), Free and Pro side by side with what is used", async () => {
+  const { calls, fetchImpl } = planApi("free", { usage: { product_count: 50 } });
+  const r = await readInfo({ dir: project({ ".likyly/credentials.env": "# Account: dev@example.com\n# Workspace: votre workspace\n# Console: https://www.likyly.com\nLIKYLY_DEVELOPER_KEY=lk_dev\n" }), fetchImpl });
+  assert.equal(r.ok, true, r.text);
+  const { report } = r;
+  assert.deepEqual(calls, [{ path: "/analytics/plan", key: "lk_dev" }]);
+  assert.equal(report.account.email, "dev@example.com");
+  assert.deepEqual(report.workspace, { id: "li_7f3k2q", name: "My shop", createdAt: "2026-11-03T10:00:00Z" }, "LIKYLY's name wins over the local line");
+  assert.equal(report.key.name, "Claude Code");
+  assert.equal(report.key.from, ".likyly/credentials.env");
+  assert.equal(report.paid, false);
+  assert.deepEqual(report.plans, [{ plan: "free", name: "Free", current: true }, { plan: "pro", name: "Pro", current: false }]);
+  const products = report.limits.find((l) => l.key === "product_limit");
+  assert.deepEqual(products.values, { free: 50, pro: 500 });
+  assert.equal(products.used, 50);
+  assert.ok(report.signals.some((s) => s.level === "full" && /Products in the catalog: 50 \/ 50 - all that the Free plan allows/.test(s.text)));
+  assert.equal(report.limits.length, 9, "every limit the API enforces");
+  const text = formatInfo(report);
+  assert.match(text, /LIKYLY · Account · Free plan \(free\)/);
+  assert.match(text, /Free ◆ +Pro +Used/);
+  assert.match(text, /Performance history +7 days +90 days/);
+  assert.match(text, /Daily trend, revenue detail, top products +no +yes/);
+  assert.match(text, /request the Pro plan at https:\/\/likyly\.com\/account\/upgrade/);
+  assert.doesNotMatch(JSON.stringify(report) + text, /lk_dev(?!…)/, "the key value never appears, only its hint");
+});
+
+test("info, Pro plan: paid, nothing about upgrading; an older API: only the own plan, said so", async () => {
+  const pro = await readInfo({ dir: project(KEYED), fetchImpl: planApi("pro").fetchImpl });
+  assert.equal(pro.report.paid, true);
+  assert.ok(pro.report.plans.find((p) => p.plan === "pro").current);
+  assert.doesNotMatch(formatInfo(pro.report), /request the Pro plan/);
+  const legacy = await readInfo({ dir: project(KEYED), fetchImpl: planApi("free", { legacy: true }).fetchImpl });
+  assert.deepEqual(legacy.report.plans.map((p) => p.plan), ["free"]);
+  assert.equal(legacy.report.comparedOnlyOwnPlan, true);
+  assert.match(formatInfo(legacy.report), /only your own plan's limits/);
+});
+
+test("info: no key, an unknown key, a key without the right - each said plainly", async () => {
+  const saved = process.env.LIKYLY_DEVELOPER_KEY;
+  delete process.env.LIKYLY_DEVELOPER_KEY;
+  try {
+    const none = await readInfo({ dir: project({}), fetchImpl: async () => assert.fail("no call without a key") });
+    assert.match(none.text, /No developer key/);
+    const res = runCli(["info", "--json", "--dir", project({})], project({}));
+    assert.equal(res.status, 1);
+    assert.match(JSON.parse(res.stdout).error, /No developer key/);
+  } finally {
+    if (saved !== undefined) process.env.LIKYLY_DEVELOPER_KEY = saved;
+  }
+  const answer = (status) => async () => ({ status, ok: false, json: async () => ({}) });
+  assert.match((await readInfo({ dir: project(KEYED), fetchImpl: answer(401) })).text, /does not know this developer key/);
+  assert.match((await readInfo({ dir: project(KEYED), fetchImpl: answer(403) })).text, /analytics:read/);
+  assert.equal(parseArgs(["info"]).command, "info");
+  assert.equal(parseArgs(["account", "--json"]).command, "info");
+});
 
 import { examplePages, formatPages } from "../src/pages.mjs";
 

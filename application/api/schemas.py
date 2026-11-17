@@ -1478,6 +1478,22 @@ class AnalyticsItemsOut(AnalyticsWindow):
 AnalyticsDetailOut.model_rebuild()  # its top_items refers to AnalyticsTopItem, defined above
 
 
+class AnalyticsWorkspace(BaseModel):
+    """The workspace a key belongs to."""
+    id: str = Field(description="Technical name, fixed at creation - the identifier to quote to support.", examples=["li_7f3k2q"])
+    name: str = Field(description="What the owner calls it in the console (the technical name until renamed).", examples=["My shop"])
+    created_at: datetime
+
+
+class AnalyticsKeyInfo(BaseModel):
+    """The key the call was made with - never its value."""
+    kind: Literal["secret", "developer"]
+    name: Optional[str] = Field(default=None, description="Developer key: the name it was given.")
+    hint: Optional[str] = Field(default=None, description="Developer key: a preview, its first and last characters (\"lk_y2CU…GTs\") - never the key.")
+    scopes: List[str] = Field(default_factory=list, description="Developer key: its rights. Empty for the secret key, which has them all.")
+    created_at: Optional[datetime] = None
+
+
 class AnalyticsPlanOut(BaseModel):
     """The account's plan, what it allows and what is used - e.g. "20 / 50 products, Free"."""
     plan: str = Field(description="`free`, `pro` or `unlimited`.", examples=["free"])
@@ -1485,3 +1501,6 @@ class AnalyticsPlanOut(BaseModel):
     limits: PlanLimits = Field(description="Everything the plan allows (`null` = no cap).")
     usage: ClientUsageSummary = Field(description="Current usage next to each capped quantity.")
     upgrade_url: str = Field(description="Where to ask for a higher plan.", examples=["https://likyly.com/account/upgrade"])
+    plans: List[PlanLimits] = Field(default_factory=list, description="Free and Pro side by side (plus this account's own plan when it is another one), from the limits the API enforces.")
+    workspace: Optional[AnalyticsWorkspace] = None
+    key: Optional[AnalyticsKeyInfo] = None

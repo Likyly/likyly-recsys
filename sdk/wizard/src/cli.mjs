@@ -95,6 +95,17 @@ export async function main(argv = process.argv.slice(2)) {
     console.log(opts.json ? JSON.stringify(r.report, null, 2) : formatImpact(r.report));
     return 0;
   }
+  if (opts.command === "info") {
+    const { readInfo, formatInfo } = await import("./info.mjs");
+    const r = await readInfo({ dir: opts.dir });
+    if (!r.ok) {
+      if (opts.json) console.log(JSON.stringify({ error: r.text, hint: r.hint ?? null }, null, 2));
+      else console.error(`✗ ${r.text}${r.hint ? `\n  ${r.hint}` : ""}`);
+      return 1;
+    }
+    console.log(opts.json ? JSON.stringify(r.report, null, 2) : formatInfo(r.report));
+    return 0;
+  }
   if (opts.command === "detect") {
     console.log(JSON.stringify({ project: detectProject(opts.dir), editors: detectEditors(opts.dir) }, null, 2));
     return 0;

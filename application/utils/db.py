@@ -1077,6 +1077,7 @@ def get_client_self_by_id(client_id: int) -> Optional[dict]:
             "has_public_key": client.public_key_hash is not None,
             "secret_key_rotated_at": client.secret_key_rotated_at,
             "public_key_rotated_at": client.public_key_rotated_at,
+            "created_at": client.created_at,
         }
 
 
@@ -1983,6 +1984,14 @@ def _developer_key_row_to_dict(row: DeveloperKeyModel) -> dict:
         "id": row.id, "name": row.name, "key_hint": row.key_hint, "scopes": list(row.scopes or []),
         "created_at": row.created_at, "last_used_at": row.last_used_at, "revoked_at": row.revoked_at,
     }
+
+
+def get_developer_key_by_raw(raw_key: str) -> Optional[dict]:
+    """The live developer key a raw value stands for (name, hint, scopes - never the value), or
+    None: GET /analytics/plan says which key a project is connected with."""
+    with SessionLocal() as session:
+        row = session.query(DeveloperKeyModel).filter_by(key_hash=hash_api_key(raw_key), revoked_at=None).first()
+        return _developer_key_row_to_dict(row) if row else None
 
 
 def create_developer_key(client_id: int, name: str, scopes: list[str]) -> tuple[dict, str]:

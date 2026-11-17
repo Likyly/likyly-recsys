@@ -154,6 +154,22 @@ def test_plan_reports_limits_and_usage(http, seeded):
     assert body["usage"]["product_count"] == 8 and body["usage"]["product_limit"] == 50
     assert body["usage"]["index_count"] == 1 and body["usage"]["index_limit"] == 1
     assert body["upgrade_url"] == db.UPGRADE_URL
+    # Free and Pro side by side, from the limits the API enforces.
+    assert [p["plan"] for p in body["plans"]] == ["free", "pro"]
+    assert body["plans"][1]["product_limit"] == db.PLAN_LIMITS[db.PLAN_PRO]["product_limit"]
+    assert body["workspace"]["id"] and body["workspace"]["name"] and body["workspace"]["created_at"]
+    assert body["key"] == {"kind": "secret", "name": None, "hint": None, "scopes": [], "created_at": None}
+
+
+def test_plan_names_the_developer_key_never_its_value(http, seeded):
+    db.set_client_plan(seeded.client_id, db.PLAN_UNLIMITED)
+    row, raw = db.create_developer_key(seeded.client_id, "Claude Code", ["analytics:read", "placements:read"])
+    body = http.get("/analytics/plan", headers={"X-API-Key": raw}).json()
+    assert body["key"]["kind"] == "developer" and body["key"]["name"] == "Claude Code"
+    assert body["key"]["hint"] == row["key_hint"] and body["key"]["scopes"] == ["analytics:read", "placements:read"]
+    assert raw not in str(body)
+    # An account on a plan that isn't offered still sees it next to Free and Pro.
+    assert [p["plan"] for p in body["plans"]] == ["free", "pro", "unlimited"]
 
 
 # --- attribution ----------------------------------------------------------------------------

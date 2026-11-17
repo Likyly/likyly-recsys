@@ -1362,6 +1362,68 @@
         "title": "AnalyticsKeyDetailOut",
         "type": "object"
       },
+      "AnalyticsKeyInfo": {
+        "description": "The key the call was made with - never its value.",
+        "properties": {
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "hint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Developer key: a preview, its first and last characters (\"lk_y2CU…GTs\") - never the key.",
+            "title": "Hint"
+          },
+          "kind": {
+            "enum": [
+              "secret",
+              "developer"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Developer key: the name it was given.",
+            "title": "Name"
+          },
+          "scopes": {
+            "description": "Developer key: its rights. Empty for the secret key, which has them all.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Scopes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "AnalyticsKeyInfo",
+        "type": "object"
+      },
       "AnalyticsKeySummaryOut": {
         "description": "Totals over the window - available on every plan.",
         "properties": {
@@ -1563,6 +1625,16 @@
       "AnalyticsPlanOut": {
         "description": "The account's plan, what it allows and what is used - e.g. \"20 / 50 products, Free\".",
         "properties": {
+          "key": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AnalyticsKeyInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "limits": {
             "$ref": "#/components/schemas/PlanLimits",
             "description": "Everything the plan allows (`null` = no cap)."
@@ -1583,6 +1655,14 @@
             "title": "Plan Name",
             "type": "string"
           },
+          "plans": {
+            "description": "Free and Pro side by side (plus this account's own plan when it is another one), from the limits the API enforces.",
+            "items": {
+              "$ref": "#/components/schemas/PlanLimits"
+            },
+            "title": "Plans",
+            "type": "array"
+          },
           "upgrade_url": {
             "description": "Where to ask for a higher plan.",
             "examples": [
@@ -1594,6 +1674,16 @@
           "usage": {
             "$ref": "#/components/schemas/ClientUsageSummary",
             "description": "Current usage next to each capped quantity."
+          },
+          "workspace": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AnalyticsWorkspace"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -1860,6 +1950,39 @@
           "revenue"
         ],
         "title": "AnalyticsTotals",
+        "type": "object"
+      },
+      "AnalyticsWorkspace": {
+        "description": "The workspace a key belongs to.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "description": "Technical name, fixed at creation - the identifier to quote to support.",
+            "examples": [
+              "li_7f3k2q"
+            ],
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "description": "What the owner calls it in the console (the technical name until renamed).",
+            "examples": [
+              "My shop"
+            ],
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "created_at"
+        ],
+        "title": "AnalyticsWorkspace",
         "type": "object"
       },
       "BatchItemError": {
@@ -9679,7 +9802,7 @@
     },
     "/analytics/plan": {
       "get": {
-        "description": "The account's plan, everything it allows, and the current usage next to each capped\nquantity (products, catalogs, data sources) - enough to show e.g. \"20 / 50 products, Free\"\nand which analytics this plan includes (`limits.analytics_window_days`,\n`limits.analytics_detail`). Every plan.",
+        "description": "The account's plan, everything it allows, and the current usage next to each capped\nquantity (products, catalogs, data sources) - enough to show e.g. \"20 / 50 products, Free\"\nand which analytics this plan includes (`limits.analytics_window_days`,\n`limits.analytics_detail`). Also Free and Pro side by side (`plans`), the workspace and the\nkey the call was made with (never its value) - what `/likyly-info` shows. Every plan.",
         "operationId": "analytics_plan",
         "responses": {
           "200": {

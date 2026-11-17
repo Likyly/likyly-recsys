@@ -21,14 +21,14 @@ _utils_dir = os.path.abspath(os.path.join(current_dir, "../utils"))
 if _utils_dir not in sys.path:
     sys.path.insert(0, _utils_dir)
 
-from fastapi import APIRouter, Depends, HTTPException, Query  # noqa: E402
+from fastapi import APIRouter, Depends, HTTPException, Query, Security  # noqa: E402
 
 import db  # noqa: E402
 from schemas import (  # noqa: E402
     AnalyticsItemsOut, AnalyticsKeyDetailOut, AnalyticsKeySummaryOut, AnalyticsPlacementsOut,
     AnalyticsPlanOut, ErrorResponse,
 )
-from scoped_auth import require_scope  # noqa: E402
+from scoped_auth import api_key_header, require_scope  # noqa: E402
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
 
@@ -150,15 +150,25 @@ def analytics_items(
 
 
 @router.get("/plan", response_model=AnalyticsPlanOut, summary="My plan, its limits and usage", responses=_errors(401, 403))
-def analytics_plan(client_id: int = Depends(require_scope(SCOPE))):
+def analytics_plan(client_id: int = Depends(require_scope(SCOPE)), api_key: Optional[str] = Security(api_key_header)):
     """The account's plan, everything it allows, and the current usage next to each capped
     quantity (products, catalogs, data sources) - enough to show e.g. "20 / 50 products, Free"
     and which analytics this plan includes (`limits.analytics_window_days`,
-    `limits.analytics_detail`). Every plan."""
+    `limits.analytics_detail`). Also Free and Pro side by side (`plans`), the workspace and the
+    key the call was made with (never its value) - what `/likyly-info` shows. Every plan."""
     plan = db.get_client_plan(client_id)
+    offered = [db.PLAN_FREE, db.PLAN_PRO] + ([plan] if plan not in (db.PLAN_FREE, db.PLAN_PRO) else [])
+    client = db.get_client_self_by_id(client_id) or {}
+    developer = db.get_developer_key_by_raw(api_key) if api_key else None
     return {
         "plan": plan, "plan_name": db.plan_display_name(plan),
         "limits": {"plan": plan, **db.get_plan_limits(plan)},
         "usage": usage_summary(client_id),
         "upgrade_url": db.UPGRADE_URL,
+        "plans": [{"plan": p, **db.get_plan_limits(p)} for p in offered],
+        "workspace": {"id": client["name"], "name": client.get("display_name") or client["name"], "created_at": client["created_at"]} if client else None,
+        "key": (
+            {"kind": "developer", "name": developer["name"], "hint": developer["key_hint"], "scopes": developer["scopes"], "created_at": developer["created_at"]}
+            if developer else {"kind": "secret"}
+        ),
     }

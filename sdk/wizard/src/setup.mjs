@@ -399,7 +399,7 @@ export function wizardInvocation(argv1 = process.argv[1]) {
   return `node ${bin.includes(" ") ? JSON.stringify(bin) : bin}`;
 }
 
-export const CLAUDE_COMMANDS = ["likyly-help.md", "likyly-inventory.md", "likyly-pages.md", "likyly-impact.md", "likyly-model.md", "likyly-clear-cache.md", "likyly-uninstall.md"];
+export const CLAUDE_COMMANDS = ["likyly-help.md", "likyly-info.md", "likyly-inventory.md", "likyly-pages.md", "likyly-impact.md", "likyly-model.md", "likyly-clear-cache.md", "likyly-uninstall.md"];
 
 // Claude Code slash command: the exact `cache clear` CLI, run by Claude Code itself (the `!`
 // line executes before the model sees the prompt), so the result is the API's, not a guess.
@@ -641,6 +641,54 @@ to retrain or compare versions.
 ${NOT_CONNECTED}
 `;
 
+// Which account the project is connected to and what its plan allows: the wizard reads LIKYLY's
+// own answer with the developer key (the limits the API enforces), Claude only lays it out.
+const infoCommand = (w) => `---
+description: Which LIKYLY account is connected - account, workspace, key, plan (free or paid), and the Free and Pro limits side by side
+allowed-tools: Bash(${w} info:*)
+---
+!\`${w} info --json\`
+
+Read-only: change nothing, call nothing else. Every value below comes from the JSON above -
+never estimate a limit, never invent a price (there is no online payment yet). If the JSON has
+an "error", show it and its "hint" as is, and stop.
+
+Report, in the developer's language, with LIKYLY's marks (◆ your plan / included, ◇ not
+included) and nothing before the title:
+
+**◆ LIKYLY · Account · <planName> plan** (free / paid: "paid" is false → free)
+
+| | |
+|---|---|
+| Account | dev@example.com |
+| Workspace | My shop · \`li_7f3k2q\` · since 3 Nov 2026 |
+| Key | developer key "Claude Code" (lk_y2CU…a1B2) · from .likyly/credentials.env |
+| Rights | analytics:read, placements:read, ... |
+| Plan | ◆ Free |
+
+(the key's "hint" is a preview - its first and last characters - never more; a "secret" kind says "the secret key";
+no "scopes": no Rights row; the workspace id only when it differs from its name)
+
+**Limits** - one column per entry of "plans", in that order, the current one marked ◆ in its
+header; a last column "You use" from "used" (empty when absent):
+| | Free ◆ | Pro | You use |
+|---|---|---|---|
+| Products in the catalog | 50 | 500 | 8 |
+| Performance history | 7 days | 90 days | |
+| Daily trend, revenue detail, top products | ◇ no | ◆ yes | |
+
+Every row of "limits", with its "label": a null value is "no limit", "unit" adds days, an
+"included" row is ◆ yes / ◇ no. When "comparedOnlyOwnPlan" is true, say under the table that
+this LIKYLY version only gives your own plan's limits.
+
+Then the "signals" as they are, one line each (! for "full", · for "near") - a limit used up
+is not an error, just what the plan allows; never call it a problem. On the Free plan,
+one line: "Pro: request it at <upgradeUrl> - no online payment yet." On a paid plan, nothing
+about upgrading.
+
+Last line: \`<account.console>/account\` (the console, to manage keys, workspaces and plan).
+`;
+
 // Static help: no shell, so it works even when the wizard or the MCP server is unreachable.
 const helpCommand = (w) => `---
 description: List the LIKYLY commands and what each one does
@@ -652,6 +700,7 @@ Show the developer exactly this, nothing more:
 | Command | What it does |
 |---|---|
 | \`/likyly-help\` | This list |
+| \`/likyly-info\` | Which LIKYLY account is connected: account, workspace, key, plan (free or paid), and the Free and Pro limits side by side with what you use |
 | \`/likyly-inventory\` | What LIKYLY added to this site: each recommendation block and its page, tracking, setup |
 | \`/likyly-pages\` | Where to see LIKYLY: one link per kind of page with a block (a product, a category, the cart...), local and live |
 | \`/likyly-impact [days]\` | What the recommendations bring: served, seen, clicked, purchases and revenue (Pro: longer history, daily trend, top products) |
@@ -664,7 +713,7 @@ Show the developer exactly this, nothing more:
 - "Check my LIKYLY integration" - what works, what's missing
 - "Change the recommendations on my product page" - placement settings
 
-**In a terminal**: \`${w} inventory\` · \`${w} pages\` · \`${w} impact\` · \`${w} cache clear\` · \`${w} uninstall\` · \`${w} help\`
+**In a terminal**: \`${w} info\` · \`${w} inventory\` · \`${w} pages\` · \`${w} impact\` · \`${w} cache clear\` · \`${w} uninstall\` · \`${w} help\`
 `;
 
 /** Install the /likyly-* commands for Claude Code (`.claude/commands/`). */
@@ -672,6 +721,7 @@ export function writeClaudeCommands(dir, { dryRun = false, invocation = wizardIn
   const folder = join(dir, ".claude", "commands");
   const files = {
     "likyly-help.md": helpCommand(invocation),
+    "likyly-info.md": infoCommand(invocation),
     "likyly-inventory.md": inventoryCommand(invocation),
     "likyly-pages.md": pagesCommand(invocation),
     "likyly-impact.md": impactCommand(invocation),

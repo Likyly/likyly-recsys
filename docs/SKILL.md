@@ -344,6 +344,7 @@ no list of optional clean-ups.
 | Command | What it does |
 |---|---|
 | `/likyly-help` | Lists these commands and what you can ask in plain words |
+| `/likyly-info` | Which LIKYLY account is connected: account, workspace, key, plan (free or paid), and the Free and Pro limits side by side with what you use |
 | `/likyly-inventory` | What LIKYLY added to this site: each recommendation block and its page, tracking, setup |
 | `/likyly-pages` | Where to see LIKYLY: one link per kind of page with a block, local and live |
 | `/likyly-impact [days]` | What the recommendations bring: served, seen, clicked, purchases and revenue (Pro: longer history, daily trend, top products) |

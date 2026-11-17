@@ -39,6 +39,9 @@ ${blue("Commands")}
   pixel          Shopify theme: the pixel to paste in the admin (Settings → Customer events)
                  so add to cart and purchases reach LIKYLY with the recommendation they came
                  from - the revenue in impact and in the console; copied to the clipboard
+  info           which LIKYLY account this project is connected to: account, workspace,
+                 key (never its value), plan, and every Free and Pro limit side by side with
+                 what you use (uses your developer key; --json for data)
   impact [days]  what the recommendations bring: served, seen, clicked, the purchases and
                  revenue they led to (uses your developer key; Free: 7 days, Pro: up to 90
                  days with the daily trend and the top products; --json for data)
@@ -56,7 +59,7 @@ ${blue("Options")}
   --placement <slug>     with cache clear: the placement to empty (default: all)
   --branch <new|current> with uninstall, in a git repository: work on a new branch
                          likyly/uninstall, or on the current one (asked otherwise)
-  --json                 with inventory, pages or impact: print JSON
+  --json                 with inventory, pages, info or impact: print JSON
   --days <n>             with impact: how many days back ${dim("(capped by your plan)")}
   --store <shop>         with preview: the Shopify store ${dim("(default: shopify.theme.toml, or your LIKYLY source)")}
   --new-window           with preview: run it in a new terminal window instead of this one
@@ -123,6 +126,7 @@ export function parseArgs(argv) {
     else if (cmd === "magento") opts.command = "magento";
     else if (cmd === "preview") opts.command = "preview";
     else if (cmd === "pages") opts.command = "pages";
+    else if (cmd === "info" || cmd === "account") opts.command = "info";
     else if (cmd === "pixel") opts.command = "pixel";
     else if (cmd === "detect") opts.command = "detect";
     else if (cmd === "inventory") opts.command = "inventory";
