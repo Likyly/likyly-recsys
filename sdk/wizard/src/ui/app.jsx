@@ -236,22 +236,22 @@ function DonePanel({ editors, dryRun, level, devKey, dir }) {
 }
 
 /** The one remaining choice, Enter by default: hand over to the assistant. */
-function NextAction({ editors, canReview, reviewed, onPick, signedIn, preview, canChangeEditors }) {
+function NextAction({ editors, canReview, reviewed, copied, onPick, signedIn, preview, canChangeEditors }) {
   const items = [];
   // Without a developer key the assistant cannot reach LIKYLY: signing in comes first.
   if (editors.length && !signedIn) items.push({ label: "Connect your LIKYLY account first", value: "signin", hint: "your assistant needs it to reach LIKYLY" });
-  const claudeCli = commandExists("claude");
-  if (editors.includes("claude-code") && claudeCli) items.push({ label: "Launch Claude Code now", value: "claude", hint: "it starts on this prompt" });
-  // Claude Code in VS Code or the Claude app: no command to start, the prompt goes in its chat.
-  if (editors.includes("claude-code") && !claudeCli) items.push({ label: "Copy the prompt for Claude Code and exit", value: "copy", hint: "paste it in Claude Code: the VS Code panel or the Claude app" });
+  // Claude Code used in an editor or the Claude app has no `claude` command: it starts here all the
+  // same, through npx, signed in with the same account.
+  if (editors.includes("claude-code"))
+    items.push({ label: "Launch Claude Code now", value: "claude", hint: commandExists("claude") ? "here, on this prompt" : "here, on this prompt (npx @anthropic-ai/claude-code, nothing to install)" });
   if (canReview) items.push({ label: reviewed ? "Show the changes again" : "Review the changes first", value: "review", hint: "what LIKYLY changed, shown here" });
   // In this terminal, never a new window: Ctrl+C stops it and gives the shell back.
   if (preview) items.push({ label: "Start the site's preview here", value: "preview", hint: `${preview.command} · Ctrl+C gives you your terminal back` });
   if (editors.includes("codex") && commandExists("codex")) items.push({ label: "Launch Codex now", value: "codex", hint: "it starts on this prompt" });
-  if (editors.includes("cursor") && commandExists("cursor")) items.push({ label: "Open Cursor", value: "cursor", hint: "the prompt is copied, paste it in the chat" });
+  if (editors.includes("cursor") && commandExists("cursor")) items.push({ label: "Open Cursor", value: "cursor", hint: "the prompt is copied, paste it in the chat; the wizard ends" });
   if (canChangeEditors)
     items.push({ label: "Change the assistants", value: "assistants", hint: editors.length ? `back to the choice · now: ${editors.map(editorLabel).join(", ")}` : "back to the choice" });
-  if (!items.some((i) => i.value === "copy")) items.push({ label: "Copy the prompt and exit", value: "copy" });
+  items.push({ label: copied ? "Copy the prompt again" : "Copy the prompt", value: "copy", hint: "to paste in any assistant's chat; you stay here" });
   items.push({ label: "Exit", value: "exit" });
   return <Select items={items} onSubmit={onPick} />;
 }
@@ -290,6 +290,7 @@ function App({ opts: initialOpts, result }) {
   const keys = useRef({ publicKey: opts.publicKey || null, devKey: null });
   const reviewRef = useRef([]);
   const [reviewed, setReviewed] = useState(false);
+  const [copied, setCopied] = useState(false);
   const [chosenEditors, setChosenEditors] = useState([]);
   // Everything finished is printed once and never redrawn: only the live step is.
   const [printed, setPrinted] = useState(opts.continued ? [] : [{ key: "header", kind: "header" }]);
@@ -615,6 +616,7 @@ function App({ opts: initialOpts, result }) {
             editors={chosenEditors}
             canReview={reviewRef.current.length > 0}
             reviewed={reviewed}
+            copied={copied}
             canChangeEditors={order.some(([id]) => id === "mcp") && !opts.editors}
             signedIn={opts.dryRun || Boolean(keys.current.devKey) || hasDeveloperKey(opts.dir)}
             preview={preview}
@@ -626,6 +628,17 @@ function App({ opts: initialOpts, result }) {
                 return;
               }
               if (v === "assistants") return setPhase("mcp");
+              if (v === "copy") {
+                const done = copyToClipboard(AGENT_PROMPT);
+                setCopied(true);
+                setPrinted((p) => [
+                  ...p,
+                  done
+                    ? { key: key("copy"), kind: "step", title: "Prompt copied", status: "done", summary: "paste it in your assistant's chat", results: [] }
+                    : { key: key("copy"), kind: "step", title: "The prompt, to paste in your assistant", status: "done", results: [{ level: "info", text: AGENT_PROMPT }] },
+                ]);
+                return;
+              }
               end(failed ? 1 : 0, v, reviewRef.current);
             }}
           />
@@ -633,6 +646,11 @@ function App({ opts: initialOpts, result }) {
       ) : null}
     </>
   );
+}
+
+/** Claude Code's command: `claude` when installed, else the same through npx (no install). */
+export function claudeCommand(exists = commandExists) {
+  return exists("claude") ? ["claude", []] : ["npx", ["-y", "@anthropic-ai/claude-code"]];
 }
 
 /** After the UI is gone: run what the developer picked, with the terminal handed over. */
@@ -652,8 +670,13 @@ function launch(choice, dir, files = [], editors = [], preview = null) {
     return;
   }
   if (choice === "claude") {
-    console.log("\n  Starting Claude Code…\n");
-    spawnSync("claude", [AGENT_PROMPT], { cwd: dir, stdio: "inherit", shell: process.platform === "win32" });
+    const [cmd, args] = claudeCommand();
+    console.log(`\n  Starting Claude Code${cmd === "claude" ? "" : " (npx @anthropic-ai/claude-code, the first start takes a few seconds)"}…\n`);
+    const r = spawnSync(cmd, [...args, AGENT_PROMPT], { cwd: dir, stdio: "inherit", shell: process.platform === "win32" });
+    if (r.error || (r.status !== 0 && r.status !== null && r.status !== 130)) {
+      const copied = copyToClipboard(AGENT_PROMPT);
+      console.log(`\n  Claude Code did not start here.${copied ? " The prompt is in your clipboard:" : " The prompt:"} paste it in Claude Code (your editor's panel or the Claude app).${copied ? "" : `\n\n  ${AGENT_PROMPT}`}\n`);
+    }
   } else if (choice === "codex") {
     console.log("\n  Starting Codex…\n");
     spawnSync("codex", [AGENT_PROMPT], { cwd: dir, stdio: "inherit", shell: process.platform === "win32" });
@@ -661,8 +684,6 @@ function launch(choice, dir, files = [], editors = [], preview = null) {
     copyToClipboard(AGENT_PROMPT);
     spawn("cursor", [dir], { stdio: "ignore", detached: true }).unref();
     console.log("\n  Cursor is opening. The prompt is in your clipboard: paste it in the chat (Cmd/Ctrl+L).\n");
-  } else if (choice === "copy") {
-    console.log(copyToClipboard(AGENT_PROMPT) ? "\n  Prompt copied. Paste it into your assistant.\n" : `\n  ${AGENT_PROMPT}\n`);
   }
 }
 
