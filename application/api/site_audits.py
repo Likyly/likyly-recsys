@@ -234,12 +234,18 @@ def _run(url: str, provided: Optional[site_audit.Page] = None, source: str = "ro
             raise site_audit.AuditError("Le site met trop de temps à répondre.")
         return fetcher.get(target)
 
+    renders: list[str] = []
+
     def render(target: str) -> site_audit.Page:
         left = deadline - time.monotonic()
         if left < 9:  # keep time for the rest of the audit (stock, UCP)
             raise site_audit.AuditError("plus assez de temps pour l'afficher dans un navigateur")
         assert browser is not None
-        return browser.render(target, int(min(15, left - 6) * 1000))
+        # The audited page gets the most time (its blocks at the bottom load as it scrolls); the
+        # pages it is compared with, less.
+        cap = 22 if not renders else 15
+        renders.append(target)
+        return browser.render(target, int(min(cap, left - 6) * 1000))
 
     try:
         return site_audit.run_audit(url, fetch, allow_private=allow_private(), render=render if browser else None, provided=provided, source=source)

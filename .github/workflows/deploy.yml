@@ -222,7 +222,7 @@ jobs:
               restart: unless-stopped
             # The free audit's browser (renderer/server.py). On a network of its own, shared with
             # recsys-api only; its pages reach public websites and nothing else (egress proxy).
-            # Hard caps so a heavy page can't hurt the rest of this 2 GB droplet: no swap, one CPU,
+            # Hard caps so a heavy page can't hurt the rest of this 2 GB droplet: no swap, 1.5 of 2 CPUs,
             # first in line for the OOM killer. Idle, it holds no browser (~60 MB).
             audit-renderer:
               image: ghcr.io/likyly/audit-renderer:latest
@@ -234,7 +234,7 @@ jobs:
               init: true
               mem_limit: 600m
               memswap_limit: 600m
-              cpus: 1.0
+              cpus: 1.5
               pids_limit: 400
               oom_score_adj: 900
               cap_drop: [ALL]
