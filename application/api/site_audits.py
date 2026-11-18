@@ -1,8 +1,13 @@
 """The free recommendation audit of www.likyly.com/audit - no account needed.
 
-    POST /audits                 {url, captcha_token?}  runs the audit, answers the verdicts (teaser)
+    POST /audits                 {url, captcha_token?}  starts the audit; answers the verdicts (teaser,
+                                                          201) when it ends within SYNC_WAIT_SECONDS,
+                                                          else the job to follow (202, {job, status})
                                  {page_id, captcha_token?}  ... of a page the visitor's browser sent
                                  {url, html, captcha_token?}  ... of a page's pasted source code
+    GET  /audits/jobs/{job}                               where the audit is: running | waiting (its
+                                                          place in front of the browser: ahead,
+                                                          wait_seconds) | done (report) | failed
     POST /audits/page            form {url, html}       the bookmarklet: keeps the page the visitor's
                                                           browser shows (for sites that turn robots
                                                           away), redirects to www.likyly.com/audit?page=…
@@ -18,10 +23,12 @@ day, and a cap on report reads - tighter on unknown tokens, so guessing links go
 token (the site sends it); without it, the check is skipped (local development).
 
 AUDIT_RENDERER_URL (+ AUDIT_RENDERER_TOKEN): the audit's browser (renderer/, its own container), for
-blocks drawn by JavaScript. Unset: the audit reads the HTML only.
+blocks drawn by JavaScript. Unset: the audit reads the HTML only. It shows one page at a time: audits
+take turns in front of it (application/utils/audit_jobs.py), each for all its pages in a row.
 
 Marketing surface of the website, not part of the public API: hidden from /openapi.json.
 """
+import asyncio
 import hashlib
 import html
 import os
@@ -37,15 +44,16 @@ from typing import Any, Optional
 
 import httpx
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field, model_validator
-from starlette.concurrency import run_in_threadpool
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 _utils_dir = os.path.abspath(os.path.join(current_dir, "../utils"))
 if _utils_dir not in sys.path:
     sys.path.insert(0, _utils_dir)
 
+import audit_jobs  # noqa: E402
 import db  # noqa: E402
 import site_audit  # noqa: E402
 from observability import log_event  # noqa: E402
@@ -57,7 +65,10 @@ AUDITS_PER_HOUR = 6
 AUDITS_PER_DAY = 20
 EMAILS_PER_DAY = 5
 AUDIT_DEADLINE_SECONDS = 30
-RENDERED_AUDIT_DEADLINE_SECONDS = 50  # a browser needs 5 to 15 s a page; the site's Running steps keep going
+RENDERED_AUDIT_DEADLINE_SECONDS = 50  # from the moment the audit gets the browser: 5 to 15 s a page
+SYNC_WAIT_SECONDS = 8  # POST /audits answers the report itself when the audit is that quick
+JOBS_PER_VISITOR = 2  # audits running at once from one connection
+BROWSER_BUSY = "notre navigateur d'audit était saturé, relancez l'audit dans quelques minutes pour une lecture complète"
 MAX_PAGE_CHARS = 6 * 1024 * 1024  # a page sent by the visitor's browser (scripts and styles trimmed)
 PAGES_PER_HOUR = 20
 REPORT_TTL_DAYS = 10
@@ -186,6 +197,8 @@ class HourlyLimiter:
 reads = HourlyLimiter(READS_PER_HOUR)
 misses = HourlyLimiter(MISSES_PER_HOUR)
 page_posts = HourlyLimiter(PAGES_PER_HOUR)
+jobs = audit_jobs.JobBoard()
+browser_queue = audit_jobs.BrowserQueue()
 
 
 def expires_at(row: dict[str, Any]):
@@ -224,20 +237,33 @@ def renderer() -> Optional[site_audit.RendererClient]:
     return site_audit.RendererClient(base, os.environ.get("AUDIT_RENDERER_TOKEN")) if base else None
 
 
-def _run(url: str, provided: Optional[site_audit.Page] = None, source: str = "robot") -> dict[str, Any]:
+def _run(url: str, provided: Optional[site_audit.Page] = None, source: str = "robot", job: Optional[audit_jobs.AuditJob] = None) -> dict[str, Any]:
     browser = renderer()
-    deadline = time.monotonic() + (RENDERED_AUDIT_DEADLINE_SECONDS if browser else AUDIT_DEADLINE_SECONDS)
+    job = job or audit_jobs.AuditJob()
+    deadline = [time.monotonic() + AUDIT_DEADLINE_SECONDS]
     fetcher = site_audit.SafeFetcher(allow_private=allow_private())
 
     def fetch(target: str) -> site_audit.Page:
-        if time.monotonic() > deadline:
+        if time.monotonic() > deadline[0]:
             raise site_audit.AuditError("Le site met trop de temps à répondre.")
         return fetcher.get(target)
 
     renders: list[str] = []
+    lease = {"held": False, "refused": False}
 
     def render(target: str) -> site_audit.Page:
-        left = deadline - time.monotonic()
+        # The browser is lent to one audit at a time, for all its pages: wait for it on the first one.
+        if lease["refused"]:
+            raise site_audit.AuditError(BROWSER_BUSY)
+        if not lease["held"]:
+            if not browser_queue.acquire(job):
+                lease["refused"] = True
+                deadline[0] = max(deadline[0], time.monotonic() + 20)  # the rest of the audit, from the HTML
+                log_event("site_audit_browser_busy")
+                raise site_audit.AuditError(BROWSER_BUSY)
+            lease["held"] = True
+            deadline[0] = time.monotonic() + RENDERED_AUDIT_DEADLINE_SECONDS
+        left = deadline[0] - time.monotonic()
         if left < 9:  # keep time for the rest of the audit (stock, UCP)
             raise site_audit.AuditError("plus assez de temps pour l'afficher dans un navigateur")
         assert browser is not None
@@ -248,11 +274,36 @@ def _run(url: str, provided: Optional[site_audit.Page] = None, source: str = "ro
         return browser.render(target, int(min(cap, left - 6) * 1000))
 
     try:
-        return site_audit.run_audit(url, fetch, allow_private=allow_private(), render=render if browser else None, provided=provided, source=source)
+        return site_audit.run_audit(url, fetch, allow_private=allow_private(), render=render if browser else None, provided=provided, source=source,
+                                    render_done=lambda: browser_queue.release(job))
     finally:
+        browser_queue.release(job)
         fetcher.close()
         if browser:
             browser.close()
+
+
+def _work(job: audit_jobs.AuditJob, url: str, provided: Optional[site_audit.Page], source: str) -> None:
+    """The audit, in its own thread: the report (stored) or the reason it failed, on the job."""
+    try:
+        result = _run(url, provided, source, job)
+        row = db.create_site_audit(result["url"], result.get("host"), result.get("score"), result, job.visitor)
+        log_event("site_audit_run", host=result.get("host"), cms=result["cms"]["id"], page_type=result["page_type"]["id"], score=result["score"])
+        job.done(jsonable_encoder(public_report(row, full=False)))
+    except site_audit.AuditError as error:
+        log_event("site_audit_failed", reason=str(error)[:120], blocked=error.blocked)
+        job.fail(str(error), error.blocked)
+    except Exception as error:  # never leave the visitor's page waiting
+        log_event("site_audit_crashed", error=type(error).__name__, message=str(error)[:200])
+        job.fail("L'audit a rencontré une erreur. Réessayez dans un instant.")
+
+
+def job_answer(job: audit_jobs.AuditJob) -> JSONResponse:
+    if job.status == "done":
+        return JSONResponse(status_code=201, content=job.report)
+    if job.status == "failed":
+        return JSONResponse(status_code=422, content={"detail": job.detail, "blocked": job.blocked})
+    return JSONResponse(status_code=202, content=job.public())
 
 
 def audit_failed(error: site_audit.AuditError) -> JSONResponse:
@@ -266,7 +317,10 @@ async def create_audit(payload: AuditCreate, request: Request):
     """Runs the audit of one page and answers the verdicts; the explanations come with the email."""
     visitor = ip_hash(request)
     now = db.utcnow()
-    if db.count_site_audits_since(visitor, now - timedelta(hours=1)) >= AUDITS_PER_HOUR or db.count_site_audits_since(visitor, now - timedelta(days=1)) >= AUDITS_PER_DAY:
+    running = jobs.running_for(visitor)
+    if running >= JOBS_PER_VISITOR:
+        raise HTTPException(status_code=429, detail="Un audit est déjà en cours depuis votre connexion : attendez son résultat avant d'en lancer un autre.")
+    if db.count_site_audits_since(visitor, now - timedelta(hours=1)) + running >= AUDITS_PER_HOUR or db.count_site_audits_since(visitor, now - timedelta(days=1)) + running >= AUDITS_PER_DAY:
         raise HTTPException(status_code=429, detail="Vous avez lancé beaucoup d'audits : réessayez dans une heure.")
     await verify_captcha(payload.captcha_token, request)
     provided: Optional[site_audit.Page] = None
@@ -284,13 +338,23 @@ async def create_audit(payload: AuditCreate, request: Request):
             provided.url = site_audit.normalize_input_url(url, allow_private())
         except site_audit.AuditError as error:
             return audit_failed(error)
-    try:
-        result = await run_in_threadpool(_run, url, provided, source)
-    except site_audit.AuditError as error:
-        return audit_failed(error)
-    row = db.create_site_audit(result["url"], result.get("host"), result.get("score"), result, visitor)
-    log_event("site_audit_run", host=result.get("host"), cms=result["cms"]["id"], page_type=result["page_type"]["id"], score=result["score"])
-    return public_report(row, full=False)
+    job = audit_jobs.AuditJob(visitor)
+    jobs.start(job, lambda: _work(job, url, provided, source))
+    end = time.monotonic() + SYNC_WAIT_SECONDS
+    while not job.finished and time.monotonic() < end:
+        await asyncio.sleep(0.05)
+    return job_answer(job)
+
+
+@router.get("/jobs/{job_id}", summary="Follow a running audit")
+async def follow_audit(job_id: str):
+    """Where the audit is; its page asks every second or two (a waiting audit whose page stopped
+    asking gives its place in front of the browser to the next one)."""
+    job = jobs.get(job_id[:64])
+    if job is None:
+        raise HTTPException(status_code=404, detail="Cet audit n'est plus suivi (le service a peut-être redémarré) : relancez-le.")
+    job.seen()
+    return job.public()
 
 
 @router.post("/page", summary="Send a page from the visitor's browser")

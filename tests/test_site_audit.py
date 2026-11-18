@@ -1,11 +1,14 @@
 """The free recommendation audit (www.likyly.com/audit): what it finds on a page, that it only ever
 reaches public addresses, and the API flow - verdicts first, the full report once an email is given,
 then the report emailed. No real network: pages are served by a fake fetch / httpx MockTransport."""
+import threading
+import time
 import uuid
 
 import httpx
 import pytest
 
+import audit_jobs
 import site_audit
 import site_audits
 from site_audit import AuditError, Page, SafeFetcher, is_challenge, run_audit
@@ -302,7 +305,7 @@ def audits(monkeypatch):
         "https://boutique.example/produit/chaussure-trail/": (200, WOO_PRODUCT.replace("Sac à dos", "Sac &lt;img src=x onerror=alert(1)&gt;")),
         "https://boutique.example/": (200, WOO_HOME),
     }
-    monkeypatch.setattr(site_audits, "_run", lambda url, provided=None, source="robot": run_audit(url, fake_fetch(pages), provided=provided, source=source))
+    monkeypatch.setattr(site_audits, "_run", lambda url, provided=None, source="robot", job=None: run_audit(url, fake_fetch(pages), provided=provided, source=source))
     monkeypatch.setenv("SMTP_HOST", "smtp.test.invalid")
     monkeypatch.setenv("SMTP_USER", "noreply@likyly.test")
     monkeypatch.delenv("TURNSTILE_SECRET_KEY", raising=False)
@@ -313,6 +316,8 @@ def audits(monkeypatch):
     site_audits.misses.reset()
     site_audits.page_posts.reset()
     site_audits.sent_pages.reset()
+    site_audits.jobs.reset()
+    site_audits.browser_queue.reset()
     return {"sent": sent, "headers": {"X-Forwarded-For": f"2001:db8::{uuid.uuid4().hex[:4]}:{uuid.uuid4().hex[:4]}, 10.0.0.1"}}
 
 
@@ -363,7 +368,7 @@ def test_unknown_report(http, audits):
 
 
 def test_audit_errors_are_shown_to_the_visitor(http, audits, monkeypatch):
-    def failing(url, provided=None, source="robot"):
+    def failing(url, provided=None, source="robot", job=None):
         raise AuditError("Le site refuse les visites automatiques (erreur 403).", blocked=True)
     monkeypatch.setattr(site_audits, "_run", failing)
     response = http.post("/audits", json={"url": "https://x.example/"}, headers=audits["headers"])
@@ -719,6 +724,153 @@ def test_the_renderer_client(monkeypatch):
         client.render("https://a.example/busy")
     with pytest.raises(AuditError):
         client.render("file:///etc/passwd")
+
+
+# ---------------------------------------------------------------------------- the line in front of the browser
+
+class FakeBrowser:
+    """The renderer client, serving prepared pages (and counting them)."""
+
+    def __init__(self, pages: dict, calls: list):
+        self.render_page = fake_render(pages, calls)
+
+    def render(self, url: str, timeout_ms: int = 15000) -> Page:
+        return self.render_page(url)
+
+    def close(self):
+        pass
+
+
+class FakeFetcher:
+    pages: dict = {}
+
+    def __init__(self, allow_private=False):
+        self.fetch = fake_fetch(self.pages)
+
+    def get(self, url):
+        return self.fetch(url)
+
+    def close(self):
+        pass
+
+
+@pytest.fixture
+def shop_in_a_browser(audits, monkeypatch):
+    """The real _run: a shop whose blocks are drawn by JavaScript, and the audit's browser."""
+    url, other = "https://mode.example/p/veste", "https://mode.example/p/pull"
+    FakeFetcher.pages = {url: (200, SHELL_PAGE.replace("BLOCKS", "")), other: (200, SHELL_PAGE.replace("BLOCKS", ""))}
+    calls: list = []
+    browser = FakeBrowser({url: (200, _rendered(["pull", "gilet", "manteau", "echarpe"], ["bonnet", "gants", "pull", "botte"])),
+                           other: (200, _rendered(["veste", "chemise", "short", "jean"], ["sac", "ceinture", "veste", "polo"]))}, calls)
+    monkeypatch.setattr(site_audits, "_run", REAL_RUN)
+    monkeypatch.setattr(site_audits, "renderer", lambda: browser)
+    monkeypatch.setattr(site_audit, "SafeFetcher", FakeFetcher)
+    monkeypatch.setattr(site_audits, "SYNC_WAIT_SECONDS", 0.3)
+    return {**audits, "url": url, "calls": calls}
+
+
+REAL_RUN = site_audits._run
+
+
+def follow(http, job_id, until, seconds=10.0):
+    end = time.monotonic() + seconds
+    while time.monotonic() < end:
+        state = http.get(f"/audits/jobs/{job_id}").json()
+        if until(state):
+            return state
+        time.sleep(0.05)
+    raise AssertionError(f"job never reached the state: {state}")
+
+
+def test_audits_take_turns_in_front_of_the_browser(http, shop_in_a_browser):
+    queue = site_audits.browser_queue
+    before = audit_jobs.AuditJob()
+    assert queue.acquire(before)  # another audit has the browser
+    started = http.post("/audits", json={"url": shop_in_a_browser["url"]}, headers=shop_in_a_browser["headers"])
+    assert started.status_code == 202, started.text
+    job_id = started.json()["job"]
+    waiting = follow(http, job_id, lambda s: s["status"] == "waiting")
+    assert waiting["ahead"] == 1 and waiting["wait_seconds"] > 0
+    assert shop_in_a_browser["calls"] == []  # nothing shown while the other audit has the browser
+    queue.release(before)
+    done = follow(http, job_id, lambda s: s["status"] == "done")
+    report = done["report"]
+    assert report["rendered"] is True and report["score"] is not None and report["token"]
+    # its three pages in a row, then the browser is free again
+    assert shop_in_a_browser["calls"] == [shop_in_a_browser["url"], "https://mode.example/p/pull", shop_in_a_browser["url"]]
+    assert queue.holder is None and queue.waiting == []
+
+
+def test_a_full_line_gives_a_report_read_from_the_html(http, shop_in_a_browser, monkeypatch):
+    monkeypatch.setattr(audit_jobs, "MAX_WAITING", 0)
+    before = audit_jobs.AuditJob()
+    assert site_audits.browser_queue.acquire(before)
+    try:
+        started = http.post("/audits", json={"url": shop_in_a_browser["url"]}, headers=shop_in_a_browser["headers"])
+        body = started.json() if started.status_code == 201 else follow(http, started.json()["job"], lambda s: s["status"] == "done")["report"]
+        assert body["rendered"] is False and shop_in_a_browser["calls"] == []
+        token = body["token"]
+        full = http.post(f"/audits/{token}/email", json={"email": "camille@mode.example"}, headers=shop_in_a_browser["headers"]).json()
+        assert any("saturé" in n and "relancez l'audit" in n for n in full["notes"])
+    finally:
+        site_audits.browser_queue.release(before)
+
+
+def test_one_audit_at_a_time_per_visitor_and_unknown_jobs(http, shop_in_a_browser, monkeypatch):
+    monkeypatch.setattr(site_audits, "JOBS_PER_VISITOR", 1)
+    before = audit_jobs.AuditJob()
+    assert site_audits.browser_queue.acquire(before)
+    try:
+        started = http.post("/audits", json={"url": shop_in_a_browser["url"]}, headers=shop_in_a_browser["headers"])
+        assert started.status_code == 202
+        again = http.post("/audits", json={"url": shop_in_a_browser["url"]}, headers=shop_in_a_browser["headers"])
+        assert again.status_code == 429 and "déjà en cours" in again.json()["detail"]
+    finally:
+        site_audits.browser_queue.release(before)
+    follow(http, started.json()["job"], lambda s: s["status"] == "done")  # never left running after the test
+    assert http.get("/audits/jobs/inconnu").status_code == 404
+
+
+def test_the_browser_queue():
+    queue = audit_jobs.BrowserQueue()
+    first, second, third = audit_jobs.AuditJob(), audit_jobs.AuditJob(), audit_jobs.AuditJob()
+    assert queue.acquire(first)
+    got: dict = {}
+    waiters = [threading.Thread(target=lambda j=j: got.__setitem__(j.id, queue.acquire(j))) for j in (second, third)]
+    waiters[0].start()
+    _wait_for(lambda: second.status == "waiting")
+    waiters[1].start()
+    _wait_for(lambda: third.status == "waiting")
+    assert (second.ahead, third.ahead) == (1, 2) and third.wait_seconds > second.wait_seconds
+    queue.release(first)
+    _wait_for(lambda: queue.holder is second)  # first come, first served
+    assert third.ahead == 1 and second.status == "running"
+    queue.release(second)
+    _wait_for(lambda: queue.holder is third)
+    queue.release(third)
+    for waiter in waiters:
+        waiter.join(2)
+    assert got == {second.id: True, third.id: True} and queue.holder is None
+    queue.release(third)  # twice: harmless
+
+
+def test_a_visitor_who_left_or_waited_too_long_leaves_the_line(monkeypatch):
+    queue = audit_jobs.BrowserQueue()
+    holder, gone = audit_jobs.AuditJob(), audit_jobs.AuditJob()
+    assert queue.acquire(holder)
+    gone.last_seen -= audit_jobs.ABANDONED_AFTER_SECONDS + 1  # their page stopped asking
+    assert queue.acquire(gone) is False and queue.waiting == [] and gone.status == "running"
+    patient = audit_jobs.AuditJob()
+    assert queue.acquire(patient, max_wait=0.2) is False and queue.waiting == []
+    queue.release(holder)
+    assert queue.acquire(patient)
+
+
+def _wait_for(condition, seconds=5.0):
+    end = time.monotonic() + seconds
+    while not condition():
+        assert time.monotonic() < end, "timed out"
+        time.sleep(0.01)
 
 
 # ---------------------------------------------------------------------------- from the visitor's browser

@@ -1462,9 +1462,11 @@ CHALLENGE_ERROR = "Le site présente une vérification anti-robots à notre robo
 
 
 def run_audit(raw_url: str, fetch: Fetch, allow_private: bool = False, render: Optional[Render] = None,
-              provided: Optional[Page] = None, source: str = "robot") -> dict[str, Any]:
+              provided: Optional[Page] = None, source: str = "robot",
+              render_done: Optional[Callable[[], None]] = None) -> dict[str, Any]:
     """The whole audit of one page, as stored. `fetch` is SafeFetcher.get in production, a fake in tests.
-    `render` (optional) shows a page as a browser does. `provided`: the page as the visitor's own browser
+    `render` (optional) shows a page as a browser does; `render_done` is called once the audit needs it
+    no more (the browser goes to the next audit). `provided`: the page as the visitor's own browser
     gave it (source "browser": rendered, from the bookmarklet; "paste": its source code) - for sites
     that turn robots away."""
     url = normalize_input_url(raw_url, allow_private)
@@ -1540,6 +1542,8 @@ def run_audit(raw_url: str, fetch: Fetch, allow_private: bool = False, render: O
         except AuditError:
             reload = None
         compare_blocks(facts, reload, other, (other.item_name if other else "") or target.name)
+    if render_done is not None:
+        render_done()
 
     if facts.cms == "shopify":
         items = [i for b in facts.blocks for i in b.items]
