@@ -1,6 +1,11 @@
 """The free recommendation audit of www.likyly.com/audit - no account needed.
 
     POST /audits                 {url, captcha_token?}  runs the audit, answers the verdicts (teaser)
+                                 {page_id, captcha_token?}  ... of a page the visitor's browser sent
+                                 {url, html, captcha_token?}  ... of a page's pasted source code
+    POST /audits/page            form {url, html}       the bookmarklet: keeps the page the visitor's
+                                                          browser shows (for sites that turn robots
+                                                          away), redirects to www.likyly.com/audit?page=…
     POST /audits/{token}/email   {email}                 records the lead, answers the full report and
                                                           emails it (in the background)
     GET  /audits/{token}                                  the report again: full once an email was given
@@ -12,12 +17,16 @@ Limits per visitor (salted hash of the IP, never the address): a few audits an h
 day, and a cap on report reads - tighter on unknown tokens, so guessing links goes nowhere. When TURNSTILE_SECRET_KEY is set, POST /audits also needs a Cloudflare Turnstile
 token (the site sends it); without it, the check is skipped (local development).
 
+AUDIT_RENDERER_URL (+ AUDIT_RENDERER_TOKEN): the audit's browser (renderer/, its own container), for
+blocks drawn by JavaScript. Unset: the audit reads the HTML only.
+
 Marketing surface of the website, not part of the public API: hidden from /openapi.json.
 """
 import hashlib
 import html
 import os
 import re
+import secrets
 import sys
 import time
 from datetime import timedelta
@@ -28,7 +37,8 @@ from typing import Any, Optional
 
 import httpx
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
-from pydantic import BaseModel, Field
+from fastapi.responses import JSONResponse, RedirectResponse
+from pydantic import BaseModel, Field, model_validator
 from starlette.concurrency import run_in_threadpool
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -47,6 +57,9 @@ AUDITS_PER_HOUR = 6
 AUDITS_PER_DAY = 20
 EMAILS_PER_DAY = 5
 AUDIT_DEADLINE_SECONDS = 30
+RENDERED_AUDIT_DEADLINE_SECONDS = 50  # a browser needs 5 to 15 s a page; the site's Running steps keep going
+MAX_PAGE_CHARS = 6 * 1024 * 1024  # a page sent by the visitor's browser (scripts and styles trimmed)
+PAGES_PER_HOUR = 20
 REPORT_TTL_DAYS = 10
 READS_PER_HOUR = 60
 MISSES_PER_HOUR = 10
@@ -64,8 +77,50 @@ def allow_private() -> bool:
 
 
 class AuditCreate(BaseModel):
-    url: str = Field(..., min_length=1, max_length=2000)
+    url: Optional[str] = Field(None, min_length=1, max_length=2000)
     captcha_token: Optional[str] = Field(None, max_length=4096)
+    page_id: Optional[str] = Field(None, min_length=8, max_length=64)  # sent by the bookmarklet
+    html: Optional[str] = Field(None, min_length=1, max_length=MAX_PAGE_CHARS)  # pasted source code
+
+    @model_validator(mode="after")
+    def _one_source(self):
+        if not self.page_id and not self.url:
+            raise ValueError("url or page_id")
+        return self
+
+
+class PageStore:
+    """Pages the visitor's browser sent through the bookmarklet, kept in memory until the audit page
+    picks them up (once), for PAGE_TTL_SECONDS at most and MAX_TOTAL_CHARS in all. Never stored."""
+
+    PAGE_TTL_SECONDS = 15 * 60
+    MAX_TOTAL_CHARS = 40 * 1024 * 1024
+
+    def __init__(self):
+        self.pages: dict[str, tuple[float, str, str]] = {}
+
+    def _expire(self) -> None:
+        now = time.monotonic()
+        self.pages = {k: v for k, v in self.pages.items() if now - v[0] < self.PAGE_TTL_SECONDS}
+
+    def put(self, url: str, html_text: str) -> Optional[str]:
+        self._expire()
+        if sum(len(v[2]) for v in self.pages.values()) + len(html_text) > self.MAX_TOTAL_CHARS:
+            return None
+        page_id = secrets.token_urlsafe(16)
+        self.pages[page_id] = (time.monotonic(), url, html_text)
+        return page_id
+
+    def take(self, page_id: str) -> Optional[tuple[str, str]]:
+        self._expire()
+        entry = self.pages.pop(page_id, None)
+        return (entry[1], entry[2]) if entry else None
+
+    def reset(self) -> None:
+        self.pages.clear()
+
+
+sent_pages = PageStore()
 
 
 class AuditEmail(BaseModel):
@@ -130,6 +185,7 @@ class HourlyLimiter:
 
 reads = HourlyLimiter(READS_PER_HOUR)
 misses = HourlyLimiter(MISSES_PER_HOUR)
+page_posts = HourlyLimiter(PAGES_PER_HOUR)
 
 
 def expires_at(row: dict[str, Any]):
@@ -163,8 +219,14 @@ def public_report(row: dict[str, Any], full: bool) -> dict[str, Any]:
     }
 
 
-def _run(url: str) -> dict[str, Any]:
-    deadline = time.monotonic() + AUDIT_DEADLINE_SECONDS
+def renderer() -> Optional[site_audit.RendererClient]:
+    base = os.environ.get("AUDIT_RENDERER_URL")
+    return site_audit.RendererClient(base, os.environ.get("AUDIT_RENDERER_TOKEN")) if base else None
+
+
+def _run(url: str, provided: Optional[site_audit.Page] = None, source: str = "robot") -> dict[str, Any]:
+    browser = renderer()
+    deadline = time.monotonic() + (RENDERED_AUDIT_DEADLINE_SECONDS if browser else AUDIT_DEADLINE_SECONDS)
     fetcher = site_audit.SafeFetcher(allow_private=allow_private())
 
     def fetch(target: str) -> site_audit.Page:
@@ -172,10 +234,25 @@ def _run(url: str) -> dict[str, Any]:
             raise site_audit.AuditError("Le site met trop de temps à répondre.")
         return fetcher.get(target)
 
+    def render(target: str) -> site_audit.Page:
+        left = deadline - time.monotonic()
+        if left < 9:  # keep time for the rest of the audit (stock, UCP)
+            raise site_audit.AuditError("plus assez de temps pour l'afficher dans un navigateur")
+        assert browser is not None
+        return browser.render(target, int(min(15, left - 6) * 1000))
+
     try:
-        return site_audit.run_audit(url, fetch, allow_private=allow_private())
+        return site_audit.run_audit(url, fetch, allow_private=allow_private(), render=render if browser else None, provided=provided, source=source)
     finally:
         fetcher.close()
+        if browser:
+            browser.close()
+
+
+def audit_failed(error: site_audit.AuditError) -> JSONResponse:
+    """422 with the reason; `blocked` when the site turns robots away (the page offers the browser way)."""
+    log_event("site_audit_failed", reason=str(error)[:120], blocked=error.blocked)
+    return JSONResponse(status_code=422, content={"detail": str(error), "blocked": error.blocked})
 
 
 @router.post("", status_code=201, summary="Run a recommendation audit")
@@ -186,14 +263,57 @@ async def create_audit(payload: AuditCreate, request: Request):
     if db.count_site_audits_since(visitor, now - timedelta(hours=1)) >= AUDITS_PER_HOUR or db.count_site_audits_since(visitor, now - timedelta(days=1)) >= AUDITS_PER_DAY:
         raise HTTPException(status_code=429, detail="Vous avez lancé beaucoup d'audits : réessayez dans une heure.")
     await verify_captcha(payload.captcha_token, request)
+    provided: Optional[site_audit.Page] = None
+    source = "robot"
+    url = payload.url or ""
+    if payload.page_id:
+        sent = sent_pages.take(payload.page_id)
+        if sent is None:
+            raise HTTPException(status_code=410, detail="Cette page n'est plus disponible : retournez sur votre site et cliquez à nouveau sur le favori LIKYLY.")
+        url, page_html = sent
+        provided, source = site_audit.Page(url=url, status=200, text=page_html, content_type="text/html"), "browser"
+    elif payload.html is not None:
+        provided, source = site_audit.Page(url=url, status=200, text=payload.html, content_type="text/html"), "paste"
+        try:
+            provided.url = site_audit.normalize_input_url(url, allow_private())
+        except site_audit.AuditError as error:
+            return audit_failed(error)
     try:
-        result = await run_in_threadpool(_run, payload.url)
+        result = await run_in_threadpool(_run, url, provided, source)
     except site_audit.AuditError as error:
-        log_event("site_audit_failed", reason=str(error)[:120])
-        raise HTTPException(status_code=422, detail=str(error))
+        return audit_failed(error)
     row = db.create_site_audit(result["url"], result.get("host"), result.get("score"), result, visitor)
     log_event("site_audit_run", host=result.get("host"), cms=result["cms"]["id"], page_type=result["page_type"]["id"], score=result["score"])
     return public_report(row, full=False)
+
+
+@router.post("/page", summary="Send a page from the visitor's browser")
+async def receive_page(request: Request):
+    """The bookmarklet's form: the page as the visitor's browser shows it (a site that turns robots
+    away still shows itself to its visitors). Kept a few minutes, then the visitor lands on the audit
+    page, which runs the audit of it. A plain form POST - a navigation, not a cross-origin call - so
+    the site's own scripts and CORS rules don't get in the way."""
+    target = f"{site_url()}/audit/navigateur"
+    if not page_posts.allow(ip_hash(request)):
+        return RedirectResponse(f"{target}?erreur=limite", status_code=303)
+    try:
+        form = await request.form(max_files=0, max_fields=4, max_part_size=MAX_PAGE_CHARS * 2)
+    except Exception:
+        return RedirectResponse(f"{target}?erreur=trop-lourde", status_code=303)
+    url, page_html = form.get("url"), form.get("html")
+    if not isinstance(url, str) or not isinstance(page_html, str) or not page_html.strip():
+        return RedirectResponse(f"{target}?erreur=vide", status_code=303)
+    if len(page_html) > MAX_PAGE_CHARS:
+        return RedirectResponse(f"{target}?erreur=trop-lourde", status_code=303)
+    try:
+        url = site_audit.normalize_input_url(url, allow_private())
+    except site_audit.AuditError:
+        return RedirectResponse(f"{target}?erreur=adresse", status_code=303)
+    page_id = sent_pages.put(url, page_html)
+    if page_id is None:
+        return RedirectResponse(f"{target}?erreur=occupe", status_code=303)
+    log_event("site_audit_page_received", host=site_audit.urlsplit(url).hostname, chars=len(page_html))
+    return RedirectResponse(f"{site_url()}/audit?page={page_id}", status_code=303)
 
 
 @router.get("/{token}", summary="Get an audit report")

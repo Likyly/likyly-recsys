@@ -31,7 +31,7 @@ import re
 import socket
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Optional
-from urllib.parse import urljoin, urlsplit, urlunsplit
+from urllib.parse import parse_qs, urljoin, urlsplit, urlunsplit
 
 import httpx
 from bs4 import BeautifulSoup, Tag
@@ -43,7 +43,30 @@ MAX_REDIRECTS = 5
 
 
 class AuditError(Exception):
-    """A reason the audit can't run at all, worded for the visitor (shown as is)."""
+    """A reason the audit can't run at all, worded for the visitor (shown as is). `blocked`: the site
+    turns robots away - the visitor can still audit the page from their own browser."""
+
+    def __init__(self, message: str, blocked: bool = False):
+        super().__init__(message)
+        self.blocked = blocked
+
+
+# The page a site puts in front of robots it doesn't let through (Cloudflare, DataDome, Akamai,
+# PerimeterX, Imperva...). The audit stops there: it never tries to get past such a page.
+CHALLENGE_RE = re.compile(
+    r"<title>\s*(just a moment|attention required|client challenge|access denied|pardon our interruption|"
+    r"are you a (robot|human)|vérification|un instant|security check|bot verification|one more step)|"
+    r"challenge-platform|cf-chl-|_fs-ch-|px-captcha|captcha-delivery\.com|geo\.captcha|/_Incapsula_Resource|hcaptcha\.com/1/api|"
+    r"recaptcha/(api|enterprise)\.js\?render=explicit",
+    re.IGNORECASE,
+)
+
+
+def is_challenge(html: str) -> bool:
+    return bool(CHALLENGE_RE.search(html[:200_000]))
+
+
+BLOCKED_HINT = " Vous pouvez l'auditer depuis votre navigateur."
 
 
 # --------------------------------------------------------------------------------------------
@@ -56,6 +79,7 @@ class Page:
     status: int
     text: str
     content_type: str = ""
+    challenge: bool = False  # the browser was shown an anti-robot page (renderer)
 
 
 def normalize_input_url(raw: str, allow_private: bool = False) -> str:
@@ -148,13 +172,44 @@ class SafeFetcher:
                         text = bytes(body).decode("utf-8", errors="replace")
                     return Page(url=current, status=response.status_code, text=text, content_type=response.headers.get("content-type", ""))
             except httpx.TimeoutException:
-                raise AuditError(f"Le site {host} ne répond pas à notre robot d'analyse : il est trop lent, ou il ignore les visites automatiques.")
+                raise AuditError(f"Le site {host} ne répond pas à notre robot d'analyse : il est trop lent, ou il ignore les visites automatiques." + BLOCKED_HINT, blocked=True)
             except httpx.HTTPError:
-                raise AuditError(f"Impossible de joindre {host}.")
+                raise AuditError(f"Impossible de joindre {host} : le site est hors ligne, ou il coupe la connexion aux visites automatiques." + BLOCKED_HINT, blocked=True)
         raise AuditError("La page redirige trop de fois.")
 
 
 Fetch = Callable[[str], Page]
+Render = Callable[[str], Page]  # the page as a browser shows it, after JavaScript (renderer/server.py)
+
+
+class RendererClient:
+    """The audit's browser: a separate container (renderer/server.py), with its own memory cap and an
+    egress limited to public websites. Not configured (AUDIT_RENDERER_URL unset) = no rendering."""
+
+    def __init__(self, base_url: str, token: Optional[str] = None, client: Optional[httpx.Client] = None):
+        self.base_url = base_url.rstrip("/")
+        self.token = token
+        self.client = client or httpx.Client()
+
+    def close(self) -> None:
+        self.client.close()
+
+    def render(self, url: str, timeout_ms: int = 15000) -> Page:
+        if not url.startswith(("http://", "https://")):
+            raise AuditError("Adresse invalide.")
+        headers = {"X-Renderer-Token": self.token} if self.token else {}
+        try:
+            answer = self.client.post(f"{self.base_url}/render", json={"url": url, "timeout_ms": timeout_ms}, headers=headers, timeout=timeout_ms / 1000 + 8)
+        except httpx.HTTPError:
+            raise AuditError("le navigateur d'audit ne répond pas")
+        if answer.status_code == 503:
+            raise AuditError("le navigateur d'audit est occupé par une autre analyse")
+        if answer.status_code == 504:
+            raise AuditError("la page met trop de temps à s'afficher")
+        if answer.status_code != 200:
+            raise AuditError("le navigateur d'audit n'a pas pu ouvrir la page")
+        body = answer.json()
+        return Page(url=body["url"], status=int(body["status"]), text=body["html"], content_type="text/html", challenge=bool(body.get("challenge")))
 
 
 # --------------------------------------------------------------------------------------------
@@ -303,6 +358,8 @@ class Block:
     js_only: bool = False
     platform: str = ""
     claims_personal: bool = False  # titled "Pour vous" whatever actually chooses it
+    browser_only: bool = False  # absent from the HTML, drawn by JavaScript (seen in the rendered page)
+    sponsored: bool = False  # labelled "Sponsorisé" / "Sponsored": paid placements
     # What was seen, not assumed: "varies" (other products on another item page), "fixed" (the same
     # products there), "random" (other products on a second load of the same page), None (not compared).
     verified: Optional[str] = None
@@ -312,7 +369,7 @@ class Block:
     def public(self) -> dict[str, Any]:
         return {
             "title": self.title, "source": self.source, "kind": self.kind, "js_only": self.js_only, "claims_personal": self.claims_personal,
-            "verified": self.verified, "evidence": self.evidence,
+            "browser_only": self.browser_only, "sponsored": self.sponsored, "verified": self.verified, "evidence": self.evidence,
             "items": [{"name": i.name, "url": i.url, "unavailable": i.unavailable} for i in self.items[:24]],
             "item_count": len(self.items),
         }
@@ -523,7 +580,7 @@ def _item_link(anchor: Tag, base_url: str, host: str) -> Optional[tuple[str, str
     href = anchor.get("href", "").strip()
     if not href or href.startswith(("#", "javascript:", "mailto:", "tel:")):
         return None
-    absolute = urljoin(base_url, href)
+    absolute = _unwrap_redirect(urljoin(base_url, href))
     parts = urlsplit(absolute)
     if parts.scheme not in ("http", "https") or (parts.hostname or "").removeprefix("www.") != host:
         return None
@@ -533,6 +590,25 @@ def _item_link(anchor: Tag, base_url: str, host: str) -> Optional[tuple[str, str
     if not anchor.find("img") and not anchor.find(["h2", "h3", "h4"]) and (not label or MORE_LINK_RE.match(label)):
         return None  # "Voir plus", "See all", an icon: a link to the full list, not an item
     return item_key(absolute), absolute
+
+
+REDIRECT_PARAMS = ("url", "u", "redirect", "redirect_url", "redirectUrl", "to", "target", "dest", "destination")
+
+
+def _unwrap_redirect(absolute: str) -> str:
+    """A click-tracking link (Amazon's /sspa/click?…&url=/dp/…, a widget's /redirect?to=…) stands
+    for the page it leads to, when that page is on the same site."""
+    parts = urlsplit(absolute)
+    if not parts.query:
+        return absolute
+    params = parse_qs(parts.query)
+    for name in REDIRECT_PARAMS:
+        for value in params.get(name, []):
+            if value.startswith("/") and not value.startswith("//"):
+                return urljoin(absolute, value)
+            if value.startswith(("http://", "https://")) and urlsplit(value).hostname == parts.hostname:
+                return value
+    return absolute
 
 
 def _card_of(anchor: Tag, node: Tag, base_url: str, host: str, key: str) -> Tag:
@@ -594,6 +670,8 @@ def _items_in(node: Tag, base_url: str) -> list[Item]:
     host = (urlsplit(base_url).hostname or "").removeprefix("www.")
     items: list[Item] = []
     cards: list[Any] = []
+    list_cards: list[Optional[Tag]] = []  # the <li>/<article> each item was found in
+    strong: list[bool] = []  # its link carries the card's title or image
     for anchor in node.find_all("a", href=True):
         link = _item_link(anchor, base_url, host)
         if link is None:
@@ -614,7 +692,33 @@ def _items_in(node: Tag, base_url: str) -> list[Item]:
             continue
         items.append(Item(key=key, url=absolute, name=name, unavailable=unavailable))
         cards.append(card)
-    return items
+        list_cards.append(next((p for p in anchor.parents if p is node or _is_list_card(p)), None))
+        strong.append(bool(anchor.find("img") or anchor.find(["h2", "h3", "h4"]) or anchor.find(class_=TITLE_CLASS_RE) or TITLE_CLASS_RE.search(" ".join(anchor.get("class", [])))))
+    return _one_item_per_list_card(items, list_cards, strong, node)
+
+
+def _one_item_per_list_card(items: list[Item], list_cards: list[Optional[Tag]], strong: list[bool], node: Tag) -> list[Item]:
+    """In a list card (<li>, <article>), the item is the link with the card's title or image: the
+    other links of the card (its author, brand, the e-book format of the same product) are not
+    other recommendations."""
+    groups: dict[int, list[int]] = {}
+    for index, card in enumerate(list_cards):
+        if card is not None and card is not node and card.name in ("li", "article"):
+            groups.setdefault(id(card), []).append(index)
+    drop: set[int] = set()
+    for indexes in groups.values():
+        if len(indexes) < 2:
+            continue
+        primary = next((i for i in indexes if strong[i]), None)
+        if primary is None:
+            continue
+        for i in indexes:
+            if i == primary:
+                continue
+            if items[i].key == items[primary].key:
+                items[primary].unavailable = items[primary].unavailable or items[i].unavailable
+            drop.add(i)
+    return [item for i, item in enumerate(items) if i not in drop]
 
 
 def _nearest_heading_text(node: Tag) -> str:
@@ -669,7 +773,7 @@ def find_blocks(soup: BeautifulSoup, base_url: str, cms: str, vendors: list[dict
             continue
         if heading_kind(text) == "popular" and not _looks_like_title(heading) and len(text.split()) <= 2:
             continue  # "Best seller" on a product card is a badge, not the title of a block
-        chrome = heading.find_parent(["nav", "footer", "header", "form"])
+        chrome = next((p for p in heading.parents if isinstance(p, Tag) and (p.name in ("nav", "footer", "form") or (p.name == "header" and _is_page_header(p)))), None)
         if chrome is not None and (page_title is None or chrome not in page_title.parents):
             continue  # site navigation - unless broken markup wrapped the whole page in it
         container: Optional[Tag] = heading
@@ -751,6 +855,17 @@ def _in_reviews(node: Tag) -> bool:
     return False
 
 
+def _is_page_header(header: Tag) -> bool:
+    """The site's banner, not the <header> of a section ("Les internautes ont aussi acheté" in its
+    own <header>): marked as the banner, or outside any main/section/article/aside with the site's
+    menu or search in it."""
+    if header.get("role") == "banner":
+        return True
+    if header.find_parent(["main", "section", "article", "aside"]) is not None:
+        return False
+    return header.find(["nav", "input"]) is not None or header.find_parent("body") is header.parent or header.parent is None
+
+
 def _looks_like_title(node: Tag) -> bool:
     return node.name in ("h2", "h3", "h4") or bool(re.search(r"title|heading|headline", " ".join(node.get("class", [])), re.IGNORECASE))
 
@@ -775,6 +890,9 @@ def analyze_page(page: Page, soup: Optional[BeautifulSoup] = None) -> PageFacts:
     page_type, name, structured = detect_page_type(soup, html, page.url, nodes, cms)
     canonical_key = item_key(_canonical(soup, page.url))
     blocks = find_blocks(soup, page.url, cms, vendors, canonical_key)
+    for block in blocks:
+        if block.element is not None and block.items and SPONSORED_RE.search(_text(block.element)[:400]):
+            block.sponsored = True
     shopify_id = None
     if cms == "shopify":
         match = re.search(r'"product"\s*:\s*\{\s*"id"\s*:\s*(\d+)', html) or re.search(r"product_id=(\d+)", html) or re.search(r'"productId"\s*:\s*"?(\d+)', html)
@@ -790,6 +908,7 @@ def analyze_page(page: Page, soup: Optional[BeautifulSoup] = None) -> PageFacts:
     )
 
 
+SPONSORED_RE = re.compile(r"\bsponsoris[ée]e?s?\b|\bsponsored\b", re.IGNORECASE)
 SCRIPT_RECO_RE = re.compile(r"you (may|might) also like|customers (also|who)|also (bought|viewed|enjoyed)|frequently bought|similar (products|items)|"
                             r"vous aimerez aussi|recommendations?\W{1,3}(widget|carousel|placement|slot)|ont aussi (aimé|acheté)|readers also|more like this|"
                             r"(à |a )?lire aussi|related (articles|stories|content)|\brecommendations\b|\brecommandations\b|read next|most (read|viewed)", re.IGNORECASE)
@@ -1265,38 +1384,113 @@ NEXT_STEPS = {
 DEFAULT_NEXT_STEP = {"title": "Installez LIKYLY sur votre site", "text": "Les deux blocs, produits proches et « les clients ont aussi aimé », adaptés à chaque visiteur. Un assistant détecte votre technologie et les installe : npx @likyly/wizard, ou un SDK pour chaque langage.", "href": "/docs/installation", "cta": "Voir l'installation"}
 
 
-def run_audit(raw_url: str, fetch: Fetch, allow_private: bool = False) -> dict[str, Any]:
-    """The whole audit of one page, as stored. `fetch` is SafeFetcher.get in production, a fake in tests."""
+def needs_rendering(facts: PageFacts) -> bool:
+    """Read the page in a browser too when what makes the audit - a block related to the item and one
+    learned from other visitors - can't be read in its HTML, or a block is left empty for JavaScript."""
+    readable = [b for b in facts.blocks if b.items]
+    has_similar = any(b.kind == "similar" for b in readable)
+    has_behavior = any(b.kind in ("behavior", "complement") for b in readable)
+    return not (has_similar and has_behavior) or any(b.js_only for b in facts.blocks) or facts.text_chars < 600
+
+
+def merge_rendered(static: PageFacts, rendered: PageFacts) -> PageFacts:
+    """The rendered page's blocks (what visitors see), with what robots that don't run JavaScript read
+    taken from the HTML: structured data, and which blocks exist only once JavaScript has run."""
+    static_titles = {_signature(b.title) for b in static.blocks if b.items}
+    static_keys = [{i.key for i in b.items} for b in static.blocks if b.items]
+    for block in rendered.blocks:
+        keys = {i.key for i in block.items}
+        block.browser_only = bool(block.items) and _signature(block.title) not in static_titles and not any(len(keys & k) >= 2 for k in static_keys)
+    # A block of the HTML that the rendered page doesn't show (another version of the page served
+    # to browsers, a consent layer over it...) is still there for robots: kept.
+    rendered_titles = {_signature(b.title) for b in rendered.blocks if b.items}
+    rendered_keys = [{i.key for i in b.items} for b in rendered.blocks if b.items]
+    for block in static.blocks:
+        keys = {i.key for i in block.items}
+        if block.items and _signature(block.title) not in rendered_titles and not any(len(keys & k) >= 2 for k in rendered_keys):
+            rendered.blocks.append(block)
+    rendered.structured = static.structured
+    if static.page_type != "other":
+        rendered.page_type = static.page_type
+    rendered.item_name = static.item_name or rendered.item_name
+    if static.cms != "unknown":
+        rendered.cms = static.cms
+    known = {v["id"] for v in static.vendors}
+    rendered.vendors = static.vendors + [v for v in rendered.vendors if v["id"] not in known]
+    rendered.canonical_key = static.canonical_key or rendered.canonical_key
+    rendered.shopify_product_id = static.shopify_product_id or rendered.shopify_product_id
+    rendered.js_reco_signals = static.js_reco_signals or rendered.js_reco_signals
+    rendered.text_chars = max(static.text_chars, rendered.text_chars)
+    return rendered
+
+
+def _blocked(status: int) -> AuditError:
+    return AuditError(f"Le site refuse les visites automatiques (erreur {status}) : sa protection anti-robots empêche notre robot de lire la page." + BLOCKED_HINT, blocked=True)
+
+
+CHALLENGE_ERROR = "Le site présente une vérification anti-robots à notre robot d'analyse : il ne lit pas les pages protégées ainsi." + BLOCKED_HINT
+
+
+def run_audit(raw_url: str, fetch: Fetch, allow_private: bool = False, render: Optional[Render] = None,
+              provided: Optional[Page] = None, source: str = "robot") -> dict[str, Any]:
+    """The whole audit of one page, as stored. `fetch` is SafeFetcher.get in production, a fake in tests.
+    `render` (optional) shows a page as a browser does. `provided`: the page as the visitor's own browser
+    gave it (source "browser": rendered, from the bookmarklet; "paste": its source code) - for sites
+    that turn robots away."""
     url = normalize_input_url(raw_url, allow_private)
-    page = fetch(url)
-    if page.status in (401, 403, 429, 503):
-        raise AuditError(f"Le site refuse les visites automatiques (erreur {page.status}) : sa protection anti-robots empêche l'analyse.")
-    if page.status >= 400:
-        raise AuditError(f"La page répond avec une erreur {page.status} : vérifiez l'adresse.")
-    if "html" not in (page.content_type or "text/html").lower():
-        raise AuditError("Cette adresse ne mène pas à une page web.")
+    if provided is None:
+        page = fetch(url)
+        if page.status in (401, 403, 429, 503):
+            raise _blocked(page.status)
+        if page.status >= 400:
+            raise AuditError(f"La page répond avec une erreur {page.status} : vérifiez l'adresse.")
+        if "html" not in (page.content_type or "text/html").lower():
+            raise AuditError("Cette adresse ne mène pas à une page web.")
+    else:
+        page = provided
+    if is_challenge(page.text):
+        if provided is not None:
+            raise AuditError("Ce code est celui de la page de vérification anti-robots du site, pas celui de la fiche : ouvrez la fiche elle-même dans votre navigateur, puis recommencez.")
+        raise AuditError(CHALLENGE_ERROR, blocked=True)
     facts = analyze_page(page)
-    if facts.text_chars < 600 and not facts.blocks:
-        raise AuditError("Cette page est construite entièrement en JavaScript : son contenu n'est pas lisible sans navigateur, l'audit ne peut pas l'analyser.")
     notes: list[str] = []
     stock_checked = False
 
+    # Recommendations drawn by JavaScript: read the page as a browser shows it.
+    rendered = source == "browser"
+    if render is not None and provided is None and needs_rendering(facts):
+        try:
+            shown = render(page.url)
+            if shown.challenge:
+                notes.append("Notre navigateur d'audit a reçu une vérification anti-robots : seuls les blocs présents dans le HTML ont été lus.")
+            elif shown.status >= 400:
+                notes.append(f"Notre navigateur d'audit a reçu une erreur {shown.status} : seuls les blocs présents dans le HTML ont été lus.")
+            else:
+                facts = merge_rendered(facts, analyze_page(shown))
+                rendered = True
+        except AuditError as error:
+            notes.append(f"Lecture dans un navigateur impossible ({error}) : seuls les blocs présents dans le HTML ont été lus.")
+    if facts.text_chars < 600 and not facts.blocks:
+        raise AuditError("Cette page est construite entièrement en JavaScript : son contenu n'est pas lisible sans navigateur, l'audit ne peut pas l'analyser.")
+
     fill_shopify_sections(fetch, facts)
 
-    # Seen, not assumed: the same page loaded again, and the page of another recommended item.
+    def open_page(target_url: str) -> Page:
+        """Another page, read the way the audited page was: in a browser when its blocks needed one."""
+        if rendered and render is not None:
+            shown = render(target_url)
+            if shown.challenge:
+                raise AuditError("le site a présenté une vérification anti-robots")
+            return shown
+        return fetch(target_url)
+
+    # Seen, not assumed: the page of another recommended item, and the same page loaded again.
     reload: Optional[PageFacts] = None
     other: Optional[PageFacts] = None
     target = _comparison_target(facts)
     if target is not None:
         try:
-            again = fetch(page.url)
-            if again.status == 200:
-                reload = analyze_page(again)
-                fill_shopify_sections(fetch, reload)
-        except AuditError:
-            reload = None
-        try:
-            second = fetch(target.url)
+            second = open_page(target.url)
             if second.status == 200 and "html" in (second.content_type or "text/html").lower():
                 other = analyze_page(second)
                 fill_shopify_sections(fetch, other)
@@ -1304,6 +1498,13 @@ def run_audit(raw_url: str, fetch: Fetch, allow_private: bool = False) -> dict[s
                 notes.append(f"La fiche « {target.name or target.url} » n'a pas pu être ouverte pour comparer les blocs (erreur {second.status}).")
         except AuditError as error:
             notes.append(f"La fiche « {target.name or target.url} » n'a pas pu être ouverte pour comparer les blocs : {error}")
+        try:
+            again = open_page(page.url)
+            if again.status == 200:
+                reload = analyze_page(again)
+                fill_shopify_sections(fetch, reload)
+        except AuditError:
+            reload = None
         compare_blocks(facts, reload, other, (other.item_name if other else "") or target.name)
 
     if facts.cms == "shopify":
@@ -1313,7 +1514,23 @@ def run_audit(raw_url: str, fetch: Fetch, allow_private: bool = False) -> dict[s
 
     js_blocks = [b for b in facts.blocks if b.js_only]
     if js_blocks:
-        notes.append(f"{_plural(len(js_blocks), 'bloc se remplit', 'blocs se remplissent')} en JavaScript : leur contenu n'a pas pu être lu sans navigateur.")
+        if rendered:
+            notes.append(f"{_plural(len(js_blocks), 'bloc reste vide', 'blocs restent vides')} même dans notre navigateur d'audit : souvent un bloc lié à "
+                         "l'historique du visiteur (articles vus récemment), vide pour une première visite, ou un bloc qui attend une action.")
+        else:
+            notes.append(f"{_plural(len(js_blocks), 'bloc se remplit', 'blocs se remplissent')} en JavaScript : leur contenu n'a pas pu être lu sans navigateur.")
+    sponsored = [b for b in facts.blocks if b.sponsored]
+    if sponsored:
+        notes.append(f"{_quote(sponsored)} : emplacement{'s' if len(sponsored) > 1 else ''} sponsorisé{'s' if len(sponsored) > 1 else ''} (publicité), compté{'s' if len(sponsored) > 1 else ''} comme recommandation{'s' if len(sponsored) > 1 else ''} de la page.")
+    browser_only = [b for b in facts.blocks if b.browser_only]
+    if browser_only and source != "browser":
+        verb = "n'existe" if len(browser_only) == 1 else "n'existent"
+        notes.append(f"{_quote(browser_only)} {verb} qu'une fois le JavaScript exécuté : "
+                     "lu dans notre navigateur d'audit. Google le voit ; la plupart des assistants IA, qui lisent le HTML, non.")
+    if source == "browser":
+        notes.append("Page lue depuis votre navigateur, telle qu'elle s'affichait chez vous : le site refuse notre robot.")
+    elif source == "paste":
+        notes.append("Page lue depuis le code source collé : les blocs que le JavaScript ajoute après coup n'y figurent pas.")
 
     origin = f"{urlsplit(page.url).scheme}://{urlsplit(page.url).netloc}/"
     # A yes or a no: published (200 with a JSON profile) or not - a file that doesn't answer isn't published.
@@ -1330,6 +1547,8 @@ def run_audit(raw_url: str, fetch: Fetch, allow_private: bool = False) -> dict[s
         "url": url,
         "final_url": page.url,
         "host": urlsplit(page.url).hostname,
+        "source": source,
+        "rendered": rendered,
         "cms": {"id": facts.cms, "label": CMS_LABELS.get(facts.cms, facts.cms)},
         "page_type": {"id": facts.page_type, "label": PAGE_TYPE_LABELS.get(facts.page_type, facts.page_type)},
         "item_name": facts.item_name,
@@ -1348,7 +1567,7 @@ def run_audit(raw_url: str, fetch: Fetch, allow_private: bool = False) -> dict[s
 def teaser(result: dict[str, Any]) -> dict[str, Any]:
     """What the page shows before the email: the verdicts, not the explanations or the evidence."""
     return {
-        **{k: result.get(k) for k in ("url", "final_url", "host", "cms", "page_type", "item_name", "vendors", "score", "grade", "partial")},
+        **{k: result.get(k) for k in ("url", "final_url", "host", "source", "rendered", "cms", "page_type", "item_name", "vendors", "score", "grade", "partial")},
         "kpis": [{k: v for k, v in kpi.items() if k in ("id", "label", "about", "status", "summary", "weight", "method")} for kpi in result["kpis"]],
         "block_count": len(result["blocks"]),
     }

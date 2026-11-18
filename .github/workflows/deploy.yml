@@ -17,6 +17,8 @@ on:
 
 env:
   IMAGE: ghcr.io/likyly/recsys-api
+  # The free audit's browser (renderer/): its own small image and container, next to recsys-api.
+  RENDERER_IMAGE: ghcr.io/likyly/audit-renderer
 
 jobs:
   # Nothing is deployed unless this passes. The tests run INSIDE the production image
@@ -80,6 +82,21 @@ jobs:
                       application/api/ingestion.py application/api/recommender.py application/utils/migrate.py \
               && pytest -q"
 
+      - name: Build the audit browser image (renderer/), pushed as the commit's tag
+        uses: docker/build-push-action@v6
+        with:
+          context: renderer
+          load: true
+          push: true
+          tags: ${{ env.RENDERER_IMAGE }}:${{ github.sha }}
+          cache-from: type=gha,scope=renderer
+          cache-to: type=gha,mode=max,scope=renderer
+
+      - name: Test the audit browser's egress proxy in its image
+        run: |
+          docker run --rm -u root "$RENDERER_IMAGE:${{ github.sha }}" \
+            sh -c "pip install --quiet pytest==9.1.1 && python -m pytest -q -p no:cacheprovider tests"
+
       - name: docs/openapi.json is up to date
         run: |
           docker run --rm --network host \
@@ -121,9 +138,11 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Promote the tested image to :latest
+      - name: Promote the tested images to :latest
         if: steps.latest.outputs.deploy == 'true'
-        run: docker buildx imagetools create -t "$IMAGE:latest" "$IMAGE:${{ github.sha }}"
+        run: |
+          docker buildx imagetools create -t "$IMAGE:latest" "$IMAGE:${{ github.sha }}"
+          docker buildx imagetools create -t "$RENDERER_IMAGE:latest" "$RENDERER_IMAGE:${{ github.sha }}"
 
       - name: Setup SSH
         if: steps.latest.outputs.deploy == 'true'
@@ -152,6 +171,9 @@ jobs:
           # Free audit (www.likyly.com/audit): Cloudflare Turnstile check on POST /audits. Empty =
           # no check (the per-visitor rate limits still apply).
           TURNSTILE_SECRET_KEY=${{ secrets.TURNSTILE_SECRET_KEY }}
+          # The audit's browser, for recommendation blocks drawn by JavaScript (renderer/, the
+          # audit-renderer container below). Empty = the audit reads the HTML only.
+          AUDIT_RENDERER_URL=http://audit-renderer:7000
           SENTRY_DSN=${{ secrets.SENTRY_DSN }}
           SENTRY_ENVIRONMENT=production
           TEAM_ALERT_WEBHOOK_URL=${{ secrets.TEAM_ALERT_WEBHOOK_URL }}
@@ -196,24 +218,45 @@ jobs:
               volumes:
                 - ./application/api/.env:/srv/application/api/.env:ro
                 - recsys_model_data:/srv/model
-              networks: [web]
+              networks: [web, audit]
               restart: unless-stopped
+            # The free audit's browser (renderer/server.py). On a network of its own, shared with
+            # recsys-api only; its pages reach public websites and nothing else (egress proxy).
+            # Hard caps so a heavy page can't hurt the rest of this 2 GB droplet: no swap, one CPU,
+            # first in line for the OOM killer. Idle, it holds no browser (~60 MB).
+            audit-renderer:
+              image: ghcr.io/likyly/audit-renderer:latest
+              container_name: audit-renderer
+              expose:
+                - "7000"
+              networks: [audit]
+              restart: unless-stopped
+              init: true
+              mem_limit: 600m
+              memswap_limit: 600m
+              cpus: 1.0
+              pids_limit: 400
+              oom_score_adj: 900
+              cap_drop: [ALL]
+              security_opt: ["no-new-privileges:true"]
           networks:
             web:
               name: licenses_web
               external: true
+            audit:
+              name: recsys-audit
           volumes:
             recsys_model_data:
               name: licenses_recsys_model_data
               external: true
           COMPOSE
-          docker compose pull recsys-api
+          docker compose pull recsys-api audit-renderer
           # One-time migration: the running container still belongs to the old "licenses"
           # compose project and holds the recsys-api name. No-op afterwards.
           if [ "$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project" }}' recsys-api 2>/dev/null)" = "licenses" ]; then
             docker rm -f recsys-api
           fi
-          docker compose up -d recsys-api
+          docker compose up -d recsys-api audit-renderer
           docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}"
 
           docker image prune -af

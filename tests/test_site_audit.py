@@ -302,7 +302,7 @@ def audits(monkeypatch):
         "https://boutique.example/produit/chaussure-trail/": (200, WOO_PRODUCT.replace("Sac à dos", "Sac &lt;img src=x onerror=alert(1)&gt;")),
         "https://boutique.example/": (200, WOO_HOME),
     }
-    monkeypatch.setattr(site_audits, "_run", lambda url: run_audit(url, fake_fetch(pages)))
+    monkeypatch.setattr(site_audits, "_run", lambda url, provided=None, source="robot": run_audit(url, fake_fetch(pages), provided=provided, source=source))
     monkeypatch.setenv("SMTP_HOST", "smtp.test.invalid")
     monkeypatch.setenv("SMTP_USER", "noreply@likyly.test")
     monkeypatch.delenv("TURNSTILE_SECRET_KEY", raising=False)
@@ -311,6 +311,8 @@ def audits(monkeypatch):
     monkeypatch.setattr(site_audits, "deliver", lambda message, settings: sent.append(message))
     site_audits.reads.reset()
     site_audits.misses.reset()
+    site_audits.page_posts.reset()
+    site_audits.sent_pages.reset()
     return {"sent": sent, "headers": {"X-Forwarded-For": f"203.0.113.{uuid.uuid4().int % 250}, 10.0.0.1"}}
 
 
@@ -361,12 +363,13 @@ def test_unknown_report(http, audits):
 
 
 def test_audit_errors_are_shown_to_the_visitor(http, audits, monkeypatch):
-    def failing(url):
-        raise AuditError("Le site refuse les visites automatiques (erreur 403).")
+    def failing(url, provided=None, source="robot"):
+        raise AuditError("Le site refuse les visites automatiques (erreur 403).", blocked=True)
     monkeypatch.setattr(site_audits, "_run", failing)
     response = http.post("/audits", json={"url": "https://x.example/"}, headers=audits["headers"])
     assert response.status_code == 422
     assert "refuse" in response.json()["detail"]
+    assert response.json()["blocked"] is True  # the page then offers the browser way
 
 
 def test_rate_limits_per_visitor(http, audits):
@@ -593,3 +596,161 @@ def test_no_score_when_no_recommendation_can_be_read():
     url = "https://spa.example/p/produit-123456"
     result = run_audit(url, fake_fetch({url: (200, page)}))
     assert result["score"] is None and result["grade"] is None and result["partial"] is True
+
+
+# ---------------------------------------------------------------------------- the audit's browser
+
+SHELL_PAGE = """<html><head><script type="application/ld+json">{"@type":"Product","name":"Veste","image":"v.jpg","offers":{"price":"90","availability":"InStock"}}</script>
+<script>window.reco = {placement: "you may also like"};</script></head><body><h1>Veste</h1><p>""" + "Une veste chaude et légère. " * 40 + """</p>
+<div id="reco-similar"></div><div id="reco-bought"></div>BLOCKS</body></html>"""
+
+
+def _shop_block(title, slugs):
+    return f'<section><h2>{title}</h2><ul>' + "".join(f'<li><a href="/p/{s}">{s.title()}</a></li>' for s in slugs) + "</ul></section>"
+
+
+def _rendered(similar, bought):
+    return SHELL_PAGE.replace("BLOCKS", _shop_block("Vous aimerez aussi", similar) + _shop_block("Les clients ont aussi acheté", bought))
+
+
+def fake_render(pages: dict, calls: list):
+    def render(url: str) -> Page:
+        calls.append(url)
+        answer = pages.get(url)
+        if answer is None:
+            raise AuditError("la page met trop de temps à s'afficher")
+        status, body = answer[:2]
+        return Page(url=url, status=status, text=body, content_type="text/html", challenge=len(answer) > 2 and answer[2])
+    return render
+
+
+def test_blocks_drawn_by_javascript_are_read_in_a_browser():
+    url, other = "https://mode.example/p/veste", "https://mode.example/p/pull"
+    calls: list = []
+    result = run_audit(url, fake_fetch({url: (200, SHELL_PAGE.replace("BLOCKS", "")), other: (200, SHELL_PAGE.replace("BLOCKS", ""))}),
+                       render=fake_render({url: (200, _rendered(["pull", "gilet", "manteau", "echarpe"], ["bonnet", "gants", "pull", "botte"])),
+                                           other: (200, _rendered(["veste", "chemise", "short", "jean"], ["sac", "ceinture", "veste", "polo"]))}, calls))
+    assert result["rendered"] is True and result["source"] == "robot"
+    assert [b["browser_only"] for b in result["blocks"]] == [True, True]
+    assert kpi(result, "similar_block")["status"] == "pass"  # read in the browser, and it follows the product
+    assert kpi(result, "behavior_block")["status"] == "pass"
+    assert kpi(result, "self_reco")["status"] == "pass"
+    assert result["score"] is not None
+    # the comparisons were made in the browser too: the other product, then a second load
+    assert calls == [url, other, url]
+    assert any("assistants IA" in n for n in result["notes"])
+
+
+def test_a_page_whose_html_has_both_blocks_is_not_rendered():
+    url = "https://mode.example/p/veste"
+    page = _rendered(["pull", "gilet", "manteau", "echarpe"], ["bonnet", "gants", "pull", "botte"])
+    calls: list = []
+    result = run_audit(url, fake_fetch({url: (200, page)}), render=fake_render({}, calls))
+    assert calls == [] and result["rendered"] is False
+    assert [b["browser_only"] for b in result["blocks"]] == [False, False]
+
+
+def test_a_browser_that_cannot_help_leaves_the_html_audit():
+    url = "https://mode.example/p/veste"
+    static = SHELL_PAGE.replace("BLOCKS", "")
+    challenged = run_audit(url, fake_fetch({url: (200, static)}), render=fake_render({url: (200, "<html><title>Just a moment...</title></html>", True)}, []))
+    assert challenged["rendered"] is False and any("vérification anti-robots" in n for n in challenged["notes"])
+    down = run_audit(url, fake_fetch({url: (200, static)}), render=fake_render({}, []))
+    assert down["rendered"] is False and any("navigateur impossible" in n for n in down["notes"])
+
+
+def test_anti_robot_pages_are_never_audited():
+    url = "https://mode.example/p/veste"
+    for page in ('<html><head><title>Just a moment...</title></head><body><div id="challenge-platform"></div></body></html>',
+                 '<html><head><title>Client Challenge</title><script src="/_fs-ch-1T1/script.js"></script></head></html>'):
+        with pytest.raises(AuditError) as error:
+            run_audit(url, fake_fetch({url: (200, page)}))
+        assert error.value.blocked is True and "navigateur" in str(error.value)
+    with pytest.raises(AuditError) as error:
+        run_audit(url, fake_fetch({url: (403, "no")}))
+    assert error.value.blocked is True
+    with pytest.raises(AuditError, match="vérification anti-robots du site, pas celui de la fiche"):
+        run_audit(url, fake_fetch({}), provided=Page(url=url, status=200, text="<title>Just a moment...</title>"), source="paste")
+
+
+def test_the_renderer_client(monkeypatch):
+    def handler(request):
+        if b"busy" in request.content:
+            return httpx.Response(503, json={"detail": "busy"})
+        assert request.headers["X-Renderer-Token"] == "t0k"
+        return httpx.Response(200, json={"status": 200, "url": "https://a.example/x", "html": "<html></html>", "challenge": True, "ms": 900})
+    client = site_audit.RendererClient("http://renderer:7000/", "t0k", httpx.Client(transport=httpx.MockTransport(handler)))
+    page = client.render("https://a.example/x")
+    assert page.status == 200 and page.challenge is True and page.text == "<html></html>"
+    with pytest.raises(AuditError, match="occupé"):
+        client.render("https://a.example/busy")
+    with pytest.raises(AuditError):
+        client.render("file:///etc/passwd")
+
+
+# ---------------------------------------------------------------------------- from the visitor's browser
+
+def test_the_bookmarklet_sends_the_page_then_the_audit_page_runs_it(http, audits, monkeypatch):
+    monkeypatch.setenv("PUBLIC_SITE_URL", "https://www.likyly.test")
+    page = _rendered(["pull", "gilet", "manteau", "echarpe"], ["bonnet", "gants", "pull", "botte"])
+    sent = http.post("/audits/page", data={"url": "https://mode.example/p/veste", "html": page}, headers=audits["headers"], follow_redirects=False)
+    assert sent.status_code == 303
+    location = sent.headers["location"]
+    assert location.startswith("https://www.likyly.test/audit?page=")
+    page_id = location.split("page=")[1]
+
+    created = http.post("/audits", json={"page_id": page_id}, headers=audits["headers"])
+    assert created.status_code == 201, created.text
+    body = created.json()
+    assert body["source"] == "browser" and body["url"] == "https://mode.example/p/veste"
+    assert kpi(body, "behavior_block")["status"] == "pass"
+    # once only: the page is not kept
+    again = http.post("/audits", json={"page_id": page_id}, headers=audits["headers"])
+    assert again.status_code == 410 and "favori" in again.json()["detail"]
+
+
+@pytest.mark.parametrize("form, error", [
+    ({"url": "https://mode.example/p/veste", "html": "  "}, "vide"),
+    ({"url": "pas une adresse", "html": "<html></html>"}, "adresse"),
+    ({"url": "https://mode.example/p/veste", "html": "x" * (site_audits.MAX_PAGE_CHARS + 1)}, "trop-lourde"),
+])
+def test_a_page_the_bookmarklet_cannot_send_says_why(http, audits, monkeypatch, form, error):
+    monkeypatch.setenv("PUBLIC_SITE_URL", "https://www.likyly.test")
+    sent = http.post("/audits/page", data=form, headers=audits["headers"], follow_redirects=False)
+    assert sent.status_code == 303 and sent.headers["location"] == f"https://www.likyly.test/audit/navigateur?erreur={error}"
+
+
+def test_pasted_source_code_is_audited(http, audits):
+    page = _rendered(["pull", "gilet", "manteau", "echarpe"], ["bonnet", "gants", "pull", "botte"])
+    created = http.post("/audits", json={"url": "mode.example/p/veste", "html": page}, headers=audits["headers"])
+    assert created.status_code == 201, created.text
+    assert created.json()["source"] == "paste" and created.json()["host"] == "mode.example"
+    assert http.post("/audits", json={}, headers=audits["headers"]).status_code == 422
+
+
+def test_pages_sent_are_kept_briefly_and_within_a_memory_budget(monkeypatch):
+    store = site_audits.PageStore()
+    monkeypatch.setattr(store, "MAX_TOTAL_CHARS", 100)
+    first = store.put("https://a.example/", "x" * 60)
+    assert first and store.put("https://a.example/", "x" * 60) is None  # over budget
+    assert store.take(first) == ("https://a.example/", "x" * 60) and store.take(first) is None
+    kept = store.put("https://a.example/", "y")
+    monkeypatch.setattr(site_audits.time, "monotonic", lambda: 10 ** 9)
+    assert store.take(kept) is None  # expired
+
+
+def test_cards_with_author_links_in_a_section_header_block():
+    """Fnac's shape: the block title in the section's own <header>, and each card linking the book,
+    its author and its e-book format - one recommendation per card."""
+    cards = "".join(
+        f'<li><article class="miniFA"><a class="miniFA__link" href="/a{n}/livre-{n}"><span class="miniFA__title">Livre {n}</span></a>'
+        f'<div><a href="/Auteur-{n}/ia{n}">Auteur {n}</a></div><a href="/a{n}/livre-{n}?NUMERICAL=Y">Format numérique</a></article></li>'
+        for n in range(101, 107))
+    page = ('<html><head><script type="application/ld+json">{"@type":"Book","name":"Morsures","image":"m.jpg"}</script></head><body>'
+            '<header role="banner"><nav><a href="/">Accueil</a></nav></header><h1>Morsures</h1>'
+            f'<div class="f-productLayer"><header class="f-productLayer__header"><h2>Les internautes ont aussi acheté</h2></header><ul>{cards}</ul></div></body></html>')
+    result = run_audit("https://livres.example/a100/morsures", fake_fetch({"https://livres.example/a100/morsures": (200, page)}))
+    block = result["blocks"][0]
+    assert block["kind"] == "behavior" and block["item_count"] == 6
+    assert [i["name"] for i in block["items"][:2]] == ["Livre 101", "Livre 102"]
+    assert kpi(result, "duplicates")["status"] == "pass"
