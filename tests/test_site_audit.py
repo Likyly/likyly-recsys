@@ -313,7 +313,7 @@ def audits(monkeypatch):
     site_audits.misses.reset()
     site_audits.page_posts.reset()
     site_audits.sent_pages.reset()
-    return {"sent": sent, "headers": {"X-Forwarded-For": f"203.0.113.{uuid.uuid4().int % 250}, 10.0.0.1"}}
+    return {"sent": sent, "headers": {"X-Forwarded-For": f"2001:db8::{uuid.uuid4().hex[:4]}:{uuid.uuid4().hex[:4]}, 10.0.0.1"}}
 
 
 def test_teaser_then_full_report_and_email(http, audits):
