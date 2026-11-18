@@ -455,6 +455,7 @@ class PageFacts:
     lang: str = ""
     js_reco_signals: bool = False  # the page's scripts talk about recommendations it renders itself
     text_chars: int = 0
+    rendered: bool = False  # read in a browser (ours, or the visitor's), not only from the HTML
 
 
 def detect_cms(html: str, soup: BeautifulSoup) -> str:
@@ -1094,9 +1095,14 @@ def build_kpis(page: PageFacts, ucp: Optional[bool], stock_checked: bool = False
     # can be read at all, the page's scripts talking about recommendations.
     # (best-of lists don't count: they're site chrome, not the item's own recommendations)
     in_javascript = bool(js_only) or (page.js_reco_signals and not [b for b in readable if b.kind != "popular"])
-    js_summary = "Non lisible sans navigateur : les recommandations de la page se chargent en JavaScript"
-    js_detail = ("La page remplit ses blocs de recommandations dans le navigateur : on ne peut pas les lire ici, donc on ne note pas ce contrôle. "
-                 "Les moteurs de recherche et les assistants IA ne les voient pas non plus.")
+    if page.rendered:
+        js_summary = "Non lisible : le bloc reste vide, même affiché dans un navigateur"
+        js_detail = ("La page a été affichée dans un navigateur, mais ce bloc ne s'y est pas rempli pour notre visite (souvent : il dépend de l'historique "
+                     "du visiteur, ou le site ne le montre pas à un robot). On ne note donc pas ce contrôle.")
+    else:
+        js_summary = "Non lisible sans navigateur : les recommandations de la page se chargent en JavaScript"
+        js_detail = ("La page remplit ses blocs de recommandations dans le navigateur : on ne peut pas les lire ici, donc on ne note pas ce contrôle. "
+                     "Les moteurs de recherche et les assistants IA ne les voient pas non plus.")
     by_kind = lambda *kinds: [b for b in page.blocks if b.kind in kinds]  # noqa: E731
     kpis: list[Kpi] = []
 
@@ -1155,7 +1161,8 @@ def build_kpis(page: PageFacts, ucp: Optional[bool], stock_checked: bool = False
                         f"{fixed[0].evidence} C'est une collection fixe, sans rapport avec {the} que le visiteur regarde.",
                         f"Remplacez-la par des {many} proches de celui affiché : même usage, même style, même gamme de prix."))
     elif similar_js:
-        kpis.append(Kpi("similar_block", label, 20, WARN, f"Présent : {_quote(similar_js)}, chargé en JavaScript (contenu non lisible)",
+        kpis.append(Kpi("similar_block", label, 20, WARN,
+                        f"Présent : {_quote(similar_js)}, " + ("mais vide, même affiché dans un navigateur" if page.rendered else "chargé en JavaScript (contenu non lisible)"),
                         "Le bloc existe sur la page, mais il se remplit dans le navigateur : on ne peut pas vérifier ce qu'il montre, "
                         "et les moteurs de recherche comme les assistants IA ne le voient pas.",
                         "Rendez ce bloc côté serveur pour qu'il soit lisible par tous."))
@@ -1421,6 +1428,7 @@ def merge_rendered(static: PageFacts, rendered: PageFacts) -> PageFacts:
     rendered.shopify_product_id = static.shopify_product_id or rendered.shopify_product_id
     rendered.js_reco_signals = static.js_reco_signals or rendered.js_reco_signals
     rendered.text_chars = max(static.text_chars, rendered.text_chars)
+    rendered.rendered = True
     return rendered
 
 
@@ -1453,6 +1461,7 @@ def run_audit(raw_url: str, fetch: Fetch, allow_private: bool = False, render: O
             raise AuditError("Ce code est celui de la page de vérification anti-robots du site, pas celui de la fiche : ouvrez la fiche elle-même dans votre navigateur, puis recommencez.")
         raise AuditError(CHALLENGE_ERROR, blocked=True)
     facts = analyze_page(page)
+    facts.rendered = source == "browser"
     notes: list[str] = []
     stock_checked = False
 

@@ -655,6 +655,7 @@ def test_a_browser_that_cannot_help_leaves_the_html_audit():
     static = SHELL_PAGE.replace("BLOCKS", "")
     challenged = run_audit(url, fake_fetch({url: (200, static)}), render=fake_render({url: (200, "<html><title>Just a moment...</title></html>", True)}, []))
     assert challenged["rendered"] is False and any("vérification anti-robots" in n for n in challenged["notes"])
+    assert kpi(challenged, "similar_block")["summary"].startswith("Non lisible sans navigateur")
     down = run_audit(url, fake_fetch({url: (200, static)}), render=fake_render({}, []))
     assert down["rendered"] is False and any("navigateur impossible" in n for n in down["notes"])
 
@@ -754,3 +755,13 @@ def test_cards_with_author_links_in_a_section_header_block():
     assert block["kind"] == "behavior" and block["item_count"] == 6
     assert [i["name"] for i in block["items"][:2]] == ["Livre 101", "Livre 102"]
     assert kpi(result, "duplicates")["status"] == "pass"
+
+
+def test_a_block_still_empty_in_the_browser_says_so():
+    url = "https://mode.example/p/veste"
+    static = SHELL_PAGE.replace("BLOCKS", "")
+    shown = SHELL_PAGE.replace("BLOCKS", '<div class="nosto_element" id="nosto-similar"></div>' + _shop_block("Les clients ont aussi acheté", ["bonnet", "gants", "pull", "botte"]))
+    result = run_audit(url, fake_fetch({url: (200, static)}), render=fake_render({url: (200, shown)}, []))
+    assert result["rendered"] is True
+    similar = kpi(result, "similar_block")
+    assert similar["status"] == "unknown" and similar["summary"] == "Non lisible : le bloc reste vide, même affiché dans un navigateur"
