@@ -655,7 +655,8 @@ def test_a_browser_that_cannot_help_leaves_the_html_audit():
     static = SHELL_PAGE.replace("BLOCKS", "")
     challenged = run_audit(url, fake_fetch({url: (200, static)}), render=fake_render({url: (200, "<html><title>Just a moment...</title></html>", True)}, []))
     assert challenged["rendered"] is False and any("vérification anti-robots" in n for n in challenged["notes"])
-    assert kpi(challenged, "similar_block")["summary"].startswith("Non lisible sans navigateur")
+    assert kpi(challenged, "similar_block")["status"] == "unknown"
+    assert kpi(challenged, "similar_block")["summary"].startswith("Non mesuré : notre navigateur d'audit n'a pas pu afficher la page")
     down = run_audit(url, fake_fetch({url: (200, static)}), render=fake_render({}, []))
     assert down["rendered"] is False and any("navigateur impossible" in n for n in down["notes"])
 
@@ -681,6 +682,29 @@ def test_a_real_page_loading_the_protection_script_is_not_a_challenge():
                    '<script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js"></script>'):
         assert is_challenge(f"<html><head><title>Le Monde</title>{marker}</head><body><p>{text}</p></body></html>") is False
         assert is_challenge(f"<html><head><title>Le Monde</title>{marker}</head><body>Please enable JavaScript</body></html>") is True
+
+def test_a_page_our_browser_could_not_show_proves_no_absence():
+    # Nothing in the HTML, and the browser timed out or met a challenge: not measured, no grade - never "Absent"
+    url = "https://sport.example/p/chaussure-trail"
+    static = ('<html><head><title>Chaussure trail</title><script type="application/ld+json">{"@type":"Product","name":"Chaussure trail"}</script></head>'
+              '<body><h1>Chaussure trail</h1><p>' + "Une chaussure de trail légère et accrocheuse. " * 30 + '</p></body></html>')
+    for render in (fake_render({}, []), fake_render({url: (200, "<title>Just a moment...</title>", True)}, [])):
+        result = run_audit(url, fake_fetch({url: (200, static)}), render=render)
+        assert kpi(result, "similar_block")["status"] == "unknown" and kpi(result, "similar_block")["summary"].startswith("Non mesuré")
+        assert kpi(result, "behavior_block")["status"] == "unknown"
+        assert result["score"] is None and result["partial"] is True
+
+
+def test_read_also_in_the_article_footer_is_a_block():
+    # 20 Minutes puts "À lire aussi" in the article's own <footer>; the site's <footer> stays chrome
+    url = "https://news.example/monde/123-sommet"
+    cards = "".join(f'<article><h4><a href="https://news.example/monde/{n}-autre-sujet">Autre sujet {n}</a></h4></article>' for n in range(200, 204))
+    page = ('<html><head><title>Sommet</title><script type="application/ld+json">{"@type":"NewsArticle","headline":"Sommet"}</script></head><body>'
+            '<article><h1>Sommet</h1><p>' + "Le texte de l'article. " * 60 + '</p>'
+            f'<footer><p class="title">À lire aussi</p><div>{cards}</div></footer></article>'
+            '<footer><p>À lire aussi</p><a href="https://news.example/a-1">Mentions</a><a href="https://news.example/a-2">CGU</a></footer></body></html>')
+    result = run_audit(url, fake_fetch({url: (200, page)}))
+    assert [b["title"] for b in result["blocks"]] == ["À lire aussi"]
 
 def test_the_renderer_client(monkeypatch):
     def handler(request):

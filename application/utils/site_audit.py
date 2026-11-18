@@ -469,6 +469,7 @@ class PageFacts:
     js_reco_signals: bool = False  # the page's scripts talk about recommendations it renders itself
     text_chars: int = 0
     rendered: bool = False  # read in a browser (ours, or the visitor's), not only from the HTML
+    render_failed: bool = False  # it needed a browser, and ours couldn't show it: what isn't in the HTML wasn't seen
 
 
 def detect_cms(html: str, soup: BeautifulSoup) -> str:
@@ -787,7 +788,9 @@ def find_blocks(soup: BeautifulSoup, base_url: str, cms: str, vendors: list[dict
             continue
         if heading_kind(text) == "popular" and not _looks_like_title(heading) and len(text.split()) <= 2:
             continue  # "Best seller" on a product card is a badge, not the title of a block
-        chrome = next((p for p in heading.parents if isinstance(p, Tag) and (p.name in ("nav", "footer", "form") or (p.name == "header" and _is_page_header(p)))), None)
+        # an article's own <footer> ("À lire aussi" under the text, as 20 Minutes does) is not the site's
+        chrome = next((p for p in heading.parents if isinstance(p, Tag) and (p.name in ("nav", "form") or (p.name == "footer" and p.find_parent("article") is None)
+                                                                          or (p.name == "header" and _is_page_header(p)))), None)
         if chrome is not None and (page_title is None or chrome not in page_title.parents):
             continue  # site navigation - unless broken markup wrapped the whole page in it
         container: Optional[Tag] = heading
@@ -1108,7 +1111,13 @@ def build_kpis(page: PageFacts, ucp: Optional[bool], stock_checked: bool = False
     # can be read at all, the page's scripts talking about recommendations.
     # (best-of lists don't count: they're site chrome, not the item's own recommendations)
     in_javascript = bool(js_only) or (page.js_reco_signals and not [b for b in readable if b.kind != "popular"])
-    if page.rendered:
+    # Our browser couldn't show a page that needed it: blocks missing from the HTML were not seen, not proven absent.
+    in_javascript = in_javascript or (page.render_failed and not [b for b in readable if b.kind != "popular"])
+    if page.render_failed and not page.rendered:
+        js_summary = "Non mesuré : notre navigateur d'audit n'a pas pu afficher la page"
+        js_detail = ("Les recommandations de cette page ne sont pas dans son HTML, et notre navigateur d'audit n'a pas pu l'afficher "
+                     "(page trop lente, erreur ou vérification anti-robots). On ne sait donc pas si elles existent : ce contrôle n'est pas noté.")
+    elif page.rendered:
         js_summary = "Non lisible : le bloc reste vide, même affiché dans un navigateur"
         js_detail = ("La page a été affichée dans un navigateur, mais ce bloc ne s'y est pas rempli pour notre visite (souvent : il dépend de l'historique "
                      "du visiteur, ou le site ne le montre pas à un robot). On ne note donc pas ce contrôle.")
@@ -1484,13 +1493,16 @@ def run_audit(raw_url: str, fetch: Fetch, allow_private: bool = False, render: O
         try:
             shown = render(page.url)
             if shown.challenge:
+                facts.render_failed = True
                 notes.append("Notre navigateur d'audit a reçu une vérification anti-robots : seuls les blocs présents dans le HTML ont été lus.")
             elif shown.status >= 400:
+                facts.render_failed = True
                 notes.append(f"Notre navigateur d'audit a reçu une erreur {shown.status} : seuls les blocs présents dans le HTML ont été lus.")
             else:
                 facts = merge_rendered(facts, analyze_page(shown))
                 rendered = True
         except AuditError as error:
+            facts.render_failed = True
             notes.append(f"Lecture dans un navigateur impossible ({error}) : seuls les blocs présents dans le HTML ont été lus.")
     if facts.text_chars < 600 and not facts.blocks:
         raise AuditError("Cette page est construite entièrement en JavaScript : son contenu n'est pas lisible sans navigateur, l'audit ne peut pas l'analyser.")
