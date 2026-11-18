@@ -53,17 +53,30 @@ class AuditError(Exception):
 
 # The page a site puts in front of robots it doesn't let through (Cloudflare, DataDome, Akamai,
 # PerimeterX, Imperva...). The audit stops there: it never tries to get past such a page.
-CHALLENGE_RE = re.compile(
+CHALLENGE_TITLE_RE = re.compile(
     r"<title>\s*(just a moment|attention required|client challenge|access denied|pardon our interruption|"
-    r"are you a (robot|human)|vérification|un instant|security check|bot verification|one more step)|"
+    r"are you a (robot|human)|vérification|un instant|security check|bot verification|one more step)",
+    re.IGNORECASE,
+)
+# The protection's own scripts: a challenge page loads them, but so do many real pages behind the
+# same protection (Le Monde loads /_fs-ch-…/init.js, Cloudflare adds challenge-platform to normal
+# pages). They mean a challenge only on a page with almost no text of its own.
+CHALLENGE_MARKER_RE = re.compile(
     r"challenge-platform|cf-chl-|_fs-ch-|px-captcha|captcha-delivery\.com|geo\.captcha|/_Incapsula_Resource|hcaptcha\.com/1/api|"
     r"recaptcha/(api|enterprise)\.js\?render=explicit",
     re.IGNORECASE,
 )
+_NOT_TEXT_RE = re.compile(r"<(script|style|noscript|template|svg)\b.*?</\1\s*>|<[^>]+>", re.IGNORECASE | re.DOTALL)
+CHALLENGE_MAX_TEXT = 1500
 
 
 def is_challenge(html: str) -> bool:
-    return bool(CHALLENGE_RE.search(html[:200_000]))
+    head = html[:200_000]
+    if CHALLENGE_TITLE_RE.search(head):
+        return True
+    if not CHALLENGE_MARKER_RE.search(head):
+        return False
+    return len(" ".join(_NOT_TEXT_RE.sub(" ", html[:2_000_000]).split())) < CHALLENGE_MAX_TEXT
 
 
 BLOCKED_HINT = " Vous pouvez l'auditer depuis votre navigateur."

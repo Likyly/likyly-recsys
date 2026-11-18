@@ -8,7 +8,7 @@ import pytest
 
 import site_audit
 import site_audits
-from site_audit import AuditError, Page, SafeFetcher, run_audit
+from site_audit import AuditError, Page, SafeFetcher, is_challenge, run_audit
 
 
 def fake_fetch(pages: dict):
@@ -673,6 +673,14 @@ def test_anti_robot_pages_are_never_audited():
     with pytest.raises(AuditError, match="vérification anti-robots du site, pas celui de la fiche"):
         run_audit(url, fake_fetch({}), provided=Page(url=url, status=200, text="<title>Just a moment...</title>"), source="paste")
 
+
+def test_a_real_page_loading_the_protection_script_is_not_a_challenge():
+    # Le Monde's home page loads /_fs-ch-…/init.js; Cloudflare adds challenge-platform to normal pages
+    text = " ".join(["Un article de presse avec beaucoup de texte."] * 60)
+    for marker in ('<script src="/_fs-ch-1T1wmsGaOgGaSxcX/assets/init.js"></script>',
+                   '<script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js"></script>'):
+        assert is_challenge(f"<html><head><title>Le Monde</title>{marker}</head><body><p>{text}</p></body></html>") is False
+        assert is_challenge(f"<html><head><title>Le Monde</title>{marker}</head><body>Please enable JavaScript</body></html>") is True
 
 def test_the_renderer_client(monkeypatch):
     def handler(request):

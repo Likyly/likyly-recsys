@@ -46,13 +46,32 @@ BLOCKED_HOSTS = re.compile(
 )
 # The page a site puts in front of robots it doesn't let through. The audit stops there: it never
 # waits for such a page to let it pass.
-CHALLENGE_RE = re.compile(
+CHALLENGE_TITLE_RE = re.compile(
     r"<title>\s*(just a moment|attention required|client challenge|access denied|pardon our interruption|"
-    r"are you a (robot|human)|vérification|un instant|security check|bot verification|one more step)|"
+    r"are you a (robot|human)|vérification|un instant|security check|bot verification|one more step)",
+    re.IGNORECASE,
+)
+# The protection's own scripts: a challenge page loads them, but so do many real pages behind the
+# same protection (Le Monde loads /_fs-ch-…/init.js, Cloudflare adds challenge-platform to normal
+# pages). They mean a challenge only on a page with almost no text of its own.
+CHALLENGE_MARKER_RE = re.compile(
     r"challenge-platform|cf-chl-|_fs-ch-|px-captcha|captcha-delivery\.com|geo\.captcha|/_Incapsula_Resource|hcaptcha\.com/1/api|"
     r"recaptcha/(api|enterprise)\.js\?render=explicit",
     re.IGNORECASE,
 )
+_NOT_TEXT_RE = re.compile(r"<(script|style|noscript|template|svg)\b.*?</\1\s*>|<[^>]+>", re.IGNORECASE | re.DOTALL)
+CHALLENGE_MAX_TEXT = 1500
+
+
+def is_challenge(html: str) -> bool:
+    head = html[:200_000]
+    if CHALLENGE_TITLE_RE.search(head):
+        return True
+    if not CHALLENGE_MARKER_RE.search(head):
+        return False
+    return len(" ".join(_NOT_TEXT_RE.sub(" ", html[:2_000_000]).split())) < CHALLENGE_MAX_TEXT
+
+
 CHROMIUM_ARGS = [
     "--disable-dev-shm-usage",
     "--disable-gpu",
@@ -158,7 +177,7 @@ async def render(url: str, timeout_ms: int) -> dict:
             raise HTTPException(status_code=502, detail=str(error).splitlines()[0][:200])
         status = response.status if response else 0
         first = await asyncio.wait_for(page.content(), timeout=left(4000) / 1000)
-        if CHALLENGE_RE.search(first[:200_000]):
+        if is_challenge(first):
             return {"status": status, "url": page.url, "html": first[:MAX_HTML_CHARS], "challenge": True, "ms": int((time.monotonic() - started) * 1000)}
         if status < 400:
             for step, cap in (
@@ -174,7 +193,7 @@ async def render(url: str, timeout_ms: int) -> dict:
                 except (PlaywrightTimeout, PlaywrightError, asyncio.TimeoutError):
                     pass
         html = await asyncio.wait_for(page.content(), timeout=4)
-        return {"status": status, "url": page.url, "html": html[:MAX_HTML_CHARS], "challenge": bool(CHALLENGE_RE.search(html[:200_000])), "ms": int((time.monotonic() - started) * 1000)}
+        return {"status": status, "url": page.url, "html": html[:MAX_HTML_CHARS], "challenge": is_challenge(html), "ms": int((time.monotonic() - started) * 1000)}
     except (asyncio.TimeoutError, PlaywrightError) as error:
         # the page crashed (memory cap) or stopped answering
         raise HTTPException(status_code=502, detail=f"page: {type(error).__name__}")
