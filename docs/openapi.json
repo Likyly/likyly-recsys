@@ -6844,6 +6844,196 @@
         "title": "RequiredEvent",
         "type": "object"
       },
+      "RetentionCounts": {
+        "properties": {
+          "interactions": {
+            "description": "Events older than the retention period",
+            "title": "Interactions",
+            "type": "integer"
+          },
+          "recommendations": {
+            "description": "Recommendation traces older than the retention period",
+            "title": "Recommendations",
+            "type": "integer"
+          },
+          "users": {
+            "description": "Signed-in customers with nothing left within the retention period",
+            "title": "Users",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "interactions",
+          "recommendations",
+          "users"
+        ],
+        "title": "RetentionCounts",
+        "type": "object"
+      },
+      "RetentionRun": {
+        "properties": {
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "interactions": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Interactions"
+          },
+          "recommendations": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recommendations"
+          },
+          "started_at": {
+            "format": "date-time",
+            "title": "Started At",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "running",
+              "succeeded",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "trigger": {
+            "enum": [
+              "daily",
+              "manual"
+            ],
+            "title": "Trigger",
+            "type": "string"
+          },
+          "triggered_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Triggered By"
+          },
+          "users": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Users"
+          }
+        },
+        "required": [
+          "id",
+          "trigger",
+          "status",
+          "started_at"
+        ],
+        "title": "RetentionRun",
+        "type": "object"
+      },
+      "RetentionStatus": {
+        "properties": {
+          "daily_enabled": {
+            "description": "Whether the daily purge runs (LIKYLY_RETENTION_PURGE is not 'off')",
+            "title": "Daily Enabled",
+            "type": "boolean"
+          },
+          "expired_now": {
+            "$ref": "#/components/schemas/RetentionCounts",
+            "description": "What a purge would delete right now"
+          },
+          "last_success_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Success At"
+          },
+          "next_run_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When the daily purge runs next (checked hourly); null when it is off",
+            "title": "Next Run At"
+          },
+          "retention_months": {
+            "description": "Visitor data is deleted once older than this",
+            "title": "Retention Months",
+            "type": "integer"
+          },
+          "runs": {
+            "description": "The latest runs, newest first",
+            "items": {
+              "$ref": "#/components/schemas/RetentionRun"
+            },
+            "title": "Runs",
+            "type": "array"
+          }
+        },
+        "required": [
+          "retention_months",
+          "daily_enabled",
+          "expired_now",
+          "runs"
+        ],
+        "title": "RetentionStatus",
+        "type": "object"
+      },
       "SimilarUser": {
         "properties": {
           "name": {
@@ -9738,6 +9928,172 @@
           }
         ],
         "summary": "Platform overview",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/retention": {
+      "get": {
+        "description": "Visitor data (events, recommendation traces, signed-in customers nothing recent refers to)\nis deleted after 13 months by a daily purge over every workspace. The rule, whether the daily\npurge is on and when it runs next, what a purge would delete right now, and the latest runs.",
+        "operationId": "admin_retention",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetentionStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing, invalid or revoked `X-API-Key`."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The public key can't do this (secret key required), or a plan limit was reached."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "description": "Rate limit exceeded at the API gateway - retry shortly."
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Data retention: rule, purges, what is due",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/retention/run": {
+      "post": {
+        "description": "Starts a purge right away, over every workspace - the same one the daily thread runs. Answers\nthe run as 'running'; GET /admin/retention shows its result. 409 if a purge is under way.",
+        "operationId": "admin_retention_run",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetentionRun"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing, invalid or revoked `X-API-Key`."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The public key can't do this (secret key required), or a plan limit was reached."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not possible in the current state - `detail` says what is missing (e.g. no model to retrain yet)."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "description": "Rate limit exceeded at the API gateway - retry shortly."
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Run the retention purge now",
         "tags": [
           "admin"
         ]

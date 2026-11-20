@@ -56,6 +56,7 @@ from schemas import (
     RecommendedProduct, VectorRecommendation, User, Message, CachePurged, GenerateModelJobStatus, ModelVersion, ModelStatus, ModelOverview,
     ClientSelf, AccountDeletion,
     ClientAdminView, AdminOverview, AdminClientInsights, AdminIntegrationRow, AdminUpgradeRequest, AdminUser,
+    RetentionStatus, RetentionRun,
     DailyUsage, ClientRename, ClientUsageSummary, WorkspaceRename, WorkspaceSummary, CatalogIndex,
     EventType, EventTypeCreate, EventTypeUpdate, ImportSummary, Item, ItemUpsert, ItemImportRequest, ItemDeleteRequest, BatchResult, ErrorResponse,
     UserUpsert, UserImportRequest, CatalogEraseRequest, CatalogErased, Event, EventBatch, EventResult, EventBatchResult,
@@ -128,6 +129,7 @@ from site_audits import router as site_audits_router
 from analytics import router as analytics_router, resolve_analytics_window as _resolve_analytics_window, usage_summary as _usage_summary
 from scoped_auth import require_scope
 import placement_service
+import retention
 import data_source_service
 
 
@@ -1684,6 +1686,25 @@ async def admin_upgrade_requests(admin_user_id: str = Depends(get_current_admin_
     email went out."""
     return admin_queries.list_upgrade_requests()
 
+@app.get("/admin/retention", tags=["admin"], response_model=RetentionStatus, summary="Data retention: rule, purges, what is due", responses=_errors(401, 403))
+async def admin_retention(admin_user_id: str = Depends(get_current_admin_user_id)):
+    """Visitor data (events, recommendation traces, signed-in customers nothing recent refers to)
+    is deleted after 13 months by a daily purge over every workspace. The rule, whether the daily
+    purge is on and when it runs next, what a purge would delete right now, and the latest runs."""
+    return await run_in_threadpool(retention.status)
+
+@app.post("/admin/retention/run", tags=["admin"], response_model=RetentionRun, status_code=202, summary="Run the retention purge now", responses=_errors(401, 403, 409))
+async def admin_retention_run(background_tasks: BackgroundTasks, admin_user_id: str = Depends(get_current_admin_user_id)):
+    """Starts a purge right away, over every workspace - the same one the daily thread runs. Answers
+    the run as 'running'; GET /admin/retention shows its result. 409 if a purge is under way."""
+    try:
+        run = await run_in_threadpool(retention.start_run, retention.MANUAL, admin_user_id)
+    except retention.PurgeAlreadyRunning:
+        raise HTTPException(status_code=409, detail="A purge is already running")
+    log_event("retention_purge_started", admin_user_id=admin_user_id, run_id=run["id"])
+    background_tasks.add_task(retention.execute_run, run["id"])
+    return run
+
 @app.get("/admin/users", tags=["admin"], response_model=List[AdminUser], summary="Accounts", responses=_errors(401, 403, 503))
 async def admin_users(admin_user_id: str = Depends(get_current_admin_user_id)):
     """Every sign-in account (Supabase Auth), newest first: sign-in methods, confirmed e-mail,
@@ -2935,8 +2956,7 @@ if __name__ == "__main__":
     # process - harmless for route definitions, but fatal for prometheus_client's Counter/
     # Histogram above, which register into a single process-wide registry and raise on a
     # second registration of the same metric name.
-    # Visitor data older than 13 months goes, at start then daily (retention.py). Here and
-    # not at import: the tests import this module and must not purge on their own.
-    import retention
+    # Visitor data older than 13 months goes, once a day (retention.py). Here and not at
+    # import: the tests import this module and must not purge on their own.
     retention.start_daily_purge()
     uvicorn.run(app, host='0.0.0.0', port=6061)

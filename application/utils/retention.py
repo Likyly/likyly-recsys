@@ -21,17 +21,18 @@ What goes, once older than RETENTION_MONTHS (every workspace, every catalog):
 Catalog items, placements, models and accounts are not visitor data and are not touched; a
 trained model only holds dense vectors, and the next retraining reads what is left.
 
-The API runs one process (see Dockerfile): it runs at start, then every day (see
-start_daily_purge). It only deletes when LIKYLY_RETENTION_PURGE=on; otherwise it logs what it
-would delete (count_expired) - so the first run against production is a dry run whose counts
-are checked before it is switched on. By hand: `python retention.py [--dry-run]` with
-DATABASE_URL set.
+Every run is recorded in `retention_runs` (the back-office's "Conservation des données" page
+reads it and can start one). The API runs one process (see Dockerfile): a thread checks every
+hour and purges when the last successful run is a day old (start_daily_purge), so restarts
+never purge more than once a day. LIKYLY_RETENTION_PURGE=off stops the daily runs (manual runs
+still work). By hand: `python retention.py [--dry-run]` with DATABASE_URL set.
 """
 import logging
 import os
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from typing import Any, Optional
 
 from sqlalchemy import text
 
@@ -39,20 +40,31 @@ from db import KIND_USER, engine
 
 RETENTION_MONTHS = 13
 BATCH_SIZE = 5000  # rows per DELETE: short transactions, no long lock on a busy table
-PURGE_EVERY_SECONDS = 24 * 3600
-FIRST_PURGE_DELAY_SECONDS = 60  # let the API finish starting before the first purge
+RUN_EVERY = timedelta(days=1)
+CHECK_EVERY_SECONDS = 3600
+FIRST_CHECK_DELAY_SECONDS = 60  # let the API finish starting before the first check
+DAILY, MANUAL = "daily", "manual"
 
 logger = logging.getLogger("likyly.retention")
+_run_lock = threading.Lock()  # one purge at a time in this process
+
+
+class PurgeAlreadyRunning(Exception):
+    pass
 
 
 def cutoff_sql() -> str:
     return f"now() - interval '{int(RETENTION_MONTHS)} months'"
 
 
-def _delete_in_batches(conn_factory, statement: str) -> int:
+def daily_enabled() -> bool:
+    return os.environ.get("LIKYLY_RETENTION_PURGE", "on").lower() != "off"
+
+
+def _delete_in_batches(statement: str) -> int:
     total = 0
     while True:
-        with conn_factory() as conn:
+        with engine.begin() as conn:
             deleted = conn.execute(text(statement), {"batch": BATCH_SIZE}).rowcount or 0
         total += deleted
         if deleted < BATCH_SIZE:
@@ -73,7 +85,7 @@ _EXPIRED_USERS = f"""
 
 
 def count_expired() -> dict[str, int]:
-    """What a purge would remove right now - for --dry-run and the logs."""
+    """What a purge would remove right now - for --dry-run and the back-office."""
     with engine.connect() as conn:
         interactions = conn.execute(text(f"SELECT count(*) FROM interactions WHERE occurred_at < {cutoff_sql()}")).scalar_one()
         recommendations = conn.execute(text(f"SELECT count(*) FROM recommendations WHERE created_at < {cutoff_sql()}")).scalar_one()
@@ -91,11 +103,11 @@ def count_expired() -> dict[str, int]:
 
 def purge_expired_data() -> dict[str, int]:
     """Deletes every visitor record older than RETENTION_MONTHS; returns how many of each."""
-    interactions = _delete_in_batches(engine.begin, f"""
+    interactions = _delete_in_batches(f"""
         DELETE FROM interactions WHERE id IN (
             SELECT id FROM interactions WHERE occurred_at < {cutoff_sql()} LIMIT :batch)
     """)
-    recommendations = _delete_in_batches(engine.begin, f"""
+    recommendations = _delete_in_batches(f"""
         DELETE FROM recommendations WHERE recommendation_id IN (
             SELECT recommendation_id FROM recommendations WHERE created_at < {cutoff_sql()} LIMIT :batch)
     """)
@@ -110,35 +122,130 @@ def purge_expired_data() -> dict[str, int]:
              WHERE m.kind = :kind_user AND m.client_id = e.client_id
                AND m.product_type = e.product_type AND m.internal_id = e.internal_id
         """), {"kind_user": KIND_USER}).rowcount or 0
-    result = {"interactions": interactions, "recommendations": recommendations, "users": users}
-    logger.info("retention purge (%s months): %s", RETENTION_MONTHS, result)
-    return result
+    return {"interactions": interactions, "recommendations": recommendations, "users": users}
 
 
-def purge_enabled() -> bool:
-    return os.environ.get("LIKYLY_RETENTION_PURGE", "").lower() == "on"
+# --- Runs, as the back-office sees them ----------------------------------------------------------
+
+_RUN_COLUMNS = "id, trigger, triggered_by, status, started_at, finished_at, interactions, recommendations, users, error"
 
 
-def _purge_forever() -> None:
-    time.sleep(FIRST_PURGE_DELAY_SECONDS)
+def _run_row(row) -> dict[str, Any]:
+    return dict(row._mapping)
+
+
+def start_run(trigger: str, triggered_by: Optional[str] = None) -> dict[str, Any]:
+    """Records a run as 'running' and holds the lock; finish it with execute_run. Raises
+    PurgeAlreadyRunning if one is under way (in this process, or left 'running' less than an
+    hour ago by another)."""
+    if not _run_lock.acquire(blocking=False):
+        raise PurgeAlreadyRunning()
+    try:
+        with engine.begin() as conn:
+            # A run left 'running' by a process that died is closed, not waited for forever.
+            conn.execute(text(
+                "UPDATE retention_runs SET status = 'failed', finished_at = now(), "
+                "error = 'interrupted (the API restarted during the purge)' "
+                "WHERE status = 'running' AND started_at < now() - interval '1 hour'"
+            ))
+            if conn.execute(text("SELECT 1 FROM retention_runs WHERE status = 'running'")).first():
+                raise PurgeAlreadyRunning()
+            row = conn.execute(text(
+                f"INSERT INTO retention_runs (trigger, triggered_by) VALUES (:trigger, :by) RETURNING {_RUN_COLUMNS}"
+            ), {"trigger": trigger, "by": triggered_by}).one()
+        return _run_row(row)
+    except BaseException:
+        _run_lock.release()
+        raise
+
+
+def execute_run(run_id: int) -> dict[str, Any]:
+    """Runs the purge for a run start_run opened, records the result, releases the lock."""
+    try:
+        counts: dict[str, Optional[int]]
+        try:
+            counts = dict(purge_expired_data())
+            status, error = "succeeded", None
+        except Exception as exc:
+            logger.exception("retention purge failed")
+            _report(exc)
+            counts, status, error = {"interactions": None, "recommendations": None, "users": None}, "failed", type(exc).__name__
+        with engine.begin() as conn:
+            row = conn.execute(text(
+                "UPDATE retention_runs SET status = :status, finished_at = now(), interactions = :interactions, "
+                f"recommendations = :recommendations, users = :users, error = :error WHERE id = :id RETURNING {_RUN_COLUMNS}"
+            ), {"status": status, "error": error, "id": run_id, **counts}).one()
+        logger.info("retention purge %s (%s months): %s", status, RETENTION_MONTHS, counts)
+        return _run_row(row)
+    finally:
+        _run_lock.release()
+
+
+def run_now(trigger: str = MANUAL, triggered_by: Optional[str] = None) -> dict[str, Any]:
+    return execute_run(start_run(trigger, triggered_by)["id"])
+
+
+def list_runs(limit: int = 30) -> list[dict[str, Any]]:
+    with engine.connect() as conn:
+        rows = conn.execute(text(f"SELECT {_RUN_COLUMNS} FROM retention_runs ORDER BY started_at DESC, id DESC LIMIT :limit"), {"limit": limit})
+        return [_run_row(row) for row in rows]
+
+
+def last_success_at() -> Optional[datetime]:
+    with engine.connect() as conn:
+        return conn.execute(text("SELECT max(finished_at) FROM retention_runs WHERE status = 'succeeded'")).scalar_one()
+
+
+def next_daily_run_at() -> Optional[datetime]:
+    """When the daily thread will purge next (to the hour it checks), or None if it is off."""
+    if not daily_enabled():
+        return None
+    last = last_success_at()
+    now = datetime.now(timezone.utc)
+    return now if last is None or last + RUN_EVERY <= now else last + RUN_EVERY
+
+
+def status() -> dict[str, Any]:
+    """The back-office page: the rule, what is due now, when the next daily run comes, the runs."""
+    return {
+        "retention_months": RETENTION_MONTHS,
+        "daily_enabled": daily_enabled(),
+        "next_run_at": next_daily_run_at(),
+        "last_success_at": last_success_at(),
+        "expired_now": count_expired(),
+        "runs": list_runs(),
+    }
+
+
+def _report(exc: BaseException) -> None:
+    try:
+        import sentry_sdk
+        sentry_sdk.capture_exception(exc)
+    except Exception:
+        pass
+
+
+def _daily_due() -> bool:
+    last = last_success_at()
+    return last is None or datetime.now(timezone.utc) - last >= RUN_EVERY
+
+
+def _daily_loop() -> None:
+    time.sleep(FIRST_CHECK_DELAY_SECONDS)
     while True:
         try:
-            if purge_enabled():
-                purge_expired_data()
-            else:
-                logger.warning("retention purge off (LIKYLY_RETENTION_PURGE != on), would delete: %s", count_expired())
-        except Exception:  # never let the purge thread die: tomorrow's run tries again
-            logger.exception("retention purge failed")
-            try:
-                import sentry_sdk
-                sentry_sdk.capture_exception()
-            except Exception:
-                pass
-        time.sleep(PURGE_EVERY_SECONDS)
+            if daily_enabled() and _daily_due():
+                run_now(DAILY)
+        except PurgeAlreadyRunning:
+            pass  # a manual run is under way: it counts as today's
+        except Exception as exc:  # never let the thread die: the next check tries again
+            logger.exception("retention purge check failed")
+            _report(exc)
+        time.sleep(CHECK_EVERY_SECONDS)
 
 
 def start_daily_purge() -> threading.Thread:
-    thread = threading.Thread(target=_purge_forever, name="retention-purge", daemon=True)
+    thread = threading.Thread(target=_daily_loop, name="retention-purge", daemon=True)
     thread.start()
     return thread
 
@@ -154,4 +261,4 @@ if __name__ == "__main__":
     if args.dry_run:
         print(at, "would delete:", count_expired())
     else:
-        print(at, "deleted:", purge_expired_data())
+        print(at, run_now(MANUAL, "command line"))

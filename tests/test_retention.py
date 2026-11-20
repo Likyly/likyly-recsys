@@ -66,3 +66,78 @@ def test_deletes_in_batches(http, seeded, monkeypatch):
     _sql(f"UPDATE interactions SET occurred_at = {OLD} WHERE session_id LIKE 'batch_%'")
     assert retention.purge_expired_data()["interactions"] == 5
     assert _events(seeded) == []
+
+
+# --- Runs and the back-office --------------------------------------------------------------------
+
+def _as_admin(monkeypatch, is_admin=True):
+    import app as app_module
+    claims = {"sub": "admin-user", "email": "admin@example.com", "aal": "aal2", "app_metadata": {"is_admin": is_admin}}
+    monkeypatch.setattr(app_module, "_decode_supabase_jwt", lambda authorization: claims)
+    return {"Authorization": "Bearer fake"}
+
+
+def test_a_run_is_recorded_with_what_it_deleted(http, seeded):
+    http.post("/events/view", params=Q, headers=seeded.public, json={"session_id": "run_old", "item_id": "SKU-NIKE-001"})
+    _sql(f"UPDATE interactions SET occurred_at = {OLD} WHERE session_id = 'run_old'")
+    run = retention.run_now(retention.DAILY)
+    assert (run["trigger"], run["status"], run["interactions"], run["error"]) == ("daily", "succeeded", 1, None)
+    assert run["finished_at"] is not None
+    assert retention.list_runs()[0]["id"] == run["id"]
+    # The next daily run is a day after this one.
+    assert not retention._daily_due()
+
+
+def test_a_failed_run_says_so_and_frees_the_lock(monkeypatch):
+    def broken():
+        raise RuntimeError("database gone")
+    monkeypatch.setattr(retention, "purge_expired_data", broken)
+    run = retention.run_now()
+    assert (run["status"], run["error"], run["interactions"]) == ("failed", "RuntimeError", None)
+    monkeypatch.undo()
+    assert retention.run_now()["status"] == "succeeded"  # the lock was released
+
+
+def test_admin_sees_the_rule_and_the_runs_and_starts_one(http, seeded, monkeypatch):
+    headers = _as_admin(monkeypatch)
+    http.post("/events/view", params=Q, headers=seeded.public, json={"session_id": "admin_old", "item_id": "SKU-NIKE-001"})
+    _sql(f"UPDATE interactions SET occurred_at = {OLD} WHERE session_id = 'admin_old'")
+
+    before = http.get("/admin/retention", headers=headers)
+    assert before.status_code == 200, before.text
+    body = before.json()
+    assert body["retention_months"] == 13 and body["daily_enabled"] is True
+    assert body["expired_now"]["interactions"] == 1
+
+    started = http.post("/admin/retention/run", headers=headers)
+    assert started.status_code == 202, started.text
+    assert (started.json()["trigger"], started.json()["triggered_by"]) == ("manual", "admin-user")
+
+    after = http.get("/admin/retention", headers=headers).json()
+    assert after["expired_now"]["interactions"] == 0
+    latest = after["runs"][0]
+    assert (latest["id"], latest["status"], latest["interactions"]) == (started.json()["id"], "succeeded", 1)
+    assert after["last_success_at"] is not None and after["next_run_at"] > after["last_success_at"]
+
+
+def test_one_purge_at_a_time(http, monkeypatch):
+    headers = _as_admin(monkeypatch)
+    run = retention.start_run(retention.MANUAL, "someone")
+    try:
+        assert http.post("/admin/retention/run", headers=headers).status_code == 409
+    finally:
+        retention.execute_run(run["id"])
+    assert http.post("/admin/retention/run", headers=headers).status_code == 202
+
+
+def test_daily_runs_can_be_turned_off(http, monkeypatch):
+    headers = _as_admin(monkeypatch)
+    monkeypatch.setenv("LIKYLY_RETENTION_PURGE", "off")
+    body = http.get("/admin/retention", headers=headers).json()
+    assert body["daily_enabled"] is False and body["next_run_at"] is None
+
+
+def test_admin_only(http, monkeypatch):
+    headers = _as_admin(monkeypatch, is_admin=False)
+    assert http.get("/admin/retention", headers=headers).status_code == 403
+    assert http.post("/admin/retention/run", headers=headers).status_code == 403

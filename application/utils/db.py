@@ -712,6 +712,24 @@ PLACEMENT_STRATEGIES = {"auto", "content", "session", "collaborative", "hybrid",
 PLACEMENT_AUDIENCES = {"all", "anonymous", "identified"}
 
 
+class RetentionRunModel(Base):
+    """One run of the 13-month retention purge (retention.py) - see migration 0008."""
+    __tablename__ = "retention_runs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    trigger = Column(String(16), nullable=False)  # "daily" or "manual"
+    triggered_by = Column(String, nullable=True)  # the admin's account id for a manual run
+    status = Column(String(16), nullable=False, default="running", server_default="running")
+    started_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, server_default=text("now()"))
+    finished_at = Column(DateTime(timezone=True), nullable=True)
+    interactions = Column(Integer, nullable=True)
+    recommendations = Column(Integer, nullable=True)
+    users = Column(Integer, nullable=True)
+    error = Column(String, nullable=True)
+
+    __table_args__ = (Index("ix_retention_runs_started_at", "started_at"),)
+
+
 class PlacementModel(Base):
     """A named, persistent recommendation configuration ("what to recommend, where, in what
     context, with what constraints") - the abstraction a developer configures once (by hand or

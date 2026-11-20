@@ -840,6 +840,34 @@ class AdminIntegrationRow(AdminIntegration):
     contact_email: Optional[str] = None
 
 
+class RetentionCounts(BaseModel):
+    interactions: int = Field(..., description="Events older than the retention period")
+    recommendations: int = Field(..., description="Recommendation traces older than the retention period")
+    users: int = Field(..., description="Signed-in customers with nothing left within the retention period")
+
+
+class RetentionRun(BaseModel):
+    id: int
+    trigger: Literal["daily", "manual"]
+    triggered_by: Optional[str] = None
+    status: Literal["running", "succeeded", "failed"]
+    started_at: datetime
+    finished_at: Optional[datetime] = None
+    interactions: Optional[int] = None
+    recommendations: Optional[int] = None
+    users: Optional[int] = None
+    error: Optional[str] = None
+
+
+class RetentionStatus(BaseModel):
+    retention_months: int = Field(..., description="Visitor data is deleted once older than this")
+    daily_enabled: bool = Field(..., description="Whether the daily purge runs (LIKYLY_RETENTION_PURGE is not 'off')")
+    next_run_at: Optional[datetime] = Field(None, description="When the daily purge runs next (checked hourly); null when it is off")
+    last_success_at: Optional[datetime] = None
+    expired_now: RetentionCounts = Field(..., description="What a purge would delete right now")
+    runs: List[RetentionRun] = Field(..., description="The latest runs, newest first")
+
+
 class AdminSiblingWorkspace(BaseModel):
     id: int
     name: str
