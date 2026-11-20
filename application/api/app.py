@@ -2935,4 +2935,8 @@ if __name__ == "__main__":
     # process - harmless for route definitions, but fatal for prometheus_client's Counter/
     # Histogram above, which register into a single process-wide registry and raise on a
     # second registration of the same metric name.
+    # Visitor data older than 13 months goes, at start then daily (retention.py). Here and
+    # not at import: the tests import this module and must not purge on their own.
+    import retention
+    retention.start_daily_purge()
     uvicorn.run(app, host='0.0.0.0', port=6061)

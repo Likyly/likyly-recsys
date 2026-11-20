@@ -401,6 +401,7 @@ class RecommendationModel(Base):
     __table_args__ = (
         Index("ix_recommendations_client_created", "client_id", "created_at"),
         Index("ix_recommendations_client_placement", "client_id", "placement", "created_at"),
+        Index("ix_recommendations_created_at", "created_at"),  # retention purge (retention.py)
     )
 
 
@@ -436,6 +437,7 @@ class InteractionModel(Base):
         # regex in app.py), not enforced in the schema.
         Index("ix_interactions_lookup", "client_id", "product_type", "event_type", "user_id", "work_id"),
         Index("ix_interactions_client_event_time", "client_id", "event_type", "occurred_at"),
+        Index("ix_interactions_occurred_at", "occurred_at"),  # retention purge (retention.py)
         Index(
             "ix_interactions_session", "client_id", "product_type", "session_id", "occurred_at",
             postgresql_where=text("session_id IS NOT NULL"),

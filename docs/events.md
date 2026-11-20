@@ -68,6 +68,29 @@ the same trust tier as tracking the events themselves - call it right after logi
 the browser. The TypeScript SDK's `LikylySession.identify(likyly, userId)` does this and remembers the
 session locally in one call.
 
+## Retention: 13 months
+
+LIKYLY keeps what it records about visitors for **13 months**, then deletes it - every
+workspace, every catalog, nothing to configure. A daily purge in the API
+(`application/utils/retention.py`, also runnable by hand: `python retention.py --dry-run`)
+removes:
+
+| What | Deleted when |
+|---|---|
+| Events (`interactions`: views, clicks, add to cart, purchases...) | `occurred_at` older than 13 months |
+| Recommendation traces (`recommendations`) | `created_at` older than 13 months |
+| A signed-in customer's id mapping and profile (`id_map`, `users`) | mapping older than 13 months **and** no event of theirs left |
+
+Why 13 months: GDPR sets no figure, only "no longer than the purpose needs". The CNIL caps a
+tracker's life at 13 months and the data collected through it at 25; LIKYLY takes 13 for both.
+That still covers a full year of seasons, and the longest performance window of any plan
+(365 days). The browser side matches: the SDK's anonymous visitor id (`LikylySession`) is
+renewed 13 months after it was created, never extended by later visits.
+
+Catalog items, placements, models and accounts are not visitor data and stay. Erasure on
+request is immediate and separate: `DELETE /users/{id}` (one customer), `POST /catalog/erase`
+(a whole catalog).
+
 ## Testing
 
 `tests/test_events_aliases_and_identify.py` covers: each alias lands on its canonical type
