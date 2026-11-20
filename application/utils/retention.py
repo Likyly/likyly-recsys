@@ -21,10 +21,14 @@ What goes, once older than RETENTION_MONTHS (every workspace, every catalog):
 Catalog items, placements, models and accounts are not visitor data and are not touched; a
 trained model only holds dense vectors, and the next retraining reads what is left.
 
-The API runs one process (see Dockerfile): it purges at start, then every day (see
-start_daily_purge). By hand: `python retention.py [--dry-run]` with DATABASE_URL set.
+The API runs one process (see Dockerfile): it runs at start, then every day (see
+start_daily_purge). It only deletes when LIKYLY_RETENTION_PURGE=on; otherwise it logs what it
+would delete (count_expired) - so the first run against production is a dry run whose counts
+are checked before it is switched on. By hand: `python retention.py [--dry-run]` with
+DATABASE_URL set.
 """
 import logging
+import os
 import threading
 import time
 from datetime import datetime, timezone
@@ -111,11 +115,18 @@ def purge_expired_data() -> dict[str, int]:
     return result
 
 
+def purge_enabled() -> bool:
+    return os.environ.get("LIKYLY_RETENTION_PURGE", "").lower() == "on"
+
+
 def _purge_forever() -> None:
     time.sleep(FIRST_PURGE_DELAY_SECONDS)
     while True:
         try:
-            purge_expired_data()
+            if purge_enabled():
+                purge_expired_data()
+            else:
+                logger.warning("retention purge off (LIKYLY_RETENTION_PURGE != on), would delete: %s", count_expired())
         except Exception:  # never let the purge thread die: tomorrow's run tries again
             logger.exception("retention purge failed")
             try:
