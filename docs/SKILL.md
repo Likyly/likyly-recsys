@@ -198,7 +198,9 @@ commit only the files you changed (not their pending work), push the branch and 
      either way, pass `context.itemId`/`userId`/`sessionId` for whatever `get_placement_
      requirements` named. Use `LikylySession` (from `@likyly/sdk`, exposed as
      `useLikyly().session` under `@likyly/react`) for an anonymous session id if the project
-     has none of its own yet.
+     has none of its own yet. It lasts 13 months from its creation, LIKYLY's retention period
+     for visitor data; an id the project keeps itself (cookie, storage) gets 13 months at most
+     too, never extended by later visits.
    - A Shopify theme (`layout/theme.liquid`, where the wizard wrote
      `sections/likyly-recommendations.liquid` and `snippets/likyly-key.liquid`): write no new
      code - the section already loads the SDK, sends the product view, renders the cards from

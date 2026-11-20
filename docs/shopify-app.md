@@ -106,6 +106,10 @@ encore).
 - Consentement : les pixels respectent l'API Customer Privacy de Shopify. Sans consentement
   (fréquent en Europe), aucun événement ne part, mais les recommandations s'affichent quand même.
   Il faudra l'expliquer dans la fiche de l'app et dans l'onglet Performance.
+- Conservation : l'identifiant visiteur `likyly_sid` dure 13 mois au plus depuis sa création
+  (`likyly_sid_created`), sans être prolongé par les visites. LIKYLY supprime les données
+  visiteurs de plus de 13 mois (purge quotidienne, voir `docs/events.md`). À dire aussi dans la
+  fiche de l'app.
 
 ### 4. Backend LIKYLY (peu de changements)
 
