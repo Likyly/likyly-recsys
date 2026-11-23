@@ -28,6 +28,7 @@ from schemas import (  # noqa: E402
     AnalyticsItemsOut, AnalyticsKeyDetailOut, AnalyticsKeySummaryOut, AnalyticsPlacementsOut,
     AnalyticsPlanOut, ErrorResponse,
 )
+import scoped_auth  # noqa: E402
 from scoped_auth import api_key_header, require_scope  # noqa: E402
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
@@ -169,6 +170,8 @@ def analytics_plan(client_id: int = Depends(require_scope(SCOPE)), api_key: Opti
         "workspace": {"id": client["name"], "name": client.get("display_name") or client["name"], "created_at": client["created_at"]} if client else None,
         "key": (
             {"kind": "developer", "name": developer["name"], "hint": developer["key_hint"], "scopes": developer["scopes"], "created_at": developer["created_at"]}
-            if developer else {"kind": "secret"}
+            if developer
+            else {"kind": "assistant"} if api_key and scoped_auth.looks_like_jwt(api_key)
+            else {"kind": "secret"}
         ),
     }

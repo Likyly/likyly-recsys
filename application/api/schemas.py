@@ -1531,7 +1531,7 @@ class AnalyticsWorkspace(BaseModel):
 
 class AnalyticsKeyInfo(BaseModel):
     """The key the call was made with - never its value."""
-    kind: Literal["secret", "developer"]
+    kind: Literal["secret", "developer", "assistant"]
     name: Optional[str] = Field(default=None, description="Developer key: the name it was given.")
     hint: Optional[str] = Field(default=None, description="Developer key: a preview, its first and last characters (\"lk_y2CU…GTs\") - never the key.")
     scopes: List[str] = Field(default_factory=list, description="Developer key: its rights. Empty for the secret key, which has them all.")

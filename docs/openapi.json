@@ -1392,7 +1392,8 @@
           "kind": {
             "enum": [
               "secret",
-              "developer"
+              "developer",
+              "assistant"
             ],
             "title": "Kind",
             "type": "string"

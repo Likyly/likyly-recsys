@@ -129,3 +129,13 @@ def test_oauth_token_can_search_the_catalog(http, account):
     response = http.get("/items", params={"data_product_type": "books", "search": "solitude"}, headers=OAUTH)
     assert response.status_code == 200, response.text
     assert [i["item_id"] for i in response.json()] == ["BK-1"]
+
+
+def test_oauth_token_reads_the_analytics(http, account):
+    """The assistant's performance tools: totals and per placement on every plan, the plan
+    answered as read by an assistant (not the secret key)."""
+    assert http.get("/analytics/summary", headers=OAUTH).status_code == 200
+    assert http.get("/analytics/placements", headers=OAUTH).status_code == 200
+    plan = http.get("/analytics/plan", headers=OAUTH)
+    assert plan.status_code == 200, plan.text
+    assert plan.json()["key"]["kind"] == "assistant"
