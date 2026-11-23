@@ -19520,7 +19520,7 @@
     },
     "/items": {
       "get": {
-        "description": "One page of the catalog, ordered by creation. The total number of items in this\ncatalog is in the `X-Total-Count` response header. The secret key, or a developer key with\n`catalog:read` or `sources:read` - never the public key: it lives in web pages, and must not\nbe able to export your whole catalog (recommendations already return the few items they\nrecommend).",
+        "description": "One page of the catalog, ordered by creation, or the items matching `search`. The total\nnumber of items in this catalog is in the `X-Total-Count` response header. The secret key,\na developer key with `catalog:read` or `sources:read`, or an assistant's OAuth token - never\nthe public key: it lives in web pages, and must not be able to export your whole catalog\n(recommendations already return the few items they recommend).",
         "operationId": "items_list",
         "parameters": [
           {
@@ -19548,6 +19548,25 @@
               "minimum": 0,
               "title": "Offset",
               "type": "integer"
+            }
+          },
+          {
+            "description": "Only the items whose title or description contains this text (case-insensitive).",
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only the items whose title or description contains this text (case-insensitive).",
+              "title": "Search"
             }
           },
           {

@@ -4,6 +4,7 @@ with scoped_auth.OAUTH_SCOPES, on the workspace picked on likyly.com's consent p
 
 No real IdP in tests (same technique as test_developer_keys.py): _decode_supabase_jwt is
 replaced by a lookup of the fake tokens below."""
+import io
 import uuid
 
 import pytest
@@ -115,3 +116,16 @@ def test_oauth_token_never_opens_the_console(http, account, method, path):
     assert response.status_code == 401, (path, response.text)
     assert "mcp.likyly.com" in response.json()["detail"]
     assert http.get("/clients/me/workspaces", headers=account["session"]).status_code == 200
+
+
+def test_oauth_token_can_search_the_catalog(http, account):
+    """An assistant finds a product's id by its title (to preview a placement for it)."""
+    csv = "item_id,title\nBK-1,One Hundred Years of Solitude\nBK-2,Nineteen Eighty-Four\n"
+    imported = http.post(
+        "/clients/me/import/products", params={"data_product_type": "books"}, headers=account["session"],
+        files={"file": ("books.csv", io.BytesIO(csv.encode()), "text/csv")},
+    )
+    assert imported.status_code == 200, imported.text
+    response = http.get("/items", params={"data_product_type": "books", "search": "solitude"}, headers=OAUTH)
+    assert response.status_code == 200, response.text
+    assert [i["item_id"] for i in response.json()] == ["BK-1"]

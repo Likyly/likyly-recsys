@@ -322,7 +322,12 @@ CATALOG_READ_SCOPES = {"catalog:read", "sources:read"}
 async def get_client_id_catalog_read(
     background_tasks: BackgroundTasks, api_key: Optional[str] = Security(api_key_header),
 ) -> int:
-    """The secret key, or a developer key allowed to read the catalog. Never the public key."""
+    """The secret key, a developer key allowed to read the catalog, or an assistant's OAuth
+    access token (through mcp.likyly.com; its scopes include sources:read). Never the public key."""
+    if api_key and scoped_auth.looks_like_jwt(api_key) and scoped_auth.oauth_client_resolver is not None:
+        client_id = scoped_auth.oauth_client_resolver(api_key)
+        background_tasks.add_task(touch_client_usage, client_id)
+        return client_id
     developer = _developer_key_client(api_key) if api_key else None
     if developer and CATALOG_READ_SCOPES & set(developer[1]):
         background_tasks.add_task(touch_client_usage, developer[0])
@@ -1923,15 +1928,16 @@ def items_list(
     response: Response, data_product_type: Catalog,
     limit: int = Query(100, ge=1, le=1000, description="Page size."),
     offset: int = Query(0, ge=0, description="Rows to skip."),
+    search: Optional[str] = Query(None, max_length=200, description="Only the items whose title or description contains this text (case-insensitive)."),
     client_id: int = Depends(get_client_id_catalog_read),
 ):
-    """One page of the catalog, ordered by creation. The total number of items in this
-    catalog is in the `X-Total-Count` response header. The secret key, or a developer key with
-    `catalog:read` or `sources:read` - never the public key: it lives in web pages, and must not
-    be able to export your whole catalog (recommendations already return the few items they
-    recommend)."""
+    """One page of the catalog, ordered by creation, or the items matching `search`. The total
+    number of items in this catalog is in the `X-Total-Count` response header. The secret key,
+    a developer key with `catalog:read` or `sources:read`, or an assistant's OAuth token - never
+    the public key: it lives in web pages, and must not be able to export your whole catalog
+    (recommendations already return the few items they recommend)."""
     response.headers["X-Total-Count"] = str(count_products_in_catalog(client_id, data_product_type))
-    return fetch_items(client_id, data_product_type, limit=limit, offset=offset)
+    return fetch_items(client_id, data_product_type, limit=limit, offset=offset, search=search or None)
 
 
 @app.get(
