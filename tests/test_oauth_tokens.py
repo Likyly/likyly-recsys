@@ -99,3 +99,19 @@ def test_deleting_the_workspace_removes_its_grants(http, account):
     assert db.get_oauth_workspace_grant(account["uid"], OAUTH_CLIENT) == account["first_id"]
     db.delete_client(account["first_id"])
     assert db.get_oauth_workspace_grant(account["uid"], OAUTH_CLIENT) is None
+
+
+@pytest.mark.parametrize("method, path", [
+    ("GET", "/clients/me/workspaces"),
+    ("GET", "/clients/me/developer-keys"),
+    ("POST", "/clients/me/developer-keys"),
+    ("DELETE", "/clients/me/account"),
+    ("PUT", f"/clients/me/oauth-grants/{OAUTH_CLIENT}"),
+])
+def test_oauth_token_never_opens_the_console(http, account, method, path):
+    """An assistant's token sent straight to the API, bypassing mcp.likyly.com, as a session:
+    keys, workspaces, the consent grant and account deletion stay closed."""
+    response = http.request(method, path, headers={"Authorization": "Bearer eyJoauth.payload.sig"})
+    assert response.status_code == 401, (path, response.text)
+    assert "mcp.likyly.com" in response.json()["detail"]
+    assert http.get("/clients/me/workspaces", headers=account["session"]).status_code == 200

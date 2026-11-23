@@ -486,11 +486,21 @@ def _has_verified_mfa_factor(supabase_user_id: str) -> bool:
 MFA_REQUIRED_DETAIL = "Two-step verification required: enter the code from your authenticator app"
 
 
-def _verified_session(authorization: Optional[str]) -> dict:
+OAUTH_TOKEN_ON_CONSOLE_DETAIL = "This route needs a likyly.com session - an assistant's access token only works through mcp.likyly.com"
+
+
+def _verified_session(authorization: Optional[str], allow_oauth: bool = False) -> dict:
     """The session JWT, checked like _decode_supabase_jwt, plus the second factor: right after a
     correct password, an account with two-step verification only has an aal1 session until its
-    code is entered. That session must not open the console or the API - 403 until it's aal2."""
+    code is entered. That session must not open the console or the API - 403 until it's aal2.
+
+    A token Supabase issued to an OAuth client (an assistant: it carries `client_id`) is signed
+    the same way, but it is not the account's own session: the console routes (keys, billing,
+    account deletion, workspaces…) refuse it. Only _client_id_for_oauth_token accepts it, for
+    the admin routers' OAUTH_SCOPES."""
     payload = _decode_supabase_jwt(authorization)
+    if payload.get("client_id") and not allow_oauth:
+        raise HTTPException(status_code=401, detail=OAUTH_TOKEN_ON_CONSOLE_DETAIL)
     if payload.get("aal") != "aal2" and _has_verified_mfa_factor(payload["sub"]):
         raise HTTPException(status_code=403, detail=MFA_REQUIRED_DETAIL)
     return payload
@@ -1388,7 +1398,7 @@ def _client_id_for_oauth_token(token: str) -> int:
     (signature, expiry, second factor), plus a `client_id` claim: only a token issued to an
     OAuth client (an assistant) is accepted here, never the website's own session. The
     workspace is the one picked on the consent page, else the account's primary one."""
-    payload = _verified_session(f"Bearer {token}")
+    payload = _verified_session(f"Bearer {token}", allow_oauth=True)
     oauth_client_id = payload.get("client_id")
     if not isinstance(oauth_client_id, str) or not oauth_client_id:
         raise HTTPException(status_code=401, detail="Not an OAuth access token - use your developer key, or connect through mcp.likyly.com")
