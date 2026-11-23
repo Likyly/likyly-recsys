@@ -262,8 +262,8 @@ _ZERO_SEVERITY = {
 _HEALTH_ORDER = ["missing", "warning", "ok"]  # for computing `overall` - worst check wins
 
 _PRODUCT_VIEW = {"event_type": "product_view", "why": "feeds session-based recommendations (recently viewed) for every placement, not just this one"}
-_ADD_TO_CART = {"event_type": "add_to_cart", "why": "a mid-funnel signal (weight: moyen) - optional but improves ranking"}
-_PURCHASE = {"event_type": "purchase", "why": "the strongest training signal (weight: fort) and what attribution ultimately measures"}
+_ADD_TO_CART = {"event_type": "add_to_cart", "why": "a mid-funnel signal (medium weight) - optional but improves ranking"}
+_PURCHASE = {"event_type": "purchase", "why": "the strongest training signal (strong weight) and what attribution ultimately measures"}
 _DEFAULT_CATALOG_EVENTS = [_PRODUCT_VIEW, _ADD_TO_CART, _PURCHASE]  # fallback: custom/unrecognized context_type
 
 # Which catalog-wide events actually make sense to expect, by context_type - a cart visitor is
