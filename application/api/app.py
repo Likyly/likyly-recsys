@@ -1,4 +1,5 @@
 import os
+import re
 # Some macOS Python installs don't wire the stdlib ssl module up to a trusted CA bundle,
 # so urllib-based HTTPS calls (PyJWKClient fetching Supabase's JWKS, below) fail with
 # CERTIFICATE_VERIFY_FAILED even though the certs it's asking for are perfectly valid.
@@ -100,6 +101,7 @@ from db import (
     get_recent_viewed_work_ids,
     store_recommendation,
     ALLOWED_SCOPES, create_developer_key, list_developer_keys, revoke_developer_key,
+    set_oauth_workspace_grant, get_oauth_workspace_grant,
     create_site_public_key, list_site_public_keys, revoke_site_public_key, TooManyPublicKeysError,
     link_session_to_user,
     recommendation_performance_summary, recommendation_performance_timeseries,
@@ -128,6 +130,7 @@ from site_audits import router as site_audits_router
 # The console routes below share the window clamping and usage numbers with /analytics/*.
 from analytics import router as analytics_router, resolve_analytics_window as _resolve_analytics_window, usage_summary as _usage_summary
 from scoped_auth import require_scope
+import scoped_auth
 import placement_service
 import retention
 import data_source_service
@@ -1347,6 +1350,46 @@ async def revoke_my_developer_key(key_id: int, supabase_user_id: str = Depends(g
     if not revoke_developer_key(client_id, key_id):
         raise HTTPException(status_code=404, detail=f"No developer key '{key_id}' for this account")
     return {"message": f"Developer key '{key_id}' revoked"}
+
+
+# OAuth (Claude, ChatGPT): Supabase Auth is the OAuth 2.1 server; the MCP server at
+# mcp.likyly.com forwards the assistant's access token as X-API-Key, and the admin routers
+# (scoped_auth) accept it with scoped_auth.OAUTH_SCOPES, on the workspace picked at consent.
+_OAUTH_CLIENT_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def _client_id_for_oauth_token(token: str) -> int:
+    """The workspace a Supabase OAuth access token acts on. Same checks as a console session
+    (signature, expiry, second factor), plus a `client_id` claim: only a token issued to an
+    OAuth client (an assistant) is accepted here, never the website's own session. The
+    workspace is the one picked on the consent page, else the account's primary one."""
+    payload = _verified_session(f"Bearer {token}")
+    oauth_client_id = payload.get("client_id")
+    if not isinstance(oauth_client_id, str) or not oauth_client_id:
+        raise HTTPException(status_code=401, detail="Not an OAuth access token - use your developer key, or connect through mcp.likyly.com")
+    owned = list_clients_by_supabase_user_id(payload["sub"])
+    if not owned:
+        raise HTTPException(status_code=403, detail="No LIKYLY workspace for this account yet - sign in once on https://www.likyly.com/account")
+    granted = get_oauth_workspace_grant(payload["sub"], oauth_client_id)
+    if granted is not None and any(c["id"] == granted for c in owned):
+        return granted
+    return owned[0]["id"]
+
+
+scoped_auth.oauth_client_resolver = _client_id_for_oauth_token
+
+
+@app.put("/clients/me/oauth-grants/{oauth_client_id}", tags=["selfServiceClient"], response_model=Message, summary="Choose the workspace an assistant acts on", responses=_errors(401, 403, 404, 422))
+async def set_my_oauth_workspace(oauth_client_id: str, supabase_user_id: str = Depends(get_current_supabase_user_id), x_workspace_id: WorkspaceIdHeader = None):
+    """Called by likyly.com's consent page, just before the account approves an assistant
+    (Claude, ChatGPT) through OAuth: the assistant then acts on the workspace given in
+    X-Workspace-Id (the primary one without it). Changing it later: connect the assistant
+    again and pick another workspace."""
+    if not _OAUTH_CLIENT_ID_PATTERN.match(oauth_client_id):
+        raise HTTPException(status_code=422, detail="Invalid OAuth client id")
+    client_id = await _resolve_my_client_id(supabase_user_id, x_workspace_id)
+    set_oauth_workspace_grant(supabase_user_id, oauth_client_id, client_id)
+    return {"message": "Workspace chosen for this assistant"}
 
 
 def _clean_cell(row, column: str):

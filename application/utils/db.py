@@ -568,6 +568,23 @@ class DeveloperKeyModel(Base):
     )
 
 
+class OAuthWorkspaceGrantModel(Base):
+    """Which workspace an assistant connected through OAuth (Claude, ChatGPT: Supabase Auth's
+    OAuth 2.1 server, the MCP server at mcp.likyly.com) acts on. The account picks it on
+    likyly.com's consent page; its access token only carries the account (`sub`) and the OAuth
+    client (`client_id`), so this row is the workspace. No row: the account's primary
+    workspace. See migration 0009 and scoped_auth.resolve_scoped_client_id."""
+    __tablename__ = "oauth_workspace_grants"
+
+    supabase_user_id = Column(String, primary_key=True)
+    oauth_client_id = Column(String(64), primary_key=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, server_default=text("now()"))
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, server_default=text("now()"))
+
+    __table_args__ = (Index("ix_oauth_workspace_grants_client", "client_id"),)
+
+
 class UpgradeRequestModel(Base):
     """A workspace owner's request to move to a paid plan. There is no billing yet, so this is the
     whole upgrade flow: the form's answers are stored here (never lost, whatever happens to the
@@ -1274,6 +1291,7 @@ def delete_client(client_id: int) -> bool:
         session.query(IdMapModel).filter_by(client_id=client_id).delete()
         session.query(RecommendationModel).filter_by(client_id=client_id).delete()
         session.query(DeveloperKeyModel).filter_by(client_id=client_id).delete()
+        session.query(OAuthWorkspaceGrantModel).filter_by(client_id=client_id).delete()
         session.query(PlacementModel).filter_by(client_id=client_id).delete()
         session.query(ClientIntegrationModel).filter_by(client_id=client_id).delete()
         session.query(UpgradeRequestModel).filter_by(client_id=client_id).delete()
@@ -2220,6 +2238,29 @@ def get_client_and_scopes_by_developer_key(raw_key: str) -> Optional[tuple[int, 
         session.query(DeveloperKeyModel).filter_by(id=row.id).update({"last_used_at": utcnow()})
         session.commit()
         return row.client_id, set(row.scopes or [])
+
+
+# ---------------------------------------------------------------------------
+# OAuth workspace grants - see OAuthWorkspaceGrantModel above.
+# ---------------------------------------------------------------------------
+
+def set_oauth_workspace_grant(supabase_user_id: str, oauth_client_id: str, client_id: int) -> None:
+    """The workspace this account's OAuth client acts on from now on (the caller has checked
+    the account owns it)."""
+    with SessionLocal() as session:
+        row = session.get(OAuthWorkspaceGrantModel, {"supabase_user_id": supabase_user_id, "oauth_client_id": oauth_client_id})
+        if row is None:
+            session.add(OAuthWorkspaceGrantModel(supabase_user_id=supabase_user_id, oauth_client_id=oauth_client_id, client_id=client_id))
+        else:
+            row.client_id = client_id
+            row.updated_at = utcnow()
+        session.commit()
+
+
+def get_oauth_workspace_grant(supabase_user_id: str, oauth_client_id: str) -> Optional[int]:
+    with SessionLocal() as session:
+        row = session.get(OAuthWorkspaceGrantModel, {"supabase_user_id": supabase_user_id, "oauth_client_id": oauth_client_id})
+        return row.client_id if row else None
 
 
 # ---------------------------------------------------------------------------

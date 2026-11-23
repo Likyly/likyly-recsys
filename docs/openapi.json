@@ -14337,6 +14337,121 @@
         ]
       }
     },
+    "/clients/me/oauth-grants/{oauth_client_id}": {
+      "put": {
+        "description": "Called by likyly.com's consent page, just before the account approves an assistant\n(Claude, ChatGPT) through OAuth: the assistant then acts on the workspace given in\nX-Workspace-Id (the primary one without it). Changing it later: connect the assistant\nagain and pick another workspace.",
+        "operationId": "set_my_oauth_workspace",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "oauth_client_id",
+            "required": true,
+            "schema": {
+              "title": "Oauth Client Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Which of this account's workspaces this call is about. Omitted: the primary (oldest) one.",
+            "in": "header",
+            "name": "X-Workspace-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Which of this account's workspaces this call is about. Omitted: the primary (oldest) one.",
+              "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing, invalid or revoked `X-API-Key`."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The public key can't do this (secret key required), or a plan limit was reached."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The referenced resource does not exist for this account."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The request is malformed - `detail` lists the offending fields."
+          },
+          "429": {
+            "description": "Rate limit exceeded at the API gateway - retry shortly."
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Choose the workspace an assistant acts on",
+        "tags": [
+          "selfServiceClient"
+        ]
+      }
+    },
     "/clients/me/placements": {
       "get": {
         "description": "The workspace's recommendation placements - what \"Recommandations\" shows to confirm the\nagent's configuration actually landed. Same rows as GET /placements (the secret/developer-key\nadmin surface), read-only and Supabase-session-gated for the dashboard instead.",

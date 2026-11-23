@@ -9,7 +9,7 @@ data_sources.py already made and the MCP server's client.ts (Likyly/sdks, mcp/sr
 """
 import os
 import sys
-from typing import Optional
+from typing import Callable, Optional
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 _utils_dir = os.path.abspath(os.path.join(current_dir, "../utils"))
@@ -21,6 +21,23 @@ from fastapi.security import APIKeyHeader  # noqa: E402
 
 from db import get_client_and_scope_by_api_key, get_client_and_scopes_by_developer_key, touch_client_usage  # noqa: E402
 
+# Everything a developer key can be granted that an assistant needs to set up and follow LIKYLY:
+# what an OAuth access token (Claude, ChatGPT through mcp.likyly.com) may do. Never the
+# recommendations/events surface (public_ok_client_id): that stays the public key's.
+OAUTH_SCOPES = frozenset({"sources:read", "sources:write", "placements:read", "placements:write", "analytics:read"})
+
+# Set by app.py at import (it owns the Supabase session checks; importing them here would be
+# circular): turns a Supabase OAuth access token into the workspace it acts on, raising the
+# HTTPException to answer when the token is refused. None: OAuth tokens are not accepted.
+oauth_client_resolver: Optional[Callable[[str], int]] = None
+
+
+def looks_like_jwt(value: str) -> bool:
+    """A Supabase access token (header.payload.signature, base64url JSON) - never one of
+    LIKYLY's own keys (pk_/sk_/lk_ prefixes or plain random tokens, no dots)."""
+    return value.startswith("eyJ") and value.count(".") == 2
+
+
 api_key_header = APIKeyHeader(
     name="X-API-Key", auto_error=False,
     description="Your secret key, or a developer key with the scope this endpoint needs - never the restricted public key.",
@@ -30,6 +47,12 @@ api_key_header = APIKeyHeader(
 async def resolve_scoped_client_id(scope: str, background_tasks: BackgroundTasks, api_key: Optional[str]) -> int:
     if not api_key:
         raise HTTPException(status_code=401, detail="Missing X-API-Key header")
+    if oauth_client_resolver is not None and looks_like_jwt(api_key):
+        client_id = oauth_client_resolver(api_key)
+        if scope not in OAUTH_SCOPES:
+            raise HTTPException(status_code=403, detail=f"This endpoint requires the '{scope}' scope, which an assistant connected through OAuth does not have")
+        background_tasks.add_task(touch_client_usage, client_id)
+        return client_id
     result = get_client_and_scope_by_api_key(api_key)
     if result and result[1] == "secret":
         background_tasks.add_task(touch_client_usage, result[0])
@@ -59,6 +82,9 @@ async def any_valid_key(background_tasks: BackgroundTasks, api_key: Optional[str
     integrator without needing a specific scope."""
     if not api_key:
         raise HTTPException(status_code=401, detail="Missing X-API-Key header")
+    if oauth_client_resolver is not None and looks_like_jwt(api_key):
+        oauth_client_resolver(api_key)
+        return
     if get_client_and_scope_by_api_key(api_key) or get_client_and_scopes_by_developer_key(api_key):
         return
     raise HTTPException(status_code=401, detail="Invalid or inactive X-API-Key")
