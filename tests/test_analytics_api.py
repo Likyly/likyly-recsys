@@ -28,7 +28,7 @@ def _recommend(http, tenant, slug):
     return body["recommendation_id"], [item["item_id"] for item in body["items"]]
 
 
-def _event(http, tenant, event_type, item_id, recommendation_id=None, placement=None, price=None, quantity=None):
+def _event(http, tenant, event_type, item_id, recommendation_id=None, placement=None, price=None, quantity=None, currency=None):
     payload = {"item_id": item_id, "session_id": "sess_1"}
     if recommendation_id:
         payload["recommendation_id"] = recommendation_id
@@ -37,7 +37,7 @@ def _event(http, tenant, event_type, item_id, recommendation_id=None, placement=
     if event_type == "purchase":
         payload["event_id"] = f"purchase_{uuid.uuid4().hex[:8]}"
     if price is not None:
-        payload["properties"] = {"price": price}
+        payload["properties"] = {"price": price, **({"currency": currency} if currency else {})}
     if quantity is not None:
         payload["quantity"] = quantity
     response = http.post(f"/events/{event_type}", headers=tenant.public, params=Q, json=payload)
@@ -201,6 +201,23 @@ def test_purchases_and_revenue_are_attributed_per_placement(http, pro):
     assert detail["revenue"] == {"purchases": 4, "revenue": 82.5}
     assert detail["window_days"] == 30
     assert sum(point["recommendations_served"] for point in detail["timeseries"]) == 3
+
+
+def test_revenue_says_its_currency_only_when_the_purchases_agree(http, pro):
+    _placement(http, pro, "pdp")
+    recommendation_id, items = _recommend(http, pro, "pdp")
+    paths = ["/analytics/placements", "/analytics/detail", "/analytics/items"]
+    assert [http.get(path, headers=pro.secret).json()["currency"] for path in paths] == [None, None, None]
+
+    _event(http, pro, "purchase", items[0], recommendation_id, "pdp", price=12.0, currency="usd")
+    _event(http, pro, "purchase", items[1], recommendation_id, "pdp", price=8.0, currency="USD")
+    # Not attributed to a recommendation: its currency is not the revenue's.
+    _event(http, pro, "purchase", items[2], placement="pdp", price=5.0, currency="EUR")
+    assert [http.get(path, headers=pro.secret).json()["currency"] for path in paths] == ["USD", "USD", "USD"]
+
+    # Two currencies in the sums: LIKYLY converts nothing, so it names none.
+    _event(http, pro, "purchase", items[2], recommendation_id, "pdp", price=5.0, currency="EUR")
+    assert http.get("/analytics/detail", headers=pro.secret).json()["currency"] is None
 
 
 def test_top_items_are_ranked_by_clicks_then_purchases(http, pro):

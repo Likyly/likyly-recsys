@@ -118,7 +118,10 @@ def analytics_placements(start: Optional[date] = START, end: Optional[date] = EN
     `placement`. Revenue is `properties.price` x `quantity`. Window: last 7 days by default,
     clamped to the plan."""
     since, until, echo = _window(client_id, start, end, default_days=7)
-    return {**echo, "placements": db.recommendation_performance_by_placement_with_revenue(client_id, since, until)}
+    return {
+        **echo, "currency": db.attributed_purchase_currency(client_id, since, until),
+        "placements": db.recommendation_performance_by_placement_with_revenue(client_id, since, until),
+    }
 
 
 @router.get("/detail", response_model=AnalyticsKeyDetailOut, summary="Recommendation performance - daily trend and revenue", responses=_errors(401, 403, 422))
@@ -129,7 +132,7 @@ def analytics_detail(start: Optional[date] = START, end: Optional[date] = END, c
     _require_detail(client_id, "detailed performance data (trend, by placement, revenue)")
     since, until, echo = _window(client_id, start, end, default_days=30)
     return {
-        **echo,
+        **echo, "currency": db.attributed_purchase_currency(client_id, since, until),
         "timeseries": db.recommendation_performance_timeseries(client_id, since, until=until),
         "revenue": db.recommendation_attributed_revenue(client_id, since, until=until),
     }
@@ -147,7 +150,10 @@ def analytics_items(
     Pro plan and above: 403 on Free. Window: last 30 days by default, clamped to the plan."""
     _require_detail(client_id, "top recommended items")
     since, until, echo = _window(client_id, start, end, default_days=30)
-    return {**echo, "items": db.recommendation_top_items(client_id, since, until, limit=limit)}
+    return {
+        **echo, "currency": db.attributed_purchase_currency(client_id, since, until),
+        "items": db.recommendation_top_items(client_id, since, until, limit=limit),
+    }
 
 
 @router.get("/plan", response_model=AnalyticsPlanOut, summary="My plan, its limits and usage", responses=_errors(401, 403))

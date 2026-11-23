@@ -2939,6 +2939,23 @@ def recommendation_attributed_revenue(client_id: int, since, until=None, placeme
     return {"purchases": purchases, "revenue": round(revenue, 2)}
 
 
+def attributed_purchase_currency(client_id: int, since, until=None) -> Optional[str]:
+    """The currency of the revenue the analytics add up: the `properties.currency` (ISO code,
+    upper-cased) of the attributed purchases with a numeric price in the window - when they all
+    say the same one. None when they send none, or several (the sums mix them: LIKYLY converts
+    nothing)."""
+    sql = (
+        "SELECT DISTINCT UPPER(TRIM(i.properties->>'currency')) AS currency FROM interactions i "
+        "WHERE i.client_id = :client_id AND i.event_type = 'purchase' AND i.recommendation_id IS NOT NULL "
+        "AND jsonb_typeof(i.properties->'price') = 'number' AND i.occurred_at >= :since"
+        + (" AND i.occurred_at <= :until" if until is not None else "")
+    )
+    params = {"client_id": client_id, "since": since, **({"until": until} if until is not None else {})}
+    with SessionLocal() as session:
+        found = {row[0] for row in session.execute(text(sql), params)}
+    return found.pop() if len(found) == 1 and None not in found and "" not in found else None
+
+
 def purchase_tracking_status(client_id: int, since) -> dict[str, Any]:
     """Is this workspace sending its purchases, and can LIKYLY count them? Counts, on any plan
     (no revenue): every purchase event since `since`, those that carry a recommendation_id (what

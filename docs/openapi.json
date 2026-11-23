@@ -1223,6 +1223,18 @@
       "AnalyticsItemsOut": {
         "description": "Top recommended items, by clicks then purchases - Pro plan and above.",
         "properties": {
+          "currency": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Currency of the revenue figures: the `properties.currency` the attributed purchases send (e.g. \"USD\"), when they all send the same one. null when they send none or several - LIKYLY converts nothing.",
+            "title": "Currency"
+          },
           "end": {
             "description": "Last day included (YYYY-MM-DD, UTC).",
             "examples": [
@@ -1291,6 +1303,18 @@
       "AnalyticsKeyDetailOut": {
         "description": "Day-by-day trend and total attributed revenue - Pro plan and above.",
         "properties": {
+          "currency": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Currency of the revenue figures: the `properties.currency` the attributed purchases send (e.g. \"USD\"), when they all send the same one. null when they send none or several - LIKYLY converts nothing.",
+            "title": "Currency"
+          },
           "end": {
             "description": "Last day included (YYYY-MM-DD, UTC).",
             "examples": [
@@ -1558,6 +1582,18 @@
       "AnalyticsPlacementsOut": {
         "description": "Per-placement breakdown - available on every plan.",
         "properties": {
+          "currency": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Currency of the revenue figures: the `properties.currency` the attributed purchases send (e.g. \"USD\"), when they all send the same one. null when they send none or several - LIKYLY converts nothing.",
+            "title": "Currency"
+          },
           "end": {
             "description": "Last day included (YYYY-MM-DD, UTC).",
             "examples": [

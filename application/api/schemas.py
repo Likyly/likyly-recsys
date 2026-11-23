@@ -1492,11 +1492,13 @@ class AnalyticsPlacementPerformanceRow(AnalyticsPlacementRow):
 
 class AnalyticsPlacementsOut(AnalyticsWindow):
     """Per-placement breakdown - available on every plan."""
+    currency: Optional[str] = Field(default=None, description="Currency of the revenue figures: the `properties.currency` the attributed purchases send (e.g. \"USD\"), when they all send the same one. null when they send none or several - LIKYLY converts nothing.")
     placements: List[AnalyticsPlacementPerformanceRow]
 
 
 class AnalyticsKeyDetailOut(AnalyticsWindow):
     """Day-by-day trend and total attributed revenue - Pro plan and above."""
+    currency: Optional[str] = Field(default=None, description="Currency of the revenue figures: the `properties.currency` the attributed purchases send (e.g. \"USD\"), when they all send the same one. null when they send none or several - LIKYLY converts nothing.")
     timeseries: List[AnalyticsTimeseriesPoint] = Field(description="One point per day that had any activity.")
     revenue: AnalyticsRevenue = Field(description="Purchases carrying a `recommendation_id`, and their `properties.price` x `quantity` total.")
 
@@ -1516,6 +1518,7 @@ class AnalyticsTopItem(BaseModel):
 
 class AnalyticsItemsOut(AnalyticsWindow):
     """Top recommended items, by clicks then purchases - Pro plan and above."""
+    currency: Optional[str] = Field(default=None, description="Currency of the revenue figures: the `properties.currency` the attributed purchases send (e.g. \"USD\"), when they all send the same one. null when they send none or several - LIKYLY converts nothing.")
     items: List[AnalyticsTopItem]
 
 
