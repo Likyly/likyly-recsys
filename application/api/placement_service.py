@@ -287,7 +287,7 @@ _DEFAULT_EVENTS_BY_CONTEXT: dict[str, list[dict[str, str]]] = {
 _CHECK_NAME_OVERRIDES = {"product_view": "product_views_received", "purchase": "purchases_received"}
 
 
-def _catalog_tracked_events(placement: dict[str, Any]) -> list[dict[str, str]]:
+def _catalog_tracked_events(placement: dict[str, Any], language: str = "fr") -> list[dict[str, str]]:
     """The catalog-wide (not placement-specific) events this placement's tracking-requirements
     and health check report on: whatever the tenant explicitly attached via
     tracking_configuration.event_types (the Événements page) takes priority - or, unset, a
@@ -296,21 +296,23 @@ def _catalog_tracked_events(placement: dict[str, Any]) -> list[dict[str, str]]:
     context."""
     configured = (placement.get("tracking_configuration") or {}).get("event_types")
     if configured:
-        return [{"event_type": t, "why": "Configuré pour ce placement (page Événements)."} for t in configured]
+        why = "Configured for this placement (Events page)." if language == "en" else "Configuré pour ce placement (page Événements)."
+        return [{"event_type": t, "why": why} for t in configured]
     return _DEFAULT_EVENTS_BY_CONTEXT.get(placement.get("context_type"), _DEFAULT_CATALOG_EVENTS)
 
 
-def _check(name: str, count: int, *, required: Optional[bool] = None) -> dict[str, Any]:
+def _check(name: str, count: int, *, required: Optional[bool] = None, language: str = "en") -> dict[str, Any]:
     """`required=None` (the fixed instrumentation checks): severity of a zero count comes from
     _ZERO_SEVERITY. `required=True/False` (the signal-relevance checks): severity follows
     whether *this placement* actually requires that signal."""
     if count > 0:
-        return {"name": name, "status": "ok", "count": count, "message": f"{count} received in the window"}
+        message = f"{count} reçu{'s' if count > 1 else ''} sur la période" if language == "fr" else f"{count} received in the window"
+        return {"name": name, "status": "ok", "count": count, "message": message}
     status = _ZERO_SEVERITY.get(name, "warning") if required is None else ("missing" if required else "warning")
-    return {"name": name, "status": status, "count": 0, "message": "not received in the window"}
+    return {"name": name, "status": status, "count": 0, "message": "rien reçu sur la période" if language == "fr" else "not received in the window"}
 
 
-def _public_key_rotated_check(client_id: int, last_call_at) -> Optional[dict[str, Any]]:
+def _public_key_rotated_check(client_id: int, last_call_at, language: str = "en") -> Optional[dict[str, Any]]:
     """Calls came in, then a public key was regenerated (the workspace's) or revoked (a site's)
     and none came since: the site still
     sends the old key, every call (recommend and events) gets a 401 that no workspace can be
@@ -327,38 +329,43 @@ def _public_key_rotated_check(client_id: int, last_call_at) -> Optional[dict[str
         "status": "missing",
         "count": 0,
         "message": (
+            f"une clé publique a été régénérée ou révoquée le {disabled_at:%d/%m/%Y à %H:%M} UTC, aucun appel de recommandation depuis "
+            f"(le dernier le {last_call_at:%d/%m/%Y à %H:%M} UTC) : un site qui utilise encore cette clé reçoit une erreur 401 - donnez-lui une clé valide"
+            if language == "fr" else
             f"a public key was regenerated or revoked at {disabled_at:%Y-%m-%d %H:%M} UTC, no recommendation call since "
             f"(last one at {last_call_at:%Y-%m-%d %H:%M} UTC): a site still using that key gets 401 - give it a working key"
         ),
     }
 
 
-def get_health(client_id: int, slug: str, window_hours: int = 24) -> dict[str, Any]:
+def get_health(client_id: int, slug: str, window_hours: int = 24, language: str = "en") -> dict[str, Any]:
+    """`language` ("en" | "fr"): the checks' `message` (the console asks for its page's language)."""
     placement = _require(client_id, slug)
+    lang = {"language": language}
     since = db.utcnow() - timedelta(hours=window_hours)
     signals = placement.get("signals") or {}
     required_signals = set(signals.get("required") or [])
     relevant_signals = required_signals | set(signals.get("optional") or [])
 
     rec_stats = db.count_recent_recommendation_calls(client_id, slug, since)
-    checks = [_check("recommendations_requested", rec_stats["total"])]
-    rotated = _public_key_rotated_check(client_id, rec_stats["last_at"])
+    checks = [_check("recommendations_requested", rec_stats["total"], **lang)]
+    rotated = _public_key_rotated_check(client_id, rec_stats["last_at"], language)
     if rotated:
         checks.append(rotated)
 
     if {"current_item_id"} & relevant_signals:
-        checks.append(_check("current_item_supplied", rec_stats["with_item"], required="current_item_id" in required_signals))
+        checks.append(_check("current_item_supplied", rec_stats["with_item"], required="current_item_id" in required_signals, **lang))
     if {"session_id", "anonymous_id"} & relevant_signals:
-        checks.append(_check("anonymous_session_supplied", rec_stats["with_session"], required=bool({"session_id", "anonymous_id"} & required_signals)))
+        checks.append(_check("anonymous_session_supplied", rec_stats["with_session"], required=bool({"session_id", "anonymous_id"} & required_signals), **lang))
 
-    checks.append(_check("impressions_received", db.count_recent_interactions_by_type(client_id, "impression", since, placement=slug)))
-    checks.append(_check("recommendation_clicks_received", db.count_recent_interactions_by_type(client_id, "click", since, placement=slug)))
+    checks.append(_check("impressions_received", db.count_recent_interactions_by_type(client_id, "impression", since, placement=slug), **lang))
+    checks.append(_check("recommendation_clicks_received", db.count_recent_interactions_by_type(client_id, "click", since, placement=slug), **lang))
 
     for event in _catalog_tracked_events(placement):
         event_type = event["event_type"]
         check_name = _CHECK_NAME_OVERRIDES.get(event_type, f"{event_type}_received")
         internal_type = db.EVENT_TYPE_ALIASES.get(event_type, event_type)
-        checks.append(_check(check_name, db.count_recent_interactions_by_type(client_id, internal_type, since)))
+        checks.append(_check(check_name, db.count_recent_interactions_by_type(client_id, internal_type, since), **lang))
 
     overall = "ok"
     for status in (c["status"] for c in checks):
@@ -367,14 +374,14 @@ def get_health(client_id: int, slug: str, window_hours: int = 24) -> dict[str, A
     return {"slug": slug, "window_hours": window_hours, "overall": overall, "checks": checks}
 
 
-def get_tracking_requirements(client_id: int, slug: str) -> dict[str, Any]:
+def get_tracking_requirements(client_id: int, slug: str, language: str = "fr") -> dict[str, Any]:
     placement = _require(client_id, slug)
     required_events = [
         {"event_type": "recommendation_impression", "scope": "placement", "why": "confirms recommendations are actually being rendered, not just requested"},
         {"event_type": "recommendation_click", "scope": "placement", "why": "the primary signal that a recommendation is relevant - drives collaborative/session quality over time"},
     ] + [
         {"event_type": event["event_type"], "scope": "catalog", "why": event["why"]}
-        for event in _catalog_tracked_events(placement)
+        for event in _catalog_tracked_events(placement, language)
     ]
     return {"slug": slug, "required_context": placement["signals"], "required_events": required_events}
 

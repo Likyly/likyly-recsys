@@ -339,6 +339,14 @@ class TestPlacements:
         body = response.json()
         assert body["slug"] == "pdp-related"
         assert {c["name"] for c in body["checks"]} >= {"recommendations_requested", "current_item_supplied"}
+        # the console's messages: French by default, English when the page is English
+        requested = next(c for c in body["checks"] if c["name"] == "recommendations_requested")
+        assert requested["message"] == "rien reçu sur la période"
+        english = http.get("/clients/me/placements/pdp-related/health", headers={**workspace["auth"], "Accept-Language": "en"}).json()
+        assert next(c for c in english["checks"] if c["name"] == "recommendations_requested")["message"] == "not received in the window"
+        # the developer API (MCP validator) stays English without a header
+        admin = http.get("/placements/pdp-related/health", headers=workspace["secret"]).json()
+        assert next(c for c in admin["checks"] if c["name"] == "recommendations_requested")["message"] == "not received in the window"
 
     def test_health_for_an_unknown_slug_is_404(self, http, workspace):
         assert http.get("/clients/me/placements/does-not-exist/health", headers=workspace["auth"]).status_code == 404

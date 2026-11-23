@@ -121,8 +121,10 @@ from recommender import (
 )
 from data_sources import router as data_sources_router
 from upgrade_requests import UPGRADE_REQUESTS_PER_DAY, notify_team, render_email
+from i18n import pick, request_language
 import admin_queries  # noqa: E402
 from db import get_client_and_scopes_by_developer_key as _developer_key_client  # noqa: E402
+from db import DEFAULT_EVENT_TYPES  # noqa: E402
 from alerts import deleted_account_message, new_account_message, send_team_alert
 from welcome import send_welcome
 from placements import router as placements_router
@@ -628,6 +630,8 @@ def maybe_trigger_auto_retrain(client_id: int, product_type: str, background_tas
     if auto_retrain_daily_limit is not None and count_trainings_today(client_id, product_type, AUTO) >= auto_retrain_daily_limit:
         _auto_retrain_skips[key] = {
             "skipped_at": utcnow(),
+            "limit": auto_retrain_daily_limit,
+            "waiting": new_interactions,
             "reason": (
                 f"Free plan limit reached: {auto_retrain_daily_limit} automatic "
                 f"retrain(s) per day. {new_interactions} new interactions are waiting - "
@@ -978,20 +982,20 @@ async def purge_my_placement_cache(slug: str, supabase_user_id: str = Depends(ge
 
 @app.get("/clients/me/placements/{slug}/tracking-requirements", tags=["selfServiceClient"], response_model=TrackingRequirementsOut, summary="Which events this placement needs instrumented", responses=_errors(401, 404, 422))
 async def get_my_placement_tracking_requirements(
-    slug: str, supabase_user_id: str = Depends(get_current_supabase_user_id), x_workspace_id: WorkspaceIdHeader = None,
+    slug: str, request: Request, supabase_user_id: str = Depends(get_current_supabase_user_id), x_workspace_id: WorkspaceIdHeader = None,
 ):
     """Same as GET /placements/{slug}/tracking-requirements (admin) - which events to send and
     why. Shown alongside the "Par prompt"/"Par code" integration tabs so it's explicit which
     events actually matter for this placement, not just how to call /recommend."""
     client_id = await _resolve_my_client_id(supabase_user_id, x_workspace_id)
     try:
-        return placement_service.get_tracking_requirements(client_id, slug)
+        return placement_service.get_tracking_requirements(client_id, slug, request_language(request))
     except placement_service.NotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error))
 
 @app.get("/clients/me/placements/{slug}/health", tags=["selfServiceClient"], response_model=PlacementHealthOut, summary="Is this placement's integration actually working?", responses=_errors(401, 404, 422))
 async def get_my_placement_health(
-    slug: str, window_hours: int = Query(24, ge=1, le=24 * 30),
+    slug: str, request: Request, window_hours: int = Query(24, ge=1, le=24 * 30),
     supabase_user_id: str = Depends(get_current_supabase_user_id), x_workspace_id: WorkspaceIdHeader = None,
 ):
     """The same checklist validate_integration (the MCP tool) reports - whether recommend calls,
@@ -1000,7 +1004,7 @@ async def get_my_placement_health(
     agent to read out."""
     client_id = await _resolve_my_client_id(supabase_user_id, x_workspace_id)
     try:
-        return placement_service.get_health(client_id, slug, window_hours)
+        return placement_service.get_health(client_id, slug, window_hours, request_language(request))
     except placement_service.NotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error))
 
@@ -1148,7 +1152,7 @@ async def list_plans(supabase_user_id: str = Depends(get_current_supabase_user_i
     summary="Request a plan upgrade",
     responses={**_errors(401, 404, 422), 429: {"model": ErrorResponse, "description": "Too many upgrade requests from this workspace in the last 24 hours."}},
 )
-async def create_my_upgrade_request(payload: UpgradeRequestCreate, background_tasks: BackgroundTasks, supabase_user_id: str = Depends(get_current_supabase_user_id), x_workspace_id: WorkspaceIdHeader = None):
+async def create_my_upgrade_request(payload: UpgradeRequestCreate, request: Request, background_tasks: BackgroundTasks, supabase_user_id: str = Depends(get_current_supabase_user_id), x_workspace_id: WorkspaceIdHeader = None):
     """There is no online payment yet: this is how a workspace asks for the Pro plan. The answers are
     stored, then emailed to the team (contact@likyly.com) with the workspace's plan and current
     usage attached - the email goes out in the background, so a mail problem never fails the request.
@@ -1156,7 +1160,11 @@ async def create_my_upgrade_request(payload: UpgradeRequestCreate, background_ta
     client_id = await _resolve_my_client_id(supabase_user_id, x_workspace_id)
     existing = get_client_self_by_id(client_id)
     if count_upgrade_requests_since(client_id, utcnow() - timedelta(hours=24)) >= UPGRADE_REQUESTS_PER_DAY:
-        raise HTTPException(status_code=429, detail="Vous avez déjà envoyé plusieurs demandes aujourd'hui - nous revenons vers vous très vite par email.")
+        raise HTTPException(status_code=429, detail=pick(
+            request,
+            fr="Vous avez déjà envoyé plusieurs demandes aujourd'hui - nous revenons vers vous très vite par email.",
+            en="You have already sent several requests today - we'll get back to you by email very soon.",
+        ))
 
     form = payload.model_dump(exclude={"consent"})
     row = create_upgrade_request(client_id, form)
@@ -1244,14 +1252,31 @@ async def list_my_data_source_syncs(data_source_id: int, limit: int = Query(20, 
     except data_source_service.NotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error))
 
+# The default event types' labels (db.DEFAULT_EVENT_TYPES, stored in French) in English.
+DEFAULT_EVENT_TYPE_LABELS_EN = {
+    "purchase": "Purchase", "view": "View", "impression": "Impression", "click": "Click",
+    "add_to_cart": "Add to cart", "remove_from_cart": "Remove from cart",
+}
+_DEFAULT_EVENT_TYPE_LABELS_FR = {event_type: label for event_type, label, _tier in DEFAULT_EVENT_TYPES}
+
+
+def localized_event_type(row: dict, language: str) -> dict:
+    """An event type for the console: a default type still carrying its default French label shows
+    it in English when asked; a label the tenant wrote stays as written."""
+    if language == "en" and row.get("label") == _DEFAULT_EVENT_TYPE_LABELS_FR.get(row.get("event_type")):
+        return {**row, "label": DEFAULT_EVENT_TYPE_LABELS_EN.get(row["event_type"], row["label"])}
+    return row
+
+
 @app.get("/clients/me/event-types", tags=["selfServiceClient"], response_model=List[EventType], summary="List my event types", responses=_errors(401, 404))
-async def list_my_event_types(supabase_user_id: str = Depends(get_current_supabase_user_id), x_workspace_id: WorkspaceIdHeader = None):
+async def list_my_event_types(request: Request, supabase_user_id: str = Depends(get_current_supabase_user_id), x_workspace_id: WorkspaceIdHeader = None):
     """Every event type this tenant has registered - "purchase"/"view" always exist
     (seeded at client creation, see seed_default_event_types in db.py); others appear
     either because the tenant added them here or because an integration auto-registered
-    them by calling POST /events/{event_type} for a new type."""
+    them by calling POST /events/{event_type} for a new type. A default type's label, as long as
+    the tenant hasn't renamed it, comes in the caller's language (Accept-Language)."""
     client_id = await _resolve_my_client_id(supabase_user_id, x_workspace_id)
-    return get_client_event_types(client_id)
+    return [localized_event_type(row, request_language(request)) for row in get_client_event_types(client_id)]
 
 @app.post("/clients/me/event-types", tags=["selfServiceClient"], response_model=EventType, summary="Register an event type", responses=_errors(401, 404, 422))
 async def create_my_event_type(payload: EventTypeCreate, supabase_user_id: str = Depends(get_current_supabase_user_id), x_workspace_id: WorkspaceIdHeader = None):
@@ -2244,7 +2269,15 @@ def get_job_or_404_for_client(job_id: str, client_id: int) -> dict:
     return job
 
 
-def build_model_status(client_id: int, product_type: str) -> dict:
+def auto_retrain_skip_reason(skip: dict, language: str) -> str:
+    if language == "fr" and "limit" in skip:
+        return (f"Limite du plan gratuit atteinte : {skip['limit']} réentraînement(s) automatique(s) par jour. "
+                f"{skip['waiting']} nouvelles interactions attendent - le modèle se mettra à jour au réentraînement "
+                "automatique de demain, ou passez à un plan supérieur.")
+    return skip["reason"]
+
+
+def build_model_status(client_id: int, product_type: str, language: str = "en") -> dict:
     """Shared by GET /models/status (secret-key, for the customer's own backend) and
     GET /clients/me/models/status (Supabase JWT, for the website) - same computation,
     two different ways of arriving at client_id. Everything a client dashboard needs to
@@ -2270,7 +2303,7 @@ def build_model_status(client_id: int, product_type: str) -> dict:
         "auto_retrains_today": count_trainings_today(client_id, product_type, AUTO),
         "auto_retrain_daily_limit": limits["auto_retrain_daily_limit"],
         "auto_retrain_skipped_today": skip_today,
-        "auto_retrain_skip_reason": skip["reason"] if skip_today else None,
+        "auto_retrain_skip_reason": auto_retrain_skip_reason(skip, language) if skip is not None and skip_today else None,
     }
 
 
@@ -2394,10 +2427,11 @@ async def generate_my_model_status(job_id: str, supabase_user_id: str = Depends(
     return get_job_or_404_for_client(job_id, client_id)
 
 @app.get("/clients/me/models/status", tags=["selfServiceClient"], response_model=ModelStatus, summary="My model status", responses=_errors(401, 404, 422))
-async def get_my_model_status(data_product_type: ProductType, supabase_user_id: str = Depends(get_current_supabase_user_id), x_workspace_id: WorkspaceIdHeader = None):
-    """Website equivalent of `GET /models/status`: the active model version and today's quota usage for one catalog."""
+async def get_my_model_status(data_product_type: ProductType, request: Request, supabase_user_id: str = Depends(get_current_supabase_user_id), x_workspace_id: WorkspaceIdHeader = None):
+    """Website equivalent of `GET /models/status`: the active model version and today's quota usage for one catalog
+    (`auto_retrain_skip_reason` in the caller's language, French by default)."""
     client_id = await _resolve_my_client_id(supabase_user_id, x_workspace_id)
-    return build_model_status(client_id, data_product_type)
+    return build_model_status(client_id, data_product_type, request_language(request))
 
 @app.get("/clients/me/models/versions", tags=["selfServiceClient"], response_model=List[ModelVersion], summary="My model versions", responses=_errors(401, 404, 422))
 async def get_my_model_versions(data_product_type: ProductType, supabase_user_id: str = Depends(get_current_supabase_user_id), x_workspace_id: WorkspaceIdHeader = None):

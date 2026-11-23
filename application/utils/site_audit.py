@@ -21,16 +21,19 @@ but unreadable, and the KPIs that need their content say "unknown" rather than g
 Every fetch goes through SafeFetcher: http(s) on ports 80/443 only, every hostname resolved and
 refused if any address is private/loopback/link-local/reserved (also on every redirect hop), and
 the connection pinned to the address that was checked (no DNS rebinding between check and
-connect). Bodies are capped. The text is French: the site is.
+connect). Bodies are capped. The text is in the visitor's language, French or English: `run_audit(...,
+language=)`, or `with language("en"):` around anything else that may raise an AuditError.
 """
 from __future__ import annotations
 
+import contextvars
 import ipaddress
 import json
 import re
 import socket
+from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Callable, Iterable, Optional
+from typing import Any, Callable, Iterable, Iterator, Optional
 from urllib.parse import parse_qs, urljoin, urlsplit, urlunsplit
 
 import httpx
@@ -40,6 +43,31 @@ USER_AGENT = "Mozilla/5.0 (compatible; LikylyAudit/1.0; +https://www.likyly.com/
 TIMEOUT_SECONDS = 8.0
 MAX_BODY_BYTES = 3 * 1024 * 1024
 MAX_REDIRECTS = 5
+
+_language: contextvars.ContextVar[str] = contextvars.ContextVar("site_audit_language", default="fr")
+
+
+@contextmanager
+def language(lang: str) -> Iterator[None]:
+    """The language of everything the audit words for the visitor, inside the block: "fr" or "en"."""
+    token = _language.set("en" if lang == "en" else "fr")
+    try:
+        yield
+    finally:
+        _language.reset(token)
+
+
+def current_language() -> str:
+    return _language.get()
+
+
+def t(fr: str, en: str) -> str:
+    return en if _language.get() == "en" else fr
+
+
+def q(text: Any) -> str:
+    """A title quoted the way the language does: « Vous aimerez aussi » / “You may also like”."""
+    return t(f"« {text} »", f"“{text}”")
 
 
 class AuditError(Exception):
@@ -79,7 +107,8 @@ def is_challenge(html: str) -> bool:
     return len(" ".join(_NOT_TEXT_RE.sub(" ", html[:2_000_000]).split())) < CHALLENGE_MAX_TEXT
 
 
-BLOCKED_HINT = " Vous pouvez l'auditer depuis votre navigateur."
+def blocked_hint() -> str:
+    return t(" Vous pouvez l'auditer depuis votre navigateur.", " You can audit it from your browser.")
 
 
 # --------------------------------------------------------------------------------------------
@@ -99,16 +128,17 @@ def normalize_input_url(raw: str, allow_private: bool = False) -> str:
     """What the visitor typed -> an absolute http(s) URL, or AuditError."""
     value = (raw or "").strip()
     if not value:
-        raise AuditError("Indiquez l'adresse d'une page de votre site.")
+        raise AuditError(t("Indiquez l'adresse d'une page de votre site.", "Enter the address of a page of your site."))
     if len(value) > 2000:
-        raise AuditError("Cette adresse est trop longue.")
+        raise AuditError(t("Cette adresse est trop longue.", "This address is too long."))
     if not re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", value):
         value = "https://" + value
     parts = urlsplit(value)
     if parts.scheme not in ("http", "https") or not parts.hostname or ("." not in parts.hostname and not allow_private):
-        raise AuditError("Cette adresse n'est pas valide : collez l'URL complète d'une page, par exemple https://www.maboutique.fr/produit/…")
+        raise AuditError(t("Cette adresse n'est pas valide : collez l'URL complète d'une page, par exemple https://www.maboutique.fr/produit/…",
+                           "This address isn't valid: paste the full URL of a page, for example https://www.myshop.com/product/…"))
     if parts.username or parts.password:
-        raise AuditError("Cette adresse n'est pas valide.")
+        raise AuditError(t("Cette adresse n'est pas valide.", "This address isn't valid."))
     return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), parts.path or "/", parts.query, ""))
 
 
@@ -134,13 +164,13 @@ class SafeFetcher:
         try:
             infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
         except socket.gaierror:
-            raise AuditError(f"Le site {host} est introuvable : vérifiez l'adresse.")
+            raise AuditError(t(f"Le site {host} est introuvable : vérifiez l'adresse.", f"The site {host} can't be found: check the address."))
         # IPv4 first: a server without IPv6 connectivity would otherwise time out on AAAA records.
         addresses = sorted(dict.fromkeys(info[4][0] for info in infos), key=lambda a: ":" in a)
         if not addresses:
-            raise AuditError(f"Le site {host} est introuvable : vérifiez l'adresse.")
+            raise AuditError(t(f"Le site {host} est introuvable : vérifiez l'adresse.", f"The site {host} can't be found: check the address."))
         if not self.allow_private and not all(_is_public(a) for a in addresses):
-            raise AuditError("Cette adresse ne mène pas à un site public.")
+            raise AuditError(t("Cette adresse ne mène pas à un site public.", "This address doesn't lead to a public website."))
         return addresses[0]
 
     def get(self, url: str, accept: str = "text/html,application/xhtml+xml") -> Page:
@@ -148,10 +178,10 @@ class SafeFetcher:
         for _ in range(MAX_REDIRECTS + 1):
             parts = urlsplit(current)
             if parts.scheme not in ("http", "https") or not parts.hostname:
-                raise AuditError("La page redirige vers une adresse qui n'est pas un site web.")
+                raise AuditError(t("La page redirige vers une adresse qui n'est pas un site web.", "The page redirects to an address that isn't a website."))
             port = parts.port or (443 if parts.scheme == "https" else 80)
             if port not in (80, 443) and not self.allow_private:
-                raise AuditError("Seuls les sites web standards (ports 80 et 443) peuvent être analysés.")
+                raise AuditError(t("Seuls les sites web standards (ports 80 et 443) peuvent être analysés.", "Only standard websites (ports 80 and 443) can be audited."))
             host = parts.hostname
             address = self._resolve(host, port)
             pinned_host = f"[{address}]" if ":" in address else address
@@ -169,7 +199,7 @@ class SafeFetcher:
                     if response.is_redirect:
                         location = response.headers.get("location")
                         if not location:
-                            raise AuditError("La page redirige sans dire où.")
+                            raise AuditError(t("La page redirige sans dire où.", "The page redirects without saying where."))
                         current = urljoin(current, location)
                         continue
                     body = bytearray()
@@ -185,10 +215,12 @@ class SafeFetcher:
                         text = bytes(body).decode("utf-8", errors="replace")
                     return Page(url=current, status=response.status_code, text=text, content_type=response.headers.get("content-type", ""))
             except httpx.TimeoutException:
-                raise AuditError(f"Le site {host} ne répond pas à notre robot d'analyse : il est trop lent, ou il ignore les visites automatiques." + BLOCKED_HINT, blocked=True)
+                raise AuditError(t(f"Le site {host} ne répond pas à notre robot d'analyse : il est trop lent, ou il ignore les visites automatiques.",
+                                   f"The site {host} doesn't answer our audit robot: it is too slow, or it ignores automated visits.") + blocked_hint(), blocked=True)
             except httpx.HTTPError:
-                raise AuditError(f"Impossible de joindre {host} : le site est hors ligne, ou il coupe la connexion aux visites automatiques." + BLOCKED_HINT, blocked=True)
-        raise AuditError("La page redirige trop de fois.")
+                raise AuditError(t(f"Impossible de joindre {host} : le site est hors ligne, ou il coupe la connexion aux visites automatiques.",
+                                   f"Can't reach {host}: the site is offline, or it cuts automated visits off.") + blocked_hint(), blocked=True)
+        raise AuditError(t("La page redirige trop de fois.", "The page redirects too many times."))
 
 
 Fetch = Callable[[str], Page]
@@ -209,18 +241,18 @@ class RendererClient:
 
     def render(self, url: str, timeout_ms: int = 15000) -> Page:
         if not url.startswith(("http://", "https://")):
-            raise AuditError("Adresse invalide.")
+            raise AuditError(t("Adresse invalide.", "Invalid address."))
         headers = {"X-Renderer-Token": self.token} if self.token else {}
         try:
             answer = self.client.post(f"{self.base_url}/render", json={"url": url, "timeout_ms": timeout_ms}, headers=headers, timeout=timeout_ms / 1000 + 8)
         except httpx.HTTPError:
-            raise AuditError("le navigateur d'audit ne répond pas")
+            raise AuditError(t("le navigateur d'audit ne répond pas", "the audit browser doesn't answer"))
         if answer.status_code == 503:
-            raise AuditError("le navigateur d'audit est occupé par une autre analyse")
+            raise AuditError(t("le navigateur d'audit est occupé par une autre analyse", "the audit browser is busy with another audit"))
         if answer.status_code == 504:
-            raise AuditError("la page met trop de temps à s'afficher")
+            raise AuditError(t("la page met trop de temps à s'afficher", "the page takes too long to display"))
         if answer.status_code != 200:
-            raise AuditError("le navigateur d'audit n'a pas pu ouvrir la page")
+            raise AuditError(t("le navigateur d'audit n'a pas pu ouvrir la page", "the audit browser couldn't open the page"))
         body = answer.json()
         return Page(url=body["url"], status=int(body["status"]), text=body["html"], content_type="text/html", challenge=bool(body.get("challenge")))
 
@@ -235,6 +267,7 @@ CMS_LABELS = {
     "wix": "Wix", "squarespace": "Squarespace", "webflow": "Webflow", "joomla": "Joomla", "ghost": "Ghost",
     "nextjs": "Site sur mesure (Next.js)", "nuxt": "Site sur mesure (Nuxt)", "unknown": "Non identifié",
 }
+CMS_LABELS_EN = {"nextjs": "Custom site (Next.js)", "nuxt": "Custom site (Nuxt)", "unknown": "Not identified"}
 
 # (vendor id, label, personalizes per visitor?, patterns searched in the raw HTML)
 VENDORS: list[tuple[str, str, bool, tuple[str, ...]]] = [
@@ -256,6 +289,7 @@ VENDORS: list[tuple[str, str, bool, tuple[str, ...]]] = [
     ("outbrain", "Outbrain (contenus sponsorisés)", False, ("widgets.outbrain.com",)),
     ("taboola", "Taboola (contenus sponsorisés)", False, ("cdn.taboola.com",)),
 ]
+VENDOR_LABELS_EN = {"inhouse": "The site's own personalization engine", "outbrain": "Outbrain (sponsored content)", "taboola": "Taboola (sponsored content)"}
 
 # Headings that announce a recommendation block, by family (French and English). What a block's
 # title says about how it is chosen:
@@ -336,6 +370,22 @@ NATIVE_BLOCKS: list[tuple[str, str, str, str]] = [
     ("bigcommerce", "[data-similar-by-views]", "Les clients ont aussi consulté (BigCommerce)", "behavior"),
     ("bigcommerce", ".productView-related, #tab-related", "Produits associés (BigCommerce)", "manual"),
 ]
+NATIVE_TITLES_EN = {
+    "Produits apparentés (WooCommerce)": "Related products (WooCommerce)", "Produits suggérés (WooCommerce)": "Upsells (WooCommerce)",
+    "Ventes croisées (WooCommerce)": "Cross-sells (WooCommerce)", "Produits associés (Magento)": "Related products (Magento)",
+    "Produits suggérés (Magento)": "Upsells (Magento)", "Ventes croisées (Magento)": "Cross-sells (Magento)",
+    "Accessoires (PrestaShop)": "Accessories (PrestaShop)",
+    "Produits de la même catégorie (PrestaShop)": "More from the same category (PrestaShop)",  # still a grouped list (GROUPED_LIST_RE)
+    "Les clients ont aussi acheté (PrestaShop)": "Customers also bought (PrestaShop)", "Recommandations Shopify": "Shopify recommendations",
+    "Produits complémentaires (Shopify)": "Complementary products (Shopify)", "Articles similaires (Jetpack)": "Related posts (Jetpack)",
+    "Articles similaires (YARPP)": "Related posts (YARPP)", "Articles similaires (Contextual Related Posts)": "Related posts (Contextual Related Posts)",
+    "Les clients ont aussi consulté (BigCommerce)": "Customers also viewed (BigCommerce)", "Produits associés (BigCommerce)": "Related products (BigCommerce)",
+}
+
+
+def js_block_title() -> str:
+    """The title of a block found empty, filled in by the site's JavaScript, when it has no heading."""
+    return t("Bloc chargé en JavaScript", "Block loaded by JavaScript")
 
 VENDOR_PLACEHOLDERS = ".nosto_element, [id^='nosto-'], .clerk, span.clerk, [data-dy-embedded-object], .rebuy-widget, [data-rebuy-id], .limespot-recommendation-box, [data-likyly-placement], .likyly-recommendations"
 
@@ -452,6 +502,7 @@ ARTICLE_TYPES = {"Article", "NewsArticle", "BlogPosting", "Report", "ScholarlyAr
 ADD_TO_CART_RE = re.compile(r"id=[\"']add-?to-?cart|name=[\"']add-to-cart|data-action=[\"']add-to-cart|>\s*(ajouter au panier|add to (cart|basket|bag)|acheter maintenant|buy now)\s*<", re.IGNORECASE)
 TICKETING_RE = re.compile(r"billetterie|représentations?|réserv(?:er|ez) (?:vos|des) places|acheter (?:vos|des) billets|tickets?\b|spectacle", re.IGNORECASE)
 PAGE_TYPE_LABELS = {"product": "Fiche produit", "book": "Fiche livre", "event": "Événement / billetterie", "article": "Article", "home": "Page d'accueil", "category": "Page catégorie", "other": "Autre page"}
+PAGE_TYPE_LABELS_EN = {"product": "Product page", "book": "Book page", "event": "Event / ticketing", "article": "Article", "home": "Home page", "category": "Category page", "other": "Other page"}
 
 
 @dataclass
@@ -511,7 +562,7 @@ def detect_cms(html: str, soup: BeautifulSoup) -> str:
 def detect_vendors(html: str) -> list[dict[str, Any]]:
     low = html.lower()
     return [
-        {"id": vid, "label": label, "personalized": personal}
+        {"id": vid, "label": t(label, VENDOR_LABELS_EN.get(vid, label)), "personalized": personal}
         for vid, label, personal, patterns in VENDORS
         if any(p.lower() in low for p in patterns)
     ]
@@ -766,13 +817,13 @@ def find_blocks(soup: BeautifulSoup, base_url: str, cms: str, vendors: list[dict
         for element in soup.select(selector):
             items = _items_in(element, base_url)
             heading = _nearest_heading_text(element)
-            add(Block(title=heading or default_title, source="native", kind=kind, items=items, js_only=not items, platform=platform, element=element))
+            add(Block(title=heading or t(default_title, NATIVE_TITLES_EN.get(default_title, default_title)), source="native", kind=kind, items=items, js_only=not items, platform=platform, element=element))
 
     # 2. Third-party placeholders, filled in by JavaScript.
     vendor_label = next((v["label"] for v in vendors if v["personalized"]), None)
     for element in soup.select(VENDOR_PLACEHOLDERS):
         items = _items_in(element, base_url)
-        add(Block(title=_nearest_heading_text(element) or f"Bloc {vendor_label or 'tiers'}", source="vendor", kind="vendor", items=items, js_only=not items, element=element))
+        add(Block(title=_nearest_heading_text(element) or t(f"Bloc {vendor_label or 'tiers'}", f"{vendor_label or 'Third-party'} block"), source="vendor", kind="vendor", items=items, js_only=not items, element=element))
 
     # 3. Headings that announce recommendations: climb to the smallest container holding item links.
     page_title = soup.find("h1")
@@ -835,7 +886,7 @@ def find_blocks(soup: BeautifulSoup, base_url: str, cms: str, vendors: list[dict
             continue
         if _items_in(element, base_url):
             continue
-        add(Block(title=_nearest_heading_text(element) or "Bloc chargé en JavaScript", source="js", kind="unknown", js_only=True, element=element))
+        add(Block(title=_nearest_heading_text(element) or js_block_title(), source="js", kind="unknown", js_only=True, element=element))
         if sum(1 for b in blocks if b.source == "js") >= 3:
             break
     return blocks
@@ -991,7 +1042,7 @@ def compare_blocks(facts: PageFacts, reload: Optional[PageFacts], other: Optiona
     (a block that shows the same products there is a fixed collection). Then its kind follows."""
     reloaded = {_signature(b.title): b for b in (reload.blocks if reload else []) if b.items}
     elsewhere = {_signature(b.title): b for b in (other.blocks if other else []) if b.items}
-    other_label = f"« {other_name} »" if other_name else "une autre fiche"
+    other_label = q(other_name) if other_name else t("une autre fiche", "another item page")
     for block in facts.blocks:
         if not block.items:
             continue
@@ -1000,26 +1051,30 @@ def compare_blocks(facts: PageFacts, reload: Optional[PageFacts], other: Optiona
         if twin is not None and _keys(twin) != _keys(block):
             if block.kind == "similar":
                 block.verified, block.kind = "random", "random"
-                block.evidence = "Rechargée, la page affiche d'autres éléments dans ce bloc : il est tiré au hasard à chaque affichage."
+                block.evidence = t("Rechargée, la page affiche d'autres éléments dans ce bloc : il est tiré au hasard à chaque affichage.",
+                                   "Loaded again, the page shows other items in this block: it is drawn at random on every display.")
                 continue
             # a block learned from customers that rotates is still that block: say so, judge it as titled
-            block.evidence = "Rechargée, la page affiche d'autres éléments dans ce bloc : sa sélection tourne d'un affichage à l'autre. "
+            block.evidence = t("Rechargée, la page affiche d'autres éléments dans ce bloc : sa sélection tourne d'un affichage à l'autre. ",
+                               "Loaded again, the page shows other items in this block: its selection rotates from one display to the next. ")
         if other is None:
-            block.evidence += "Pas comparé à une autre fiche : elle n'a pas pu être ouverte."
+            block.evidence += t("Pas comparé à une autre fiche : elle n'a pas pu être ouverte.", "Not compared with another item page: it couldn't be opened.")
             continue
         peer = elsewhere.get(sig)
         if peer is None:
-            block.evidence += f"Pas comparé : le bloc n'apparaît pas sur la fiche {other_label}."
+            block.evidence += t(f"Pas comparé : le bloc n'apparaît pas sur la fiche {other_label}.", f"Not compared: the block doesn't appear on the page of {other_label}.")
             continue
         mine, theirs = _keys(block, facts.canonical_key, other.canonical_key), _keys(peer, facts.canonical_key, other.canonical_key)
         if len(mine) >= 3 and mine == theirs and not GROUPED_LIST_RE.search(block.title):
             block.verified = "fixed"
             if block.kind in ("similar", "behavior", "complement"):
                 block.kind = "fixed"
-            block.evidence += f"Sur la fiche {other_label}, ce bloc affiche exactement les mêmes éléments : il ne dépend pas de la fiche affichée."
+            block.evidence += t(f"Sur la fiche {other_label}, ce bloc affiche exactement les mêmes éléments : il ne dépend pas de la fiche affichée.",
+                                f"On the page of {other_label}, this block shows exactly the same items: it doesn't depend on the item shown.")
         else:
             block.verified = "varies"
-            block.evidence += f"Sur la fiche {other_label}, ce bloc affiche d'autres éléments : il dépend bien de la fiche affichée."
+            block.evidence += t(f"Sur la fiche {other_label}, ce bloc affiche d'autres éléments : il dépend bien de la fiche affichée.",
+                                f"On the page of {other_label}, this block shows other items: it does depend on the item shown.")
 
 
 def _comparison_target(facts: PageFacts) -> Optional[Item]:
@@ -1076,6 +1131,21 @@ STOCK_METHODS = {
     "woocommerce": "Stock lu dans le code WooCommerce de chaque carte produit (en stock / en rupture).",
 }
 STOCK_METHOD_DEFAULT = "Mentions « épuisé », « rupture », « sold out » cherchées sur chaque carte produit."
+METHODS_EN = {
+    "self_reco": "Address and name of the product shown compared with every item of the blocks.",
+    "similar_block": "Block compared on a second item page of the site and on a reload of the page: the same products elsewhere = fixed collection, other products on reload = random.",
+    "behavior_block": "Block titled “also liked / also bought”, or a CMS-native block based on purchases, that isn't a fixed collection (checked on a second item page).",
+    "personalization": "Personalization tool loaded by the page (Nosto, Clerk, LIKYLY…) or a “recently viewed” block. It can't be seen from outside: a robot without history sees the common version.",
+    "duplicates": "Links and names compared inside each block and from one block to another.",
+    "block_size": "Number of items each block actually shows.",
+    "structured_data": "schema.org data (JSON-LD) read in the page's code.",
+    "agent_ready": "Whether the site publishes the /.well-known/ucp file.",
+}
+STOCK_METHODS_EN = {
+    "shopify": "Stock read on the public Shopify page of each recommended product (/products/….js).",
+    "woocommerce": "Stock read in the WooCommerce code of each product card (in stock / out of stock).",
+}
+STOCK_METHOD_DEFAULT_EN = "Words like “sold out” or “out of stock” (in English and French) looked for on each product card."
 
 
 def _plural(n: int, one: str, many: str) -> str:
@@ -1088,10 +1158,16 @@ BEHAVIOR_TITLE = {"product": "« Les clients ont aussi acheté »", "book": "« 
 BEHAVIOR_LABEL = {"product": "Recommandations basées sur les achats", "book": "Recommandations basées sur les lectures", "article": "Recommandations basées sur les lectures", "event": "Recommandations basées sur les réservations"}
 BEHAVIOR_SOURCE = {"product": "acheté", "book": "aimé", "article": "lu", "event": "réservé"}
 UNAVAILABLE_LABEL = {"product": "Stock des produits recommandés", "book": "Stock des livres recommandés", "event": "Disponibilité des événements recommandés"}
+ITEM_WORD_EN = {"product": ("product", "products"), "book": ("book", "books"), "event": ("event", "events"), "article": ("article", "articles")}
+ITEM_THE_EN = {"product": "the product", "book": "the book", "event": "the event", "article": "the article"}
+BEHAVIOR_TITLE_EN = {"product": "“Customers also bought”", "book": "“Readers also liked”", "article": "“Readers also read”", "event": "“Audiences also booked”"}
+BEHAVIOR_LABEL_EN = {"product": "Recommendations based on purchases", "book": "Recommendations based on reading", "article": "Recommendations based on reading", "event": "Recommendations based on bookings"}
+BEHAVIOR_SOURCE_EN = {"product": "bought", "book": "liked", "article": "read", "event": "booked"}
+UNAVAILABLE_LABEL_EN = {"product": "Stock of recommended products", "book": "Stock of recommended books", "event": "Availability of recommended events"}
 
 
 def _quote(blocks: list[Block]) -> str:
-    return ", ".join(f"« {b.title} »" for b in blocks[:3])
+    return ", ".join(q(b.title) for b in blocks[:3])
 
 
 def build_kpis(page: PageFacts, ucp: Optional[bool], stock_checked: bool = False) -> list[Kpi]:
@@ -1099,11 +1175,12 @@ def build_kpis(page: PageFacts, ucp: Optional[bool], stock_checked: bool = False
     one related to the item (similar products: the cold start, may be the same for everyone) and
     one learned from what other customers did (also liked / also bought) - with at least one block
     adapted to the visitor, never the item itself, no duplicates, nothing out of stock."""
-    one, many = ITEM_WORD.get(page.page_type, ("élément", "éléments"))
-    the = ITEM_THE.get(page.page_type, "l'élément")
+    en = current_language() == "en"
+    one, many = (ITEM_WORD_EN if en else ITEM_WORD).get(page.page_type, t(("élément", "éléments"), ("item", "items")))  # type: ignore[arg-type]
+    the = (ITEM_THE_EN if en else ITEM_THE).get(page.page_type, t("l'élément", "the item"))
     The = the[0].upper() + the[1:]
-    behavior_title = BEHAVIOR_TITLE.get(page.page_type, "« Les visiteurs ont aussi aimé »")
-    behavior_label = BEHAVIOR_LABEL.get(page.page_type, "Recommandations basées sur les autres visiteurs")
+    behavior_title = (BEHAVIOR_TITLE_EN if en else BEHAVIOR_TITLE).get(page.page_type, t("« Les visiteurs ont aussi aimé »", "“Visitors also liked”"))
+    behavior_label = (BEHAVIOR_LABEL_EN if en else BEHAVIOR_LABEL).get(page.page_type, t("Recommandations basées sur les autres visiteurs", "Recommendations based on other visitors"))
     personal_vendor = next((v for v in page.vendors if v["personalized"]), None)
     readable = [b for b in page.blocks if b.items]
     js_only = [b for b in page.blocks if b.js_only]
@@ -1114,86 +1191,114 @@ def build_kpis(page: PageFacts, ucp: Optional[bool], stock_checked: bool = False
     # Our browser couldn't show a page that needed it: blocks missing from the HTML were not seen, not proven absent.
     in_javascript = in_javascript or (page.render_failed and not [b for b in readable if b.kind != "popular"])
     if page.render_failed and not page.rendered:
-        js_summary = "Non mesuré : notre navigateur d'audit n'a pas pu afficher la page"
-        js_detail = ("Les recommandations de cette page ne sont pas dans son HTML, et notre navigateur d'audit n'a pas pu l'afficher "
-                     "(page trop lente, erreur ou vérification anti-robots). On ne sait donc pas si elles existent : ce contrôle n'est pas noté.")
+        js_summary = t("Non mesuré : notre navigateur d'audit n'a pas pu afficher la page", "Not measured: our audit browser couldn't display the page")
+        js_detail = t("Les recommandations de cette page ne sont pas dans son HTML, et notre navigateur d'audit n'a pas pu l'afficher "
+                      "(page trop lente, erreur ou vérification anti-robots). On ne sait donc pas si elles existent : ce contrôle n'est pas noté.",
+                      "This page's recommendations aren't in its HTML, and our audit browser couldn't display it "
+                      "(page too slow, error or anti-robot check). So we can't tell whether they exist: this check isn't scored.")
     elif page.rendered:
-        js_summary = "Non lisible : le bloc reste vide, même affiché dans un navigateur"
-        js_detail = ("La page a été affichée dans un navigateur, mais ce bloc ne s'y est pas rempli pour notre visite (souvent : il dépend de l'historique "
-                     "du visiteur, ou le site ne le montre pas à un robot). On ne note donc pas ce contrôle.")
+        js_summary = t("Non lisible : le bloc reste vide, même affiché dans un navigateur", "Not readable: the block stays empty, even displayed in a browser")
+        js_detail = t("La page a été affichée dans un navigateur, mais ce bloc ne s'y est pas rempli pour notre visite (souvent : il dépend de l'historique "
+                      "du visiteur, ou le site ne le montre pas à un robot). On ne note donc pas ce contrôle.",
+                      "The page was displayed in a browser, but this block didn't fill in for our visit (often: it depends on the visitor's "
+                      "history, or the site doesn't show it to a robot). So this check isn't scored.")
     else:
-        js_summary = "Non lisible sans navigateur : les recommandations de la page se chargent en JavaScript"
-        js_detail = ("La page remplit ses blocs de recommandations dans le navigateur : on ne peut pas les lire ici, donc on ne note pas ce contrôle. "
-                     "Les moteurs de recherche et les assistants IA ne les voient pas non plus.")
+        js_summary = t("Non lisible sans navigateur : les recommandations de la page se chargent en JavaScript",
+                       "Not readable without a browser: the page's recommendations load with JavaScript")
+        js_detail = t("La page remplit ses blocs de recommandations dans le navigateur : on ne peut pas les lire ici, donc on ne note pas ce contrôle. "
+                      "Les moteurs de recherche et les assistants IA ne les voient pas non plus.",
+                      "The page fills its recommendation blocks in the browser: we can't read them here, so this check isn't scored. "
+                      "Search engines and AI assistants don't see them either.")
     by_kind = lambda *kinds: [b for b in page.blocks if b.kind in kinds]  # noqa: E731
     kpis: list[Kpi] = []
 
     # 1. The item recommended on its own page - the first thing to get right.
     # Best-of lists ("les plus lus") and comparison tables include the item shown by nature.
     checked = [b for b in readable if b.kind != "popular" and not re.search(r"compar", b.title, re.IGNORECASE)]
+    self_label = t("Auto-recommandation", "Self-recommendation")
     if page.page_type not in ("home", "category") and checked:
         same = [b for b in checked if any(i.key == page.canonical_key for i in b.items)]
         name = page.item_name.strip().lower()
         twins = [b for b in checked if name and any(i.key != page.canonical_key and i.name.strip().lower() == name for i in b.items)]
         if same:
-            kpis.append(Kpi("self_reco", "Auto-recommandation", 25, FAIL,
-                            f"{The} affiché est recommandé sur sa propre page, dans {_quote(same)}",
-                            f"Le visiteur regarde déjà {the} : le lui proposer gâche une place du bloc et montre que la sélection ne tient pas compte de la page. "
-                            "C'est l'erreur la plus visible, la première à corriger.",
-                            f"Excluez toujours {the} affiché de ses propres recommandations."))
+            kpis.append(Kpi("self_reco", self_label, 25, FAIL,
+                            t(f"{The} affiché est recommandé sur sa propre page, dans {_quote(same)}", f"{The} shown is recommended on its own page, in {_quote(same)}"),
+                            t(f"Le visiteur regarde déjà {the} : le lui proposer gâche une place du bloc et montre que la sélection ne tient pas compte de la page. "
+                              "C'est l'erreur la plus visible, la première à corriger.",
+                              f"The visitor is already looking at {the}: offering it wastes a slot of the block and shows the selection ignores the page. "
+                              "It's the most visible mistake, the first one to fix."),
+                            t(f"Excluez toujours {the} affiché de ses propres recommandations.", f"Always exclude {the} shown from its own recommendations.")))
         elif twins:
-            kpis.append(Kpi("self_reco", "Auto-recommandation", 25, WARN,
-                            f"Le même modèle, sous un autre lien (autre couleur ou variante), est recommandé dans {_quote(twins)}",
-                            f"Ce n'est pas exactement {the} affiché, mais pour le visiteur c'est le même : une place de suggestion utilisée pour rien.",
-                            "Excluez aussi les variantes du même modèle, ou regroupez-les en une seule fiche."))
+            kpis.append(Kpi("self_reco", self_label, 25, WARN,
+                            t(f"Le même modèle, sous un autre lien (autre couleur ou variante), est recommandé dans {_quote(twins)}",
+                              f"The same model, under another link (another color or variant), is recommended in {_quote(twins)}"),
+                            t(f"Ce n'est pas exactement {the} affiché, mais pour le visiteur c'est le même : une place de suggestion utilisée pour rien.",
+                              f"It isn't exactly {the} shown, but to the visitor it's the same: a suggestion slot used for nothing."),
+                            t("Excluez aussi les variantes du même modèle, ou regroupez-les en une seule fiche.",
+                              "Exclude the variants of the same model too, or group them into a single page.")))
         else:
-            kpis.append(Kpi("self_reco", "Auto-recommandation", 25, PASS,
-                            f"{The} affiché n'est pas dans ses propres recommandations",
-                            "Aucun bloc ne propose ce que le visiteur regarde déjà."))
+            kpis.append(Kpi("self_reco", self_label, 25, PASS,
+                            t(f"{The} affiché n'est pas dans ses propres recommandations", f"{The} shown isn't in its own recommendations"),
+                            t("Aucun bloc ne propose ce que le visiteur regarde déjà.", "No block offers what the visitor is already looking at.")))
     else:
-        kpis.append(Kpi("self_reco", "Auto-recommandation", 25, UNKNOWN,
-                        "Non vérifiable : aucun bloc lisible" if page.blocks else "Aucun bloc : rien à vérifier",
-                        "Ce contrôle a besoin de lire les éléments recommandés."))
+        kpis.append(Kpi("self_reco", self_label, 25, UNKNOWN,
+                        t("Non vérifiable : aucun bloc lisible", "Can't be checked: no readable block") if page.blocks else t("Aucun bloc : rien à vérifier", "No block: nothing to check"),
+                        t("Ce contrôle a besoin de lire les éléments recommandés.", "This check needs to read the recommended items.")))
 
     # 2. Block 1: related to the item (content, category - the cold start). Judged on what was
     # seen: on another item page, on a second load - never on the CMS or the theme's names.
     similar = [b for b in by_kind("similar") if b.items]
     proven = [b for b in similar if b.verified == "varies"]
-    similar_js = [b for b in by_kind("similar") if b.js_only and b.source == "js" and b.title != "Bloc chargé en JavaScript"]
+    similar_js = [b for b in by_kind("similar") if b.js_only and b.source == "js" and b.title != js_block_title()]
     manual = [b for b in by_kind("manual") if b.items]
     random_blocks, fixed = by_kind("random"), by_kind("fixed")
-    label = "Recommandations similaires"
+    label = t("Recommandations similaires", "Similar recommendations")
     if proven:
-        kpis.append(Kpi("similar_block", label, 20, PASS, f"Présent : {_quote(proven)}, propre à chaque fiche (vérifié)",
-                        f"Un bloc lié à {the} affiché : c'est la base, utile même pour un visiteur dont on ne sait rien (démarrage à froid). {proven[0].evidence}"))
+        kpis.append(Kpi("similar_block", label, 20, PASS, t(f"Présent : {_quote(proven)}, propre à chaque fiche (vérifié)", f"Present: {_quote(proven)}, specific to each item (checked)"),
+                        t(f"Un bloc lié à {the} affiché : c'est la base, utile même pour un visiteur dont on ne sait rien (démarrage à froid). {proven[0].evidence}",
+                          f"A block related to {the} shown: the basics, useful even for a visitor we know nothing about (cold start). {proven[0].evidence}")))
     elif similar:
-        kpis.append(Kpi("similar_block", label, 20, WARN, f"Présent : {_quote(similar)}, mais non vérifié",
-                        f"{similar[0].evidence} On ne peut donc pas dire si ce bloc change avec {the} affiché.",
-                        "Relancez l'audit sur une autre fiche pour comparer."))
+        kpis.append(Kpi("similar_block", label, 20, WARN, t(f"Présent : {_quote(similar)}, mais non vérifié", f"Present: {_quote(similar)}, but not checked"),
+                        t(f"{similar[0].evidence} On ne peut donc pas dire si ce bloc change avec {the} affiché.",
+                          f"{similar[0].evidence} So we can't tell whether this block changes with {the} shown."),
+                        t("Relancez l'audit sur une autre fiche pour comparer.", "Run the audit again on another item page to compare.")))
     elif manual:
-        kpis.append(Kpi("similar_block", label, 20, WARN, f"Présent : {_quote(manual)}, choisi à la main",
-                        "Une sélection faite à la main dans le back-office, produit par produit : longue à tenir à jour, jamais complète.",
-                        "Calculez ce bloc automatiquement à partir du catalogue (contenu, attributs), pour tous les produits."))
+        kpis.append(Kpi("similar_block", label, 20, WARN, t(f"Présent : {_quote(manual)}, choisi à la main", f"Present: {_quote(manual)}, picked by hand"),
+                        t("Une sélection faite à la main dans le back-office, produit par produit : longue à tenir à jour, jamais complète.",
+                          "A selection made by hand in the back office, product by product: slow to keep up to date, never complete."),
+                        t("Calculez ce bloc automatiquement à partir du catalogue (contenu, attributs), pour tous les produits.",
+                          "Compute this block automatically from the catalog (content, attributes), for every product.")))
     elif random_blocks:
-        kpis.append(Kpi("similar_block", label, 20, WARN, f"{_quote(random_blocks)} est tiré au hasard : il change à chaque affichage (constaté)",
-                        f"{random_blocks[0].evidence} Les {many} montrés ne sont pas choisis pour leur ressemblance avec {the} affiché.",
-                        f"Choisissez les {many} proches par leur contenu (description, attributs, style), pas au hasard."))
+        kpis.append(Kpi("similar_block", label, 20, WARN, t(f"{_quote(random_blocks)} est tiré au hasard : il change à chaque affichage (constaté)",
+                                                             f"{_quote(random_blocks)} is drawn at random: it changes on every display (seen)"),
+                        t(f"{random_blocks[0].evidence} Les {many} montrés ne sont pas choisis pour leur ressemblance avec {the} affiché.",
+                          f"{random_blocks[0].evidence} The {many} shown aren't chosen for their likeness to {the} shown."),
+                        t(f"Choisissez les {many} proches par leur contenu (description, attributs, style), pas au hasard.",
+                          f"Choose the closest {many} by their content (description, attributes, style), not at random.")))
     elif fixed:
-        kpis.append(Kpi("similar_block", label, 20, FAIL, f"Absent : {_quote(fixed)} affiche les mêmes {many} sur une autre fiche (constaté)",
-                        f"{fixed[0].evidence} C'est une collection fixe, sans rapport avec {the} que le visiteur regarde.",
-                        f"Remplacez-la par des {many} proches de celui affiché : même usage, même style, même gamme de prix."))
+        kpis.append(Kpi("similar_block", label, 20, FAIL, t(f"Absent : {_quote(fixed)} affiche les mêmes {many} sur une autre fiche (constaté)",
+                                                             f"Missing: {_quote(fixed)} shows the same {many} on another item page (seen)"),
+                        t(f"{fixed[0].evidence} C'est une collection fixe, sans rapport avec {the} que le visiteur regarde.",
+                          f"{fixed[0].evidence} It's a fixed collection, unrelated to {the} the visitor is looking at."),
+                        t(f"Remplacez-la par des {many} proches de celui affiché : même usage, même style, même gamme de prix.",
+                          f"Replace it with {many} close to the one shown: same use, same style, same price range.")))
     elif similar_js:
         kpis.append(Kpi("similar_block", label, 20, WARN,
-                        f"Présent : {_quote(similar_js)}, " + ("mais vide, même affiché dans un navigateur" if page.rendered else "chargé en JavaScript (contenu non lisible)"),
-                        "Le bloc existe sur la page, mais il se remplit dans le navigateur : on ne peut pas vérifier ce qu'il montre, "
-                        "et les moteurs de recherche comme les assistants IA ne le voient pas.",
-                        "Rendez ce bloc côté serveur pour qu'il soit lisible par tous."))
+                        t(f"Présent : {_quote(similar_js)}, " + ("mais vide, même affiché dans un navigateur" if page.rendered else "chargé en JavaScript (contenu non lisible)"),
+                          f"Present: {_quote(similar_js)}, " + ("but empty, even displayed in a browser" if page.rendered else "loaded by JavaScript (content not readable)")),
+                        t("Le bloc existe sur la page, mais il se remplit dans le navigateur : on ne peut pas vérifier ce qu'il montre, "
+                          "et les moteurs de recherche comme les assistants IA ne le voient pas.",
+                          "The block is on the page, but it fills in in the browser: we can't check what it shows, "
+                          "and neither search engines nor AI assistants see it."),
+                        t("Rendez ce bloc côté serveur pour qu'il soit lisible par tous.", "Render this block on the server so that everyone can read it.")))
     elif in_javascript:
-        kpis.append(Kpi("similar_block", label, 20, UNKNOWN, js_summary, js_detail, "Rendez au moins ce bloc côté serveur."))
+        kpis.append(Kpi("similar_block", label, 20, UNKNOWN, js_summary, js_detail, t("Rendez au moins ce bloc côté serveur.", "Render at least this block on the server.")))
     else:
-        kpis.append(Kpi("similar_block", label, 20, FAIL, "Absent",
-                        f"Le visiteur qui hésite sur {the} n'a aucune alternative proche sous les yeux : s'il ne trouve pas son bonheur, il repart.",
-                        f"Ajoutez sous {the} un bloc de 4 à 8 {many} proches (contenu, catégorie, attributs)."))
+        kpis.append(Kpi("similar_block", label, 20, FAIL, t("Absent", "Missing"),
+                        t(f"Le visiteur qui hésite sur {the} n'a aucune alternative proche sous les yeux : s'il ne trouve pas son bonheur, il repart.",
+                          f"A visitor hesitating over {the} has no close alternative in sight: if it isn't quite right, they leave."),
+                        t(f"Ajoutez sous {the} un bloc de 4 à 8 {many} proches (contenu, catégorie, attributs).",
+                          f"Add under {the} a block of 4 to 8 close {many} (content, category, attributes).")))
 
     # 3. Block 2: learned from what other customers did (or a cross-sell of what goes with the item).
     behavior = by_kind("behavior")
@@ -1202,60 +1307,83 @@ def build_kpis(page: PageFacts, ucp: Optional[bool], stock_checked: bool = False
     if behavior:
         unreadable = all(b.js_only for b in behavior)
         kpis.append(Kpi("behavior_block", behavior_label, 20, PASS,
-                        f"Présent : {_quote(behavior)}" + (", chargé en JavaScript" if unreadable else ""),
-                        "Un bloc appris de ce que font les autres clients : il révèle des associations que la fiche seule ne dit pas. " + behavior[0].evidence))
+                        t(f"Présent : {_quote(behavior)}" + (", chargé en JavaScript" if unreadable else ""),
+                          f"Present: {_quote(behavior)}" + (", loaded by JavaScript" if unreadable else "")),
+                        t("Un bloc appris de ce que font les autres clients : il révèle des associations que la fiche seule ne dit pas. ",
+                          "A block learned from what other customers do: it reveals associations the page alone doesn't tell. ") + behavior[0].evidence))
     elif complement:
         kpis.append(Kpi("behavior_block", behavior_label, 20, PASS,
-                        f"Présent, en ventes croisées : {_quote(complement)}",
-                        f"Un bloc propose ce qui va avec {the} (accessoires, compléments) : c'est le rôle du second bloc, qui augmente le panier. " + complement[0].evidence))
+                        t(f"Présent, en ventes croisées : {_quote(complement)}", f"Present, as cross-sells: {_quote(complement)}"),
+                        t(f"Un bloc propose ce qui va avec {the} (accessoires, compléments) : c'est le rôle du second bloc, qui augmente le panier. ",
+                          f"A block offers what goes with {the} (accessories, add-ons): the role of the second block, which grows the basket. ") + complement[0].evidence))
     elif popular:
         kpis.append(Kpi("behavior_block", behavior_label, 20, WARN,
-                        f"Seulement la popularité : {_quote(popular)}",
-                        f"Ce bloc montre ce que tout le monde regarde, pas ce que les clients intéressés par {the} ont choisi ensuite : il est le même partout.",
-                        f"Ajoutez un bloc {behavior_title}, propre à chaque fiche."))
+                        t(f"Seulement la popularité : {_quote(popular)}", f"Popularity only: {_quote(popular)}"),
+                        t(f"Ce bloc montre ce que tout le monde regarde, pas ce que les clients intéressés par {the} ont choisi ensuite : il est le même partout.",
+                          f"This block shows what everyone looks at, not what the customers interested in {the} chose next: it's the same everywhere."),
+                        t(f"Ajoutez un bloc {behavior_title}, propre à chaque fiche.", f"Add a {behavior_title} block, specific to each item.")))
     elif in_javascript:
         kpis.append(Kpi("behavior_block", behavior_label, 20, UNKNOWN, js_summary, js_detail,
-                        f"Vérifiez qu'un des blocs est bien {behavior_title}, appris des visites, paniers et commandes."))
+                        t(f"Vérifiez qu'un des blocs est bien {behavior_title}, appris des visites, paniers et commandes.",
+                          f"Check that one of the blocks really is {behavior_title}, learned from visits, carts and orders.")))
     else:
         kpis.append(Kpi("behavior_block", behavior_label, 20, FAIL,
-                        "Absent",
-                        "Aucun bloc ne s'appuie sur ce que les autres clients ont aimé ou acheté avec cet élément. C'est le deuxième bloc attendu sur une fiche : "
-                        "il fait découvrir des associations réelles (le sac et sa pochette, le livre et sa suite) et augmente le panier.",
-                        f"Ajoutez un second bloc {behavior_title}, calculé à partir des visites, paniers et commandes."))
+                        t("Absent", "Missing"),
+                        t("Aucun bloc ne s'appuie sur ce que les autres clients ont aimé ou acheté avec cet élément. C'est le deuxième bloc attendu sur une fiche : "
+                          "il fait découvrir des associations réelles (le sac et sa pochette, le livre et sa suite) et augmente le panier.",
+                          "No block relies on what other customers liked or bought with this item. It's the second block expected on an item page: "
+                          "it reveals real associations (the bag and its pouch, the book and its sequel) and grows the basket."),
+                        t(f"Ajoutez un second bloc {behavior_title}, calculé à partir des visites, paniers et commandes.",
+                          f"Add a second {behavior_title} block, computed from visits, carts and orders.")))
 
     # 4. Personalization: does any block adapt to the visitor?
     personal = by_kind("personal")
     claims = [b for b in page.blocks if b.claims_personal]
+    personal_label = t("Personnalisation", "Personalization")
     if personal_vendor:
-        kpis.append(Kpi("personalization", "Personnalisation", 20, PASS,
-                        f"Outil de personnalisation détecté : {personal_vendor['label']}",
-                        "Un outil capable d'adapter les blocs à chaque visiteur est chargé. La personnalisation elle-même ne se voit pas de l'extérieur : "
-                        "mesurez ce que rapporte chaque bloc pour vérifier qu'elle fonctionne."))
+        kpis.append(Kpi("personalization", personal_label, 20, PASS,
+                        t(f"Outil de personnalisation détecté : {personal_vendor['label']}", f"Personalization tool found: {personal_vendor['label']}"),
+                        t("Un outil capable d'adapter les blocs à chaque visiteur est chargé. La personnalisation elle-même ne se voit pas de l'extérieur : "
+                          "mesurez ce que rapporte chaque bloc pour vérifier qu'elle fonctionne.",
+                          "A tool able to adapt the blocks to each visitor is loaded. Personalization itself can't be seen from outside: "
+                          "measure what each block brings in to check that it works.")))
     elif personal:
-        kpis.append(Kpi("personalization", "Personnalisation", 20, WARN,
-                        f"Seulement l'historique du visiteur : {_quote(personal)}",
-                        "Montrer ce que le visiteur a déjà vu l'aide à revenir en arrière, mais ne lui fait rien découvrir.",
-                        "Ajoutez des suggestions qui partent de son historique pour proposer d'autres éléments."))
+        kpis.append(Kpi("personalization", personal_label, 20, WARN,
+                        t(f"Seulement l'historique du visiteur : {_quote(personal)}", f"Only the visitor's history: {_quote(personal)}"),
+                        t("Montrer ce que le visiteur a déjà vu l'aide à revenir en arrière, mais ne lui fait rien découvrir.",
+                          "Showing what the visitor already saw helps them go back, but makes them discover nothing."),
+                        t("Ajoutez des suggestions qui partent de son historique pour proposer d'autres éléments.",
+                          "Add suggestions that start from their history to offer other items.")))
     elif behavior or in_javascript:
         # The site computes its recommendations itself (from purchases, or in its own scripts): whether
         # they adapt to each visitor can't be seen by a robot without history. Not scored.
-        kpis.append(Kpi("personalization", "Personnalisation", 20, UNKNOWN,
-                        "Non mesurable de l'extérieur : le site calcule ses recommandations lui-même",
-                        "Aucun outil de personnalisation connu n'est chargé, mais le site produit ses propres recommandations "
-                        + ("à partir des achats de ses clients" if behavior else "dans ses scripts")
-                        + ". Si elles s'adaptent à chaque visiteur, cela ne se voit pas depuis une visite sans historique : ce contrôle n'est pas noté."))
+        kpis.append(Kpi("personalization", personal_label, 20, UNKNOWN,
+                        t("Non mesurable de l'extérieur : le site calcule ses recommandations lui-même",
+                          "Can't be measured from outside: the site computes its recommendations itself"),
+                        t("Aucun outil de personnalisation connu n'est chargé, mais le site produit ses propres recommandations "
+                          + ("à partir des achats de ses clients" if behavior else "dans ses scripts")
+                          + ". Si elles s'adaptent à chaque visiteur, cela ne se voit pas depuis une visite sans historique : ce contrôle n'est pas noté.",
+                          "No known personalization tool is loaded, but the site produces its own recommendations "
+                          + ("from its customers' purchases" if behavior else "in its scripts")
+                          + ". Whether they adapt to each visitor can't be seen from a visit without history: this check isn't scored.")))
     else:
         proven_fixed = [b for b in claims if b.verified == "fixed"]
-        why = (f"Le bloc {_quote(proven_fixed)} s'intitule « pour vous », mais affiche les mêmes produits sur une autre fiche : ce n'est pas une sélection pour le visiteur. "
+        why = (t(f"Le bloc {_quote(proven_fixed)} s'intitule « pour vous », mais affiche les mêmes produits sur une autre fiche : ce n'est pas une sélection pour le visiteur. ",
+                 f"The block {_quote(proven_fixed)} is titled “for you”, but shows the same products on another item page: it isn't a selection for the visitor. ")
                if proven_fixed else
-               f"Le bloc {_quote(claims)} s'intitule « pour vous », mais aucun outil de personnalisation n'est chargé. " if claims else "")
-        kpis.append(Kpi("personalization", "Personnalisation", 20, FAIL,
-                        "Aucune : tous les visiteurs voient les mêmes recommandations",
-                        why + "Aucun outil de personnalisation n'est chargé par la page. Un bloc « similaires » identique pour tous est normal (démarrage à froid) ; "
-                        "mais au moins un bloc doit s'adapter à ce que le visiteur a regardé et à ses goûts.",
-                        "Faites dépendre un bloc de la visite en cours et de l'historique du visiteur."))
+               t(f"Le bloc {_quote(claims)} s'intitule « pour vous », mais aucun outil de personnalisation n'est chargé. ",
+                 f"The block {_quote(claims)} is titled “for you”, but no personalization tool is loaded. ") if claims else "")
+        kpis.append(Kpi("personalization", personal_label, 20, FAIL,
+                        t("Aucune : tous les visiteurs voient les mêmes recommandations", "None: every visitor sees the same recommendations"),
+                        why + t("Aucun outil de personnalisation n'est chargé par la page. Un bloc « similaires » identique pour tous est normal (démarrage à froid) ; "
+                                "mais au moins un bloc doit s'adapter à ce que le visiteur a regardé et à ses goûts.",
+                                "The page loads no personalization tool. A “similar” block that is the same for everyone is normal (cold start); "
+                                "but at least one block should adapt to what the visitor looked at and to their tastes."),
+                        t("Faites dépendre un bloc de la visite en cours et de l'historique du visiteur.",
+                          "Make one block depend on the current visit and on the visitor's history.")))
 
     # 5. Duplicates.
+    dup_label = t("Doublons", "Duplicates")
     if readable:
         inside = [b for b in readable if len({i.key for i in b.items}) < len(b.items)]
         keys_per_block = [set(i.key for i in b.items) for b in readable]
@@ -1264,94 +1392,138 @@ def build_kpis(page: PageFacts, ucp: Optional[bool], stock_checked: bool = False
             for other in keys_per_block[idx + 1:]:
                 across |= keys & other
         if inside:
-            kpis.append(Kpi("duplicates", "Doublons", 5, FAIL, f"Un même {one} apparaît deux fois dans « {inside[0].title} »",
-                            "Un doublon prend la place d'une autre suggestion et donne l'impression d'un catalogue pauvre.", "Dédoublonnez chaque bloc avant affichage."))
+            kpis.append(Kpi("duplicates", dup_label, 5, FAIL, t(f"Un même {one} apparaît deux fois dans {q(inside[0].title)}", f"The same {one} appears twice in {q(inside[0].title)}"),
+                            t("Un doublon prend la place d'une autre suggestion et donne l'impression d'un catalogue pauvre.",
+                              "A duplicate takes the place of another suggestion and makes the catalog look poor."),
+                            t("Dédoublonnez chaque bloc avant affichage.", "Remove duplicates from each block before display.")))
         elif twins_inside := [b for b in readable if len({i.name.strip().lower() for i in b.items if i.name}) < len([i for i in b.items if i.name])]:
-            kpis.append(Kpi("duplicates", "Doublons", 5, WARN, f"Le même modèle apparaît deux fois (autre couleur ou variante) dans « {twins_inside[0].title} »",
-                            "Deux variantes du même modèle occupent deux places : le visiteur voit moins de choix qu'il n'y paraît.",
-                            "Ne gardez qu'une variante par modèle dans un même bloc."))
+            kpis.append(Kpi("duplicates", dup_label, 5, WARN, t(f"Le même modèle apparaît deux fois (autre couleur ou variante) dans {q(twins_inside[0].title)}",
+                                                                f"The same model appears twice (another color or variant) in {q(twins_inside[0].title)}"),
+                            t("Deux variantes du même modèle occupent deux places : le visiteur voit moins de choix qu'il n'y paraît.",
+                              "Two variants of the same model take two slots: the visitor sees less choice than it seems."),
+                            t("Ne gardez qu'une variante par modèle dans un même bloc.", "Keep only one variant per model in a block.")))
         elif across:
-            kpis.append(Kpi("duplicates", "Doublons", 5, WARN, f"{_plural(len(across), one, many)} dans plusieurs blocs de la page",
-                            "Les blocs se répètent : le visiteur voit moins de choix qu'il n'y paraît.", "Faites écarter à chaque bloc ce que les blocs au-dessus montrent déjà."))
+            kpis.append(Kpi("duplicates", dup_label, 5, WARN, t(f"{_plural(len(across), one, many)} dans plusieurs blocs de la page", f"{_plural(len(across), one, many)} in several blocks of the page"),
+                            t("Les blocs se répètent : le visiteur voit moins de choix qu'il n'y paraît.", "The blocks repeat each other: the visitor sees less choice than it seems."),
+                            t("Faites écarter à chaque bloc ce que les blocs au-dessus montrent déjà.", "Make each block leave out what the blocks above already show.")))
         else:
-            kpis.append(Kpi("duplicates", "Doublons", 5, PASS, "Aucun doublon", "Chaque suggestion est unique sur la page."))
+            kpis.append(Kpi("duplicates", dup_label, 5, PASS, t("Aucun doublon", "No duplicates"), t("Chaque suggestion est unique sur la page.", "Each suggestion is unique on the page.")))
     else:
-        kpis.append(Kpi("duplicates", "Doublons", 5, UNKNOWN, "Non vérifiable sans bloc lisible", ""))
+        kpis.append(Kpi("duplicates", dup_label, 5, UNKNOWN, t("Non vérifiable sans bloc lisible", "Can't be checked without a readable block"), ""))
 
     # 6. Out of stock (products, books) / sold out or past (events). Not broken links.
-    label = UNAVAILABLE_LABEL.get(page.page_type)
+    label = (UNAVAILABLE_LABEL_EN if en else UNAVAILABLE_LABEL).get(page.page_type)
     flagged = [i for b in readable for i in b.items if i.unavailable]
     knows_stock = stock_checked or page.cms == "woocommerce"
     if label is None:
-        kpis.append(Kpi("unavailable", "Stock des éléments recommandés", 5, UNKNOWN, "Sans objet : pas de stock pour ce type de page", ""))
+        kpis.append(Kpi("unavailable", t("Stock des éléments recommandés", "Stock of recommended items"), 5, UNKNOWN,
+                        t("Sans objet : pas de stock pour ce type de page", "Not applicable: no stock for this kind of page"), ""))
     elif flagged:
         kpis.append(Kpi("unavailable", label, 5, FAIL,
-                        _plural(len(flagged), one + " recommandé n'est plus disponible", many + " recommandés ne sont plus disponibles") + " : " + ", ".join(i.name or i.url for i in flagged[:3]),
-                        "En rupture de stock (ou complet, pour un événement) : le visiteur clique, et ne peut pas acheter. Le lien fonctionne, c'est le produit qui manque.",
-                        "Filtrez les éléments en rupture dans chaque bloc."))
+                        t(_plural(len(flagged), one + " recommandé n'est plus disponible", many + " recommandés ne sont plus disponibles") + " : ",
+                          _plural(len(flagged), "recommended " + one + " is no longer available", "recommended " + many + " are no longer available") + ": ")
+                        + ", ".join(i.name or i.url for i in flagged[:3]),
+                        t("En rupture de stock (ou complet, pour un événement) : le visiteur clique, et ne peut pas acheter. Le lien fonctionne, c'est le produit qui manque.",
+                          "Out of stock (or sold out, for an event): the visitor clicks, and can't buy. The link works, the product is what's missing."),
+                        t("Filtrez les éléments en rupture dans chaque bloc.", "Filter out-of-stock items out of every block.")))
     elif readable and knows_stock:
-        kpis.append(Kpi("unavailable", label, 5, PASS, "Tout ce qui est recommandé est disponible", "Chaque suggestion peut être achetée."))
+        kpis.append(Kpi("unavailable", label, 5, PASS, t("Tout ce qui est recommandé est disponible", "Everything recommended is available"),
+                        t("Chaque suggestion peut être achetée.", "Every suggestion can be bought.")))
     else:
-        kpis.append(Kpi("unavailable", label, 5, UNKNOWN, "Impossible de savoir si les recommandations sont disponibles",
-                        "Ni la page ni le site n'indiquent si les éléments recommandés sont en stock."))
+        kpis.append(Kpi("unavailable", label, 5, UNKNOWN, t("Impossible de savoir si les recommandations sont disponibles", "No way to tell whether the recommendations are available"),
+                        t("Ni la page ni le site n'indiquent si les éléments recommandés sont en stock.", "Neither the page nor the site says whether the recommended items are in stock.")))
 
     # 7. Block size, counted on what the page shows.
+    size_label = t("Nombre de recommandations par bloc", "Recommendations per block")
     if readable:
         counts = [len({i.key for i in b.items}) for b in readable]
-        span = f"{min(counts)} {many}" if min(counts) == max(counts) else f"entre {min(counts)} et {max(counts)} {many}"
+        span = f"{min(counts)} {many}" if min(counts) == max(counts) else t(f"entre {min(counts)} et {max(counts)} {many}", f"between {min(counts)} and {max(counts)} {many}")
+        shown = t(f"{span.capitalize()} recommandés par bloc", f"{span.capitalize()} recommended per block")
         # a "bought together" bundle of 2 or 3 is fine: judged on the largest block
         if max(counts) < 4:
-            kpis.append(Kpi("block_size", "Nombre de recommandations par bloc", 3, WARN, f"{span.capitalize()} recommandés par bloc : pas assez",
-                            "Avec moins de 4 suggestions, un bloc laisse peu de chances de trouver quelque chose.", f"Visez 4 à 8 {many} par bloc."))
+            kpis.append(Kpi("block_size", size_label, 3, WARN, shown + t(" : pas assez", ": not enough"),
+                            t("Avec moins de 4 suggestions, un bloc laisse peu de chances de trouver quelque chose.", "With fewer than 4 suggestions, a block leaves little chance of finding something."),
+                            t(f"Visez 4 à 8 {many} par bloc.", f"Aim for 4 to 8 {many} per block.")))
         elif max(counts) > 16:
-            kpis.append(Kpi("block_size", "Nombre de recommandations par bloc", 3, WARN, f"{span.capitalize()} recommandés par bloc : trop",
-                            "Au-delà d'une quinzaine, les meilleures suggestions se perdent.", f"Visez 4 à 12 {many}, les meilleurs en premier."))
+            kpis.append(Kpi("block_size", size_label, 3, WARN, shown + t(" : trop", ": too many"),
+                            t("Au-delà d'une quinzaine, les meilleures suggestions se perdent.", "Beyond fifteen or so, the best suggestions get lost."),
+                            t(f"Visez 4 à 12 {many}, les meilleurs en premier.", f"Aim for 4 to 12 {many}, the best first.")))
         else:
-            kpis.append(Kpi("block_size", "Nombre de recommandations par bloc", 3, PASS, f"{span.capitalize()} recommandés par bloc", "Assez de choix sans noyer le visiteur."))
+            kpis.append(Kpi("block_size", size_label, 3, PASS, shown, t("Assez de choix sans noyer le visiteur.", "Enough choice without drowning the visitor.")))
     else:
-        kpis.append(Kpi("block_size", "Nombre de recommandations par bloc", 3, UNKNOWN, "Non vérifiable sans bloc lisible", ""))
+        kpis.append(Kpi("block_size", size_label, 3, UNKNOWN, t("Non vérifiable sans bloc lisible", "Can't be checked without a readable block"), ""))
 
     # 8. Structured data (search engines and AI agents read it), on every page that shows one thing.
     st = page.structured
-    label = "Fiche lisible par Google et les IA"
-    declared = [t for t in st.get("json_ld_types", []) if t not in GENERIC_LD_TYPES]
-    what = {"product": "un produit", "book": "un livre", "event": "un spectacle ou un événement", "article": "un article"}.get(page.page_type, "ce qu'elle présente")
+    label = t("Fiche lisible par Google et les IA", "Page readable by Google and AI")
+    declared = [ld_type for ld_type in st.get("json_ld_types", []) if ld_type not in GENERIC_LD_TYPES]
+    what = ({"product": "a product", "book": "a book", "event": "a show or an event", "article": "an article"}.get(page.page_type, "what it presents") if en else
+            {"product": "un produit", "book": "un livre", "event": "un spectacle ou un événement", "article": "un article"}.get(page.page_type, "ce qu'elle présente"))
     if page.page_type in ("home", "category"):
-        kpis.append(Kpi("structured_data", label, 2, UNKNOWN, "Analysez une fiche (produit, article, événement) pour ce contrôle", ""))
+        kpis.append(Kpi("structured_data", label, 2, UNKNOWN, t("Analysez une fiche (produit, article, événement) pour ce contrôle",
+                                                                "Audit an item page (product, article, event) for this check"), ""))
     elif st.get("type"):
         sells = page.page_type == "product" or st.get("has_offer")
         needed = ["has_name", "has_image"] + (["has_offer", "has_price", "has_availability"] if sells else ["has_date"] if page.page_type in ("article", "event") else [])
         missing = [k for k in needed if not st.get(k)]
-        names = {"has_name": "nom", "has_image": "image", "has_offer": "offre", "has_price": "prix", "has_availability": "stock", "has_date": "date"}
+        names = ({"has_name": "name", "has_image": "image", "has_offer": "offer", "has_price": "price", "has_availability": "stock", "has_date": "date"} if en else
+                 {"has_name": "nom", "has_image": "image", "has_offer": "offre", "has_price": "prix", "has_availability": "stock", "has_date": "date"})
         if not missing:
-            kpis.append(Kpi("structured_data", label, 2, PASS, "Bien décrite : nom, image, prix et disponibilité",
-                            "Google, Bing et les agents IA (ChatGPT, Gemini…) comprennent ce que la page présente.",
-                            "" if st.get("related_in_markup") else "Ajoutez les éléments liés (isRelatedTo, isSimilarTo) pour que les agents connaissent aussi vos associations."))
+            kpis.append(Kpi("structured_data", label, 2, PASS, t("Bien décrite : nom, image, prix et disponibilité", "Well described: name, image, price and availability"),
+                            t("Google, Bing et les agents IA (ChatGPT, Gemini…) comprennent ce que la page présente.",
+                              "Google, Bing and AI agents (ChatGPT, Gemini…) understand what the page presents."),
+                            "" if st.get("related_in_markup") else t("Ajoutez les éléments liés (isRelatedTo, isSimilarTo) pour que les agents connaissent aussi vos associations.",
+                                                                     "Add the related items (isRelatedTo, isSimilarTo) so that agents know your associations too.")))
         else:
-            kpis.append(Kpi("structured_data", label, 2, WARN, "Incomplète : " + ", ".join(names[k] for k in missing) + " manquant",
-                            "Les moteurs et les agents IA lisent ces données pour présenter vos produits.", "Complétez le balisage schema.org de la page."))
+            kpis.append(Kpi("structured_data", label, 2, WARN, t("Incomplète : " + ", ".join(names[k] for k in missing) + " manquant",
+                                                                 "Incomplete: " + ", ".join(names[k] for k in missing) + " missing"),
+                            t("Les moteurs et les agents IA lisent ces données pour présenter vos produits.", "Search engines and AI agents read this data to present your products."),
+                            t("Complétez le balisage schema.org de la page.", "Complete the page's schema.org markup.")))
     elif st.get("json_ld_types"):
-        generic = ", ".join(f"« {t} »" for t in st["json_ld_types"][:3])
-        kpis.append(Kpi("structured_data", label, 2, FAIL, f"La page se décrit seulement comme {generic}, pas comme {what}",
-                        f"Des données schema.org existent, mais elles ne disent pas que la page présente {what} : ni nom, ni date, ni prix, ni disponibilité "
-                        "pour Google et les assistants IA." + (f" Types trouvés : {', '.join(declared)}." if declared else ""),
-                        f"Décrivez la page avec le bon type schema.org ({'Event' if page.page_type == 'event' else 'Product' if page.page_type == 'product' else 'Product, Event, Book ou Article'}) : nom, image, date ou prix, disponibilité."))
+        generic = ", ".join(q(ld_type) for ld_type in st["json_ld_types"][:3])
+        expected = 'Event' if page.page_type == 'event' else 'Product' if page.page_type == 'product' else t('Product, Event, Book ou Article', 'Product, Event, Book or Article')
+        kpis.append(Kpi("structured_data", label, 2, FAIL, t(f"La page se décrit seulement comme {generic}, pas comme {what}", f"The page only describes itself as {generic}, not as {what}"),
+                        t(f"Des données schema.org existent, mais elles ne disent pas que la page présente {what} : ni nom, ni date, ni prix, ni disponibilité "
+                          "pour Google et les assistants IA." + (f" Types trouvés : {', '.join(declared)}." if declared else ""),
+                          f"There is schema.org data, but it doesn't say the page presents {what}: no name, date, price or availability "
+                          "for Google and AI assistants." + (f" Types found: {', '.join(declared)}." if declared else "")),
+                        t(f"Décrivez la page avec le bon type schema.org ({expected}) : nom, image, date ou prix, disponibilité.",
+                          f"Describe the page with the right schema.org type ({expected}): name, image, date or price, availability.")))
     else:
-        kpis.append(Kpi("structured_data", label, 2, FAIL, "Aucune donnée structurée schema.org",
-                        f"Rien dans le code de la page ne décrit {what} : moteurs de recherche et assistants IA doivent le deviner.",
-                        "Ajoutez un bloc JSON-LD schema.org (Product, Event, Book ou Article) avec nom, image, prix et disponibilité."))
+        kpis.append(Kpi("structured_data", label, 2, FAIL, t("Aucune donnée structurée schema.org", "No schema.org structured data"),
+                        t(f"Rien dans le code de la page ne décrit {what} : moteurs de recherche et assistants IA doivent le deviner.",
+                          f"Nothing in the page's code describes {what}: search engines and AI assistants have to guess."),
+                        t("Ajoutez un bloc JSON-LD schema.org (Product, Event, Book ou Article) avec nom, image, prix et disponibilité.",
+                          "Add a schema.org JSON-LD block (Product, Event, Book or Article) with name, image, price and availability.")))
 
     # 9. AI shopping agents (UCP) - informative, not scored.
+    agent_label = t("Achats via les assistants IA (UCP)", "Shopping through AI assistants (UCP)")
     if ucp is True:
-        kpis.append(Kpi("agent_ready", "Achats via les assistants IA (UCP)", 0, PASS, "Le site est déclaré aux assistants d'achat IA",
-                        "Le site se déclare aux agents d'achat IA (Gemini, mode IA de Google…) via le Universal Commerce Protocol."))
+        kpis.append(Kpi("agent_ready", agent_label, 0, PASS, t("Le site est déclaré aux assistants d'achat IA", "The site is declared to AI shopping assistants"),
+                        t("Le site se déclare aux agents d'achat IA (Gemini, mode IA de Google…) via le Universal Commerce Protocol.",
+                          "The site declares itself to AI shopping agents (Gemini, Google's AI Mode…) through the Universal Commerce Protocol.")))
     else:
-        kpis.append(Kpi("agent_ready", "Achats via les assistants IA (UCP)", 0, INFO, "Le site n'est pas encore déclaré aux assistants d'achat IA",
-                        "Le Universal Commerce Protocol (Google, Shopify…) permet aux agents d'achat IA de chercher dans votre catalogue et d'acheter chez vous. "
-                        "Il se déploie d'abord aux États-Unis : à surveiller.",
-                        "Shopify l'active d'office ; ailleurs, il passe par une extension."))
+        kpis.append(Kpi("agent_ready", agent_label, 0, INFO, t("Le site n'est pas encore déclaré aux assistants d'achat IA", "The site isn't declared to AI shopping assistants yet"),
+                        t("Le Universal Commerce Protocol (Google, Shopify…) permet aux agents d'achat IA de chercher dans votre catalogue et d'acheter chez vous. "
+                          "Il se déploie d'abord aux États-Unis : à surveiller.",
+                          "The Universal Commerce Protocol (Google, Shopify…) lets AI shopping agents search your catalog and buy from you. "
+                          "It is rolling out in the United States first: one to watch."),
+                        t("Shopify l'active d'office ; ailleurs, il passe par une extension.", "Shopify turns it on by default; elsewhere, it comes with an extension.")))
+    if en:
+        about = about_en(page, the, The, one, many, behavior_title)
+    else:
+        about = about_fr(page, the, The, one, many, behavior_title)
+    for k in kpis:
+        k.method = ((STOCK_METHODS_EN if en else STOCK_METHODS).get(page.cms, STOCK_METHOD_DEFAULT_EN if en else STOCK_METHOD_DEFAULT) if k.id == "unavailable"
+                    else (METHODS_EN if en else METHODS).get(k.id, ""))
+        k.about = about.get(k.id, "")
+    return kpis
+
+
+def about_fr(page: PageFacts, the: str, The: str, one: str, many: str, behavior_title: str) -> dict[str, str]:
+    """What each check is, in plain words."""
     source = BEHAVIOR_SOURCE.get(page.page_type, "aimé")
-    about = {
+    return {
         "self_reco": f"{The} affiché ne doit jamais apparaître dans ses propres recommandations.",
         "similar_block": f"Des {many} proches de celui affiché (style, usage, catégorie), souvent titrées « Vous aimerez aussi ». Utiles dès la première visite.",
         "behavior_block": f"Ce que les autres clients ont {source} avec ce {one}, souvent titré {behavior_title}. Un second bloc, différent du précédent.",
@@ -1363,10 +1535,22 @@ def build_kpis(page: PageFacts, ucp: Optional[bool], stock_checked: bool = False
         "structured_data": "Nom, prix et stock décrits dans un format standard (schema.org) que lisent Google, Bing et les assistants IA comme ChatGPT.",
         "agent_ready": "UCP (Universal Commerce Protocol) : le standard de Google et Shopify qui permet aux assistants IA (Gemini, ChatGPT…) de chercher dans votre catalogue et d'acheter chez vous.",
     }
-    for k in kpis:
-        k.method = STOCK_METHODS.get(page.cms, STOCK_METHOD_DEFAULT) if k.id == "unavailable" else METHODS.get(k.id, "")
-        k.about = about.get(k.id, "")
-    return kpis
+
+
+def about_en(page: PageFacts, the: str, The: str, one: str, many: str, behavior_title: str) -> dict[str, str]:
+    source = BEHAVIOR_SOURCE_EN.get(page.page_type, "liked")
+    return {
+        "self_reco": f"{The} shown should never appear in its own recommendations.",
+        "similar_block": f"{many.capitalize()} close to the one shown (style, use, category), often titled “You may also like”. Useful from the first visit.",
+        "behavior_block": f"What other customers {source} with this {one}, often titled {behavior_title}. A second block, different from the first one.",
+        "personalization": "At least one block should adapt to the visitor: what they looked at, their tastes.",
+        "duplicates": f"The same {one} shouldn't appear twice in the recommendations.",
+        "unavailable": ("Recommending a sold-out or past event leads the visitor to a dead end." if page.page_type == "event" else
+                        f"Recommending an out-of-stock {one} leads the visitor to a dead end."),
+        "block_size": f"How many {many} each block offers: between 4 and 8, enough choice without drowning the best ones.",
+        "structured_data": "Name, price and stock described in a standard format (schema.org) that Google, Bing and AI assistants like ChatGPT read.",
+        "agent_ready": "UCP (Universal Commerce Protocol): the Google and Shopify standard that lets AI assistants (Gemini, ChatGPT…) search your catalog and buy from you.",
+    }
 
 
 MIN_MEASURED_WEIGHT = 50  # below half of the points measured, a score would mean nothing
@@ -1410,6 +1594,13 @@ NEXT_STEPS = {
     "shopify": {"title": "LIKYLY pour Shopify", "text": "Une section « Vous aimerez aussi » et une section « Les clients ont aussi aimé » dans votre thème, adaptées à chaque visiteur, et les achats suivis par le pixel de Shopify.", "href": "/docs/installation", "cta": "Voir l'installation"},
     "magento": {"title": "LIKYLY pour Magento", "text": "L'assistant d'installation envoie votre catalogue et ajoute les deux blocs à votre thème : npx @likyly/wizard.", "href": "/docs/installation", "cta": "Voir l'installation"},
 }
+NEXT_STEPS_EN = {
+    "woocommerce": {"title": "The LIKYLY extension for WooCommerce", "text": "Two blocks on every product page: “You may also like” (close products, from day one) and “Customers also liked”, learned from your orders and adapted to each visitor. No code.", "href": "/wordpress", "cta": "Discover the extension"},
+    "wordpress": {"title": "The LIKYLY extension for WordPress", "text": "“Read next” at the end of your posts: the closest posts, then the ones your readers read next. No code.", "href": "/wordpress", "cta": "Discover the extension"},
+    "shopify": {"title": "LIKYLY for Shopify", "text": "A “You may also like” section and a “Customers also liked” section in your theme, adapted to each visitor, and purchases tracked by Shopify's pixel.", "href": "/docs/installation", "cta": "See the installation"},
+    "magento": {"title": "LIKYLY for Magento", "text": "The installation wizard sends your catalog and adds the two blocks to your theme: npx @likyly/wizard.", "href": "/docs/installation", "cta": "See the installation"},
+}
+DEFAULT_NEXT_STEP_EN = {"title": "Install LIKYLY on your site", "text": "The two blocks, close products and “customers also liked”, adapted to each visitor. A wizard detects your technology and installs them: npx @likyly/wizard, or an SDK for every language.", "href": "/docs/installation", "cta": "See the installation"}
 DEFAULT_NEXT_STEP = {"title": "Installez LIKYLY sur votre site", "text": "Les deux blocs, produits proches et « les clients ont aussi aimé », adaptés à chaque visiteur. Un assistant détecte votre technologie et les installe : npx @likyly/wizard, ou un SDK pour chaque langage.", "href": "/docs/installation", "cta": "Voir l'installation"}
 
 
@@ -1455,15 +1646,29 @@ def merge_rendered(static: PageFacts, rendered: PageFacts) -> PageFacts:
 
 
 def _blocked(status: int) -> AuditError:
-    return AuditError(f"Le site refuse les visites automatiques (erreur {status}) : sa protection anti-robots empêche notre robot de lire la page." + BLOCKED_HINT, blocked=True)
+    return AuditError(t(f"Le site refuse les visites automatiques (erreur {status}) : sa protection anti-robots empêche notre robot de lire la page.",
+                        f"The site turns automated visits away (error {status}): its anti-robot protection keeps our robot from reading the page.") + blocked_hint(), blocked=True)
 
 
-CHALLENGE_ERROR = "Le site présente une vérification anti-robots à notre robot d'analyse : il ne lit pas les pages protégées ainsi." + BLOCKED_HINT
+def challenge_error() -> str:
+    return t("Le site présente une vérification anti-robots à notre robot d'analyse : il ne lit pas les pages protégées ainsi.",
+             "The site shows our audit robot an anti-robot check: it doesn't read pages protected that way.") + blocked_hint()
 
 
 def run_audit(raw_url: str, fetch: Fetch, allow_private: bool = False, render: Optional[Render] = None,
               provided: Optional[Page] = None, source: str = "robot",
-              render_done: Optional[Callable[[], None]] = None) -> dict[str, Any]:
+              render_done: Optional[Callable[[], None]] = None, lang: Optional[str] = None) -> dict[str, Any]:
+    """The whole audit of one page, as stored, worded in `lang` ("fr" or "en"; default: the current
+    language(), French unless set) - see _run_audit."""
+    with language(lang or current_language()):
+        result = _run_audit(raw_url, fetch, allow_private, render, provided, source, render_done)
+        result["language"] = current_language()
+        return result
+
+
+def _run_audit(raw_url: str, fetch: Fetch, allow_private: bool = False, render: Optional[Render] = None,
+               provided: Optional[Page] = None, source: str = "robot",
+               render_done: Optional[Callable[[], None]] = None) -> dict[str, Any]:
     """The whole audit of one page, as stored. `fetch` is SafeFetcher.get in production, a fake in tests.
     `render` (optional) shows a page as a browser does; `render_done` is called once the audit needs it
     no more (the browser goes to the next audit). `provided`: the page as the visitor's own browser
@@ -1475,15 +1680,16 @@ def run_audit(raw_url: str, fetch: Fetch, allow_private: bool = False, render: O
         if page.status in (401, 403, 429, 503):
             raise _blocked(page.status)
         if page.status >= 400:
-            raise AuditError(f"La page répond avec une erreur {page.status} : vérifiez l'adresse.")
+            raise AuditError(t(f"La page répond avec une erreur {page.status} : vérifiez l'adresse.", f"The page answers with an error {page.status}: check the address."))
         if "html" not in (page.content_type or "text/html").lower():
-            raise AuditError("Cette adresse ne mène pas à une page web.")
+            raise AuditError(t("Cette adresse ne mène pas à une page web.", "This address doesn't lead to a web page."))
     else:
         page = provided
     if is_challenge(page.text):
         if provided is not None:
-            raise AuditError("Ce code est celui de la page de vérification anti-robots du site, pas celui de la fiche : ouvrez la fiche elle-même dans votre navigateur, puis recommencez.")
-        raise AuditError(CHALLENGE_ERROR, blocked=True)
+            raise AuditError(t("Ce code est celui de la page de vérification anti-robots du site, pas celui de la fiche : ouvrez la fiche elle-même dans votre navigateur, puis recommencez.",
+                               "This code is the one of the site's anti-robot check, not of the item page: open the page itself in your browser, then try again."))
+        raise AuditError(challenge_error(), blocked=True)
     facts = analyze_page(page)
     facts.rendered = source == "browser"
     notes: list[str] = []
@@ -1496,18 +1702,22 @@ def run_audit(raw_url: str, fetch: Fetch, allow_private: bool = False, render: O
             shown = render(page.url)
             if shown.challenge:
                 facts.render_failed = True
-                notes.append("Notre navigateur d'audit a reçu une vérification anti-robots : seuls les blocs présents dans le HTML ont été lus.")
+                notes.append(t("Notre navigateur d'audit a reçu une vérification anti-robots : seuls les blocs présents dans le HTML ont été lus.",
+                               "Our audit browser was shown an anti-robot check: only the blocks in the HTML were read."))
             elif shown.status >= 400:
                 facts.render_failed = True
-                notes.append(f"Notre navigateur d'audit a reçu une erreur {shown.status} : seuls les blocs présents dans le HTML ont été lus.")
+                notes.append(t(f"Notre navigateur d'audit a reçu une erreur {shown.status} : seuls les blocs présents dans le HTML ont été lus.",
+                               f"Our audit browser got an error {shown.status}: only the blocks in the HTML were read."))
             else:
                 facts = merge_rendered(facts, analyze_page(shown))
                 rendered = True
         except AuditError as error:
             facts.render_failed = True
-            notes.append(f"Lecture dans un navigateur impossible ({error}) : seuls les blocs présents dans le HTML ont été lus.")
+            notes.append(t(f"Lecture dans un navigateur impossible ({error}) : seuls les blocs présents dans le HTML ont été lus.",
+                           f"Couldn't read the page in a browser ({error}): only the blocks in the HTML were read."))
     if facts.text_chars < 600 and not facts.blocks:
-        raise AuditError("Cette page est construite entièrement en JavaScript : son contenu n'est pas lisible sans navigateur, l'audit ne peut pas l'analyser.")
+        raise AuditError(t("Cette page est construite entièrement en JavaScript : son contenu n'est pas lisible sans navigateur, l'audit ne peut pas l'analyser.",
+                           "This page is built entirely with JavaScript: its content can't be read without a browser, the audit can't analyze it."))
 
     fill_shopify_sections(fetch, facts)
 
@@ -1516,7 +1726,7 @@ def run_audit(raw_url: str, fetch: Fetch, allow_private: bool = False, render: O
         if rendered and render is not None:
             shown = render(target_url)
             if shown.challenge:
-                raise AuditError("le site a présenté une vérification anti-robots")
+                raise AuditError(t("le site a présenté une vérification anti-robots", "the site showed an anti-robot check"))
             return shown
         return fetch(target_url)
 
@@ -1531,9 +1741,11 @@ def run_audit(raw_url: str, fetch: Fetch, allow_private: bool = False, render: O
                 other = analyze_page(second)
                 fill_shopify_sections(fetch, other)
             else:
-                notes.append(f"La fiche « {target.name or target.url} » n'a pas pu être ouverte pour comparer les blocs (erreur {second.status}).")
+                notes.append(t(f"La fiche {q(target.name or target.url)} n'a pas pu être ouverte pour comparer les blocs (erreur {second.status}).",
+                               f"The page of {q(target.name or target.url)} couldn't be opened to compare the blocks (error {second.status})."))
         except AuditError as error:
-            notes.append(f"La fiche « {target.name or target.url} » n'a pas pu être ouverte pour comparer les blocs : {error}")
+            notes.append(t(f"La fiche {q(target.name or target.url)} n'a pas pu être ouverte pour comparer les blocs : {error}",
+                           f"The page of {q(target.name or target.url)} couldn't be opened to compare the blocks: {error}"))
         try:
             again = open_page(page.url)
             if again.status == 200:
@@ -1553,22 +1765,31 @@ def run_audit(raw_url: str, fetch: Fetch, allow_private: bool = False, render: O
     js_blocks = [b for b in facts.blocks if b.js_only]
     if js_blocks:
         if rendered:
-            notes.append(f"{_plural(len(js_blocks), 'bloc reste vide', 'blocs restent vides')} même dans notre navigateur d'audit : souvent un bloc lié à "
-                         "l'historique du visiteur (articles vus récemment), vide pour une première visite, ou un bloc qui attend une action.")
+            notes.append(t(f"{_plural(len(js_blocks), 'bloc reste vide', 'blocs restent vides')} même dans notre navigateur d'audit : souvent un bloc lié à "
+                           "l'historique du visiteur (articles vus récemment), vide pour une première visite, ou un bloc qui attend une action.",
+                           f"{_plural(len(js_blocks), 'block stays empty', 'blocks stay empty')} even in our audit browser: often a block tied to "
+                           "the visitor's history (recently viewed), empty on a first visit, or a block waiting for an action."))
         else:
-            notes.append(f"{_plural(len(js_blocks), 'bloc se remplit', 'blocs se remplissent')} en JavaScript : leur contenu n'a pas pu être lu sans navigateur.")
+            notes.append(t(f"{_plural(len(js_blocks), 'bloc se remplit', 'blocs se remplissent')} en JavaScript : leur contenu n'a pas pu être lu sans navigateur.",
+                           f"{_plural(len(js_blocks), 'block fills', 'blocks fill')} in with JavaScript: their content couldn't be read without a browser."))
     sponsored = [b for b in facts.blocks if b.sponsored]
     if sponsored:
-        notes.append(f"{_quote(sponsored)} : emplacement{'s' if len(sponsored) > 1 else ''} sponsorisé{'s' if len(sponsored) > 1 else ''} (publicité), compté{'s' if len(sponsored) > 1 else ''} comme recommandation{'s' if len(sponsored) > 1 else ''} de la page.")
+        s_ = "s" if len(sponsored) > 1 else ""
+        notes.append(t(f"{_quote(sponsored)} : emplacement{s_} sponsorisé{s_} (publicité), compté{s_} comme recommandation{s_} de la page.",
+                       f"{_quote(sponsored)}: sponsored placement{s_} (advertising), counted as the page's recommendation{s_}."))
     browser_only = [b for b in facts.blocks if b.browser_only]
     if browser_only and source != "browser":
         verb = "n'existe" if len(browser_only) == 1 else "n'existent"
-        notes.append(f"{_quote(browser_only)} {verb} qu'une fois le JavaScript exécuté : "
-                     "lu dans notre navigateur d'audit. Google le voit ; la plupart des assistants IA, qui lisent le HTML, non.")
+        notes.append(t(f"{_quote(browser_only)} {verb} qu'une fois le JavaScript exécuté : "
+                       "lu dans notre navigateur d'audit. Google le voit ; la plupart des assistants IA, qui lisent le HTML, non.",
+                       f"{_quote(browser_only)} {'only exists' if len(browser_only) == 1 else 'only exist'} once JavaScript has run: "
+                       "read in our audit browser. Google sees it; most AI assistants, which read the HTML, don't."))
     if source == "browser":
-        notes.append("Page lue depuis votre navigateur, telle qu'elle s'affichait chez vous : le site refuse notre robot.")
+        notes.append(t("Page lue depuis votre navigateur, telle qu'elle s'affichait chez vous : le site refuse notre robot.",
+                       "Page read from your browser, as it showed for you: the site turns our robot away."))
     elif source == "paste":
-        notes.append("Page lue depuis le code source collé : les blocs que le JavaScript ajoute après coup n'y figurent pas.")
+        notes.append(t("Page lue depuis le code source collé : les blocs que le JavaScript ajoute après coup n'y figurent pas.",
+                       "Page read from the pasted source code: the blocks JavaScript adds afterwards aren't in it."))
 
     origin = f"{urlsplit(page.url).scheme}://{urlsplit(page.url).netloc}/"
     # A yes or a no: published (200 with a JSON profile) or not - a file that doesn't answer isn't published.
@@ -1587,8 +1808,8 @@ def run_audit(raw_url: str, fetch: Fetch, allow_private: bool = False, render: O
         "host": urlsplit(page.url).hostname,
         "source": source,
         "rendered": rendered,
-        "cms": {"id": facts.cms, "label": CMS_LABELS.get(facts.cms, facts.cms)},
-        "page_type": {"id": facts.page_type, "label": PAGE_TYPE_LABELS.get(facts.page_type, facts.page_type)},
+        "cms": {"id": facts.cms, "label": t(CMS_LABELS.get(facts.cms, facts.cms), CMS_LABELS_EN.get(facts.cms, CMS_LABELS.get(facts.cms, facts.cms)))},
+        "page_type": {"id": facts.page_type, "label": t(PAGE_TYPE_LABELS.get(facts.page_type, facts.page_type), PAGE_TYPE_LABELS_EN.get(facts.page_type, facts.page_type))},
         "item_name": facts.item_name,
         "vendors": facts.vendors,
         "score": total,
@@ -1598,7 +1819,7 @@ def run_audit(raw_url: str, fetch: Fetch, allow_private: bool = False, render: O
         "blocks": [b.public() for b in facts.blocks],
         "notes": notes,
         "compared_with": {"url": target.url, "name": (other.item_name if other else "") or target.name} if target is not None and other is not None else None,
-        "next_step": NEXT_STEPS.get(facts.cms, DEFAULT_NEXT_STEP),
+        "next_step": NEXT_STEPS_EN.get(facts.cms, DEFAULT_NEXT_STEP_EN) if current_language() == "en" else NEXT_STEPS.get(facts.cms, DEFAULT_NEXT_STEP),
     }
 
 
@@ -1606,6 +1827,7 @@ def teaser(result: dict[str, Any]) -> dict[str, Any]:
     """What the page shows before the email: the verdicts, not the explanations or the evidence."""
     return {
         **{k: result.get(k) for k in ("url", "final_url", "host", "source", "rendered", "cms", "page_type", "item_name", "vendors", "score", "grade", "partial")},
+        "language": result.get("language", "fr"),
         "kpis": [{k: v for k, v in kpi.items() if k in ("id", "label", "about", "status", "summary", "weight", "method")} for kpi in result["kpis"]],
         "block_count": len(result["blocks"]),
     }

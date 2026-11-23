@@ -59,6 +59,11 @@ def test_tracking_requirements_and_health_use_configured_event_types_when_set(ht
     assert catalog_events == {"reservation"}
     placement_events = {e["event_type"] for e in requirements["required_events"] if e["scope"] == "placement"}
     assert placement_events == {"recommendation_impression", "recommendation_click"}  # always present, unaffected
+    # why: in the caller's language (French by default, English when Accept-Language asks for it)
+    why = next(e["why"] for e in requirements["required_events"] if e["event_type"] == "reservation")
+    assert why == "Configuré pour ce placement (page Événements)."
+    english = http.get(f"/placements/{SLUG}/tracking-requirements", headers={**seeded.secret, "Accept-Language": "en"}).json()
+    assert next(e["why"] for e in english["required_events"] if e["event_type"] == "reservation") == "Configured for this placement (Events page)."
 
     health = http.get(f"/placements/{SLUG}/health", headers=seeded.secret).json()
     statuses = {c["name"]: c["status"] for c in health["checks"]}

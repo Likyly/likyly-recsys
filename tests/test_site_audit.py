@@ -1,6 +1,7 @@
 """The free recommendation audit (www.likyly.com/audit): what it finds on a page, that it only ever
 reaches public addresses, and the API flow - verdicts first, the full report once an email is given,
 then the report emailed. No real network: pages are served by a fake fetch / httpx MockTransport."""
+import re
 import threading
 import time
 import uuid
@@ -401,6 +402,84 @@ def test_captcha_is_required_when_configured(http, audits, monkeypatch):
     monkeypatch.setenv("TURNSTILE_SECRET_KEY", "secret")
     response = http.post("/audits", json={"url": "boutique.example/produit/chaussure-trail/"}, headers=audits["headers"])
     assert response.status_code == 400
+
+
+# ---------------------------------------------------------------------------- language
+
+FRENCH = re.compile(r"[éèêàùçôî«»]|\b(le|la|les|des|du|une|est|pas|vos|votre)\b", re.IGNORECASE)
+
+
+def test_the_audit_is_worded_in_english_when_asked():
+    fetch = fake_fetch({"https://boutique.example/produit/chaussure-trail/": (200, WOO_PRODUCT), "https://boutique.example/": (200, WOO_HOME)})
+    result = run_audit("boutique.example/produit/chaussure-trail/", fetch, lang="en")
+    assert result["language"] == "en"
+    assert result["page_type"]["label"] == "Product page"
+    assert kpi(result, "self_reco")["label"] == "Self-recommendation"
+    assert kpi(result, "self_reco")["summary"].startswith("The product shown is recommended on its own page, in “Produits apparentés”")
+    assert kpi(result, "unavailable")["label"] == "Stock of recommended products"
+    assert kpi(result, "unavailable")["method"].startswith("Stock read in the WooCommerce code")
+    assert result["next_step"]["cta"] == "Discover the extension" and result["next_step"]["href"] == "/wordpress"
+    for k in result["kpis"]:  # the page's own words (block titles, product names) stay as they are
+        for field in ("label", "about", "method", "advice"):
+            assert not FRENCH.search(k[field] or ""), (k["id"], field, k[field])
+    # French stays the default
+    french = run_audit("boutique.example/produit/chaussure-trail/", fetch)
+    assert french["language"] == "fr" and kpi(french, "self_reco")["label"] == "Auto-recommandation"
+
+
+def test_audit_errors_follow_the_language():
+    with pytest.raises(AuditError, match="This address isn't valid"):
+        run_audit("not a url", fake_fetch({}), lang="en")
+    with pytest.raises(AuditError, match="Cette adresse n'est pas valide"):
+        run_audit("not a url", fake_fetch({}))
+
+
+def test_api_answers_in_the_callers_language(http, audits):
+    english = {**audits["headers"], "Accept-Language": "en-US,en;q=0.9,fr;q=0.8"}
+    # messages of the API itself: French without a header (as before), English when asked
+    assert http.get("/audits/nope").json()["detail"] == "Ce rapport n'existe pas."
+    assert http.get("/audits/nope", headers=english).json()["detail"] == "This report doesn't exist."
+    assert http.get("/audits/jobs/nope", headers=english).json()["detail"].startswith("This audit is no longer followed")
+    # the audit's own error, worded in the job's thread
+    failed = http.post("/audits", json={"url": "not a url"}, headers=english)
+    assert failed.status_code == 422 and failed.json()["detail"].startswith("This address isn't valid")
+
+    created = http.post("/audits", json={"url": "boutique.example/produit/chaussure-trail/"}, headers=english)
+    assert created.status_code == 201, created.text
+    teaser = created.json()
+    token = teaser["token"]
+    assert teaser["language"] == "en" and kpi(teaser, "self_reco")["label"] == "Self-recommendation"
+    assert teaser["report_url"].endswith(f"/en/audit/r/{token}")
+    # a report keeps its language, whoever reads it
+    assert kpi(http.get(f"/audits/{token}").json(), "self_reco")["label"] == "Self-recommendation"
+
+    invalid = http.post(f"/audits/{token}/email", json={"email": "not-an-email"}, headers=english)
+    assert invalid.status_code == 422 and invalid.json()["detail"] == "This email address isn't valid."
+    assert http.post(f"/audits/{token}/email", json={"email": "sam@shop.example"}, headers=english).status_code == 200
+    report, lead = audits["sent"]
+    assert report["Subject"].startswith("Your recommendation audit:") and report["Subject"].endswith("for boutique.example")
+    html_part = report.get_body(("html",)).get_content()
+    assert '<html lang="en"' in html_part and "Self-recommendation" in html_part and "What now?" in html_part
+    assert f"/en/audit/r/{token}" in html_part and "/en/wordpress" in html_part and "{{" not in html_part
+    text_part = report.get_body(("plain",)).get_content()
+    assert "To do:" in text_part and "Your report online, until" in text_part
+    assert "Langue du rapport : en" in lead.get_content()  # the team's heads-up stays French
+
+
+def test_rate_limit_messages_follow_the_language(http, audits):
+    english = {**audits["headers"], "Accept-Language": "en"}
+    for _ in range(site_audits.AUDITS_PER_HOUR):
+        assert http.post("/audits", json={"url": "boutique.example/produit/chaussure-trail/"}, headers=english).status_code == 201
+    refused = http.post("/audits", json={"url": "boutique.example/produit/chaussure-trail/"}, headers=english)
+    assert refused.status_code == 429 and refused.json()["detail"] == "You have run a lot of audits: try again in an hour."
+    refused = http.post("/audits", json={"url": "boutique.example/produit/chaussure-trail/"}, headers=audits["headers"])
+    assert refused.json()["detail"] == "Vous avez lancé beaucoup d'audits : réessayez dans une heure."
+
+
+def test_captcha_message_follows_the_language(http, audits, monkeypatch):
+    monkeypatch.setenv("TURNSTILE_SECRET_KEY", "secret")
+    response = http.post("/audits", json={"url": "boutique.example/produit/chaussure-trail/"}, headers={**audits["headers"], "Accept-Language": "en"})
+    assert response.status_code == 400 and response.json()["detail"].startswith("The anti-robot check is missing")
 
 
 def test_audit_routes_stay_out_of_the_public_api_document(http):
@@ -892,6 +971,20 @@ def test_the_bookmarklet_sends_the_page_then_the_audit_page_runs_it(http, audits
     # once only: the page is not kept
     again = http.post("/audits", json={"page_id": page_id}, headers=audits["headers"])
     assert again.status_code == 410 and "favori" in again.json()["detail"]
+
+
+def test_the_bookmarklet_of_an_english_page_lands_on_english_pages(http, audits, monkeypatch):
+    monkeypatch.setenv("PUBLIC_SITE_URL", "https://www.likyly.test")
+    page = _rendered(["pull", "gilet", "manteau", "echarpe"], ["bonnet", "gants", "pull", "botte"])
+    sent = http.post("/audits/page", data={"url": "https://mode.example/p/veste", "html": page, "lang": "en"}, headers=audits["headers"], follow_redirects=False)
+    assert sent.headers["location"].startswith("https://www.likyly.test/en/audit?page=")
+    empty = http.post("/audits/page", data={"url": "https://mode.example/p/veste", "html": " ", "lang": "en"}, headers=audits["headers"], follow_redirects=False)
+    assert empty.headers["location"] == "https://www.likyly.test/en/audit/navigateur?erreur=vide"
+    # ?lang=en on the form's action: known even before the form is read
+    unread = http.post("/audits/page?lang=en", content=b"x", headers={**audits["headers"], "Content-Type": "multipart/form-data; boundary=nope"}, follow_redirects=False)
+    assert unread.headers["location"].startswith("https://www.likyly.test/en/audit/navigateur?erreur=")
+    french = http.post("/audits/page", data={"url": "https://mode.example/p/veste", "html": " "}, headers=audits["headers"], follow_redirects=False)
+    assert french.headers["location"] == "https://www.likyly.test/audit/navigateur?erreur=vide"
 
 
 @pytest.mark.parametrize("form, error", [

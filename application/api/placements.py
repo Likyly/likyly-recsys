@@ -20,7 +20,7 @@ _utils_dir = os.path.abspath(os.path.join(current_dir, "../utils"))
 if _utils_dir not in sys.path:
     sys.path.insert(0, _utils_dir)
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response
 
 import placement_service as service  # noqa: E402
 from schemas import (  # noqa: E402
@@ -28,6 +28,7 @@ from schemas import (  # noqa: E402
     PlacementPreviewRequest, PlacementRecommendRequest, PlacementRecommendResponse,
     PlacementRequirementsOut, PlacementUpdate, RecentIntegrationEventsOut, TrackingRequirementsOut,
 )
+from i18n import request_language  # noqa: E402
 from scoped_auth import public_ok_client_id, require_scope  # noqa: E402
 
 router = APIRouter(prefix="/placements", tags=["placements"])
@@ -152,27 +153,27 @@ def get_placement_requirements(slug: str, client_id: int = Depends(require_scope
 
 
 @router.get("/{slug}/tracking-requirements", response_model=TrackingRequirementsOut, summary="Which events this placement needs instrumented", responses=_errors(401, 403, 404, 422))
-def get_tracking_requirements(slug: str, client_id: int = Depends(require_scope("placements:read"))):
+def get_tracking_requirements(slug: str, request: Request, client_id: int = Depends(require_scope("placements:read"))):
     """Static (no query) - the `get_tracking_requirements` MCP tool. Which events to send and
     why (`recommendation_impression`/`recommendation_click` are placement-scoped;
     `product_view`/`add_to_cart`/`purchase` are catalog-wide funnel events every placement
     benefits from, not specific to this one) - call this once, before writing tracking code,
     then get_placement_health to confirm it actually arrived."""
     try:
-        return service.get_tracking_requirements(client_id, slug)
+        return service.get_tracking_requirements(client_id, slug, request_language(request))
     except service.NotFoundError as error:
         raise _not_found(error)
 
 
 @router.get("/{slug}/health", response_model=PlacementHealthOut, summary="Is this placement's integration actually working?", responses=_errors(401, 403, 404, 422))
-def get_placement_health(slug: str, window_hours: int = Query(24, ge=1, le=24 * 30), client_id: int = Depends(require_scope("placements:read"))):
+def get_placement_health(slug: str, request: Request, window_hours: int = Query(24, ge=1, le=24 * 30), client_id: int = Depends(require_scope("placements:read"))):
     """Counts what actually arrived in the last `window_hours` (default 24) - recommend calls,
     impressions, clicks, product views, add-to-carts, purchases - and reports one `ok`/
     `warning`/`missing` check per signal, matching the checklist a developer asking "verify my
     Likyly integration" expects: real facts from LIKYLY's own data, not a guess from reading
     the site's source. `overall` is the worst individual check."""
     try:
-        return service.get_health(client_id, slug, window_hours)
+        return service.get_health(client_id, slug, window_hours, request_language(request, default="en"))
     except service.NotFoundError as error:
         raise _not_found(error)
 

@@ -12444,7 +12444,7 @@
     },
     "/clients/me/event-types": {
       "get": {
-        "description": "Every event type this tenant has registered - \"purchase\"/\"view\" always exist\n(seeded at client creation, see seed_default_event_types in db.py); others appear\neither because the tenant added them here or because an integration auto-registered\nthem by calling POST /events/{event_type} for a new type.",
+        "description": "Every event type this tenant has registered - \"purchase\"/\"view\" always exist\n(seeded at client creation, see seed_default_event_types in db.py); others appear\neither because the tenant added them here or because an integration auto-registered\nthem by calling POST /events/{event_type} for a new type. A default type's label, as long as\nthe tenant hasn't renamed it, comes in the caller's language (Accept-Language).",
         "operationId": "list_my_event_types",
         "parameters": [
           {
@@ -14115,7 +14115,7 @@
     },
     "/clients/me/models/status": {
       "get": {
-        "description": "Website equivalent of `GET /models/status`: the active model version and today's quota usage for one catalog.",
+        "description": "Website equivalent of `GET /models/status`: the active model version and today's quota usage for one catalog\n(`auto_retrain_skip_reason` in the caller's language, French by default).",
         "operationId": "get_my_model_status",
         "parameters": [
           {

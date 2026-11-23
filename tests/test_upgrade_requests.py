@@ -134,7 +134,11 @@ def test_website_scheme_is_added_and_header_injection_is_neutralized(http, accou
 def test_only_a_few_requests_per_day(http, account, mailbox):
     for _ in range(upgrade_requests.UPGRADE_REQUESTS_PER_DAY):
         assert http.post("/clients/me/upgrade-request", json=valid_form()).status_code == 201
-    assert http.post("/clients/me/upgrade-request", json=valid_form()).status_code == 429
+    refused = http.post("/clients/me/upgrade-request", json=valid_form())
+    assert refused.status_code == 429
+    assert refused.json()["detail"].startswith("Vous avez déjà envoyé plusieurs demandes")  # French by default
+    english = http.post("/clients/me/upgrade-request", json=valid_form(), headers={"Accept-Language": "en-GB,en;q=0.9"})
+    assert english.status_code == 429 and english.json()["detail"].startswith("You have already sent several requests today")
     assert len(mailbox) == upgrade_requests.UPGRADE_REQUESTS_PER_DAY
 
 
