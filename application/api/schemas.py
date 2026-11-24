@@ -302,6 +302,19 @@ class CatalogEraseRequest(BaseModel):
     confirm: str = Field(min_length=1, max_length=128, description="The catalog's name (`data_product_type`), typed again - proof the erasure is deliberate, not a stray call.", examples=["shop"])
 
 
+class ShopifyLinkRequest(BaseModel):
+    shop: str = Field(
+        pattern=r"^[a-z0-9][a-z0-9-]{0,99}\.myshopify\.com$",
+        description="The shop's permanent Shopify domain, as Shopify authenticated it to the app.",
+        examples=["lola-bags.myshopify.com"],
+    )
+
+
+class ShopifyLink(BaseModel):
+    shop: str = Field(description="The shop's permanent Shopify domain.", examples=["lola-bags.myshopify.com"])
+    linked_at: datetime = Field(description="When the LIKYLY app for Shopify tied the shop to this workspace.")
+
+
 class CatalogErased(BaseModel):
     catalog: str
     items: int
@@ -520,6 +533,8 @@ class ClientSelf(BaseModel):
     # dashboard know which product_type(s) to fetch quota/model status for, without an
     # extra round trip (this endpoint is already called on every /account page load).
     product_types: List[str] = []
+    # The Shopify shop tied to this workspace by the LIKYLY app for Shopify, if any.
+    shopify_shop: Optional[str] = None
 
 
 class WorkspaceSummary(BaseModel):
@@ -706,6 +721,7 @@ class ClientAdminView(BaseModel):
     data_source_count: int = 0
     placement_count: int = 0
     integrations: List[str] = Field(default_factory=list, description="Agents seen (typescript, php, wordpress, wizard...), most recent first")
+    shopify_shop: Optional[str] = Field(None, description="The Shopify shop tied to this workspace by the LIKYLY app for Shopify")
 
 
 class AdminDayCount(BaseModel):

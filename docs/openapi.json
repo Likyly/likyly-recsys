@@ -2421,6 +2421,18 @@
             ],
             "title": "Secret Key Rotated At"
           },
+          "shopify_shop": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The Shopify shop tied to this workspace by the LIKYLY app for Shopify",
+            "title": "Shopify Shop"
+          },
           "supabase_user_id": {
             "anyOf": [
               {
@@ -2580,6 +2592,17 @@
               }
             ],
             "title": "Secret Key Rotated At"
+          },
+          "shopify_shop": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shopify Shop"
           }
         },
         "required": [
@@ -7069,6 +7092,48 @@
           "runs"
         ],
         "title": "RetentionStatus",
+        "type": "object"
+      },
+      "ShopifyLink": {
+        "properties": {
+          "linked_at": {
+            "description": "When the LIKYLY app for Shopify tied the shop to this workspace.",
+            "format": "date-time",
+            "title": "Linked At",
+            "type": "string"
+          },
+          "shop": {
+            "description": "The shop's permanent Shopify domain.",
+            "examples": [
+              "lola-bags.myshopify.com"
+            ],
+            "title": "Shop",
+            "type": "string"
+          }
+        },
+        "required": [
+          "shop",
+          "linked_at"
+        ],
+        "title": "ShopifyLink",
+        "type": "object"
+      },
+      "ShopifyLinkRequest": {
+        "properties": {
+          "shop": {
+            "description": "The shop's permanent Shopify domain, as Shopify authenticated it to the app.",
+            "examples": [
+              "lola-bags.myshopify.com"
+            ],
+            "pattern": "^[a-z0-9][a-z0-9-]{0,99}\\.myshopify\\.com$",
+            "title": "Shop",
+            "type": "string"
+          }
+        },
+        "required": [
+          "shop"
+        ],
+        "title": "ShopifyLinkRequest",
         "type": "object"
       },
       "SimilarUser": {
@@ -19555,6 +19620,215 @@
         "x-required-key": "public"
       }
     },
+    "/integrations/shopify": {
+      "delete": {
+        "description": "Lets the shop go: the app calls it when the merchant disconnects or the shop is erased.\nIdempotent. Secret key only.",
+        "operationId": "shopify_link_delete",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing, invalid or revoked `X-API-Key`."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The public key can't do this (secret key required), or a plan limit was reached."
+          },
+          "429": {
+            "description": "Rate limit exceeded at the API gateway - retry shortly."
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Untie the Shopify shop from this workspace",
+        "tags": [
+          "integrations"
+        ],
+        "x-required-key": "secret"
+      },
+      "get": {
+        "description": "The Shopify shop the LIKYLY app for Shopify tied to this workspace. `404` when none.\nSecret key only.",
+        "operationId": "shopify_link_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShopifyLink"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing, invalid or revoked `X-API-Key`."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The public key can't do this (secret key required), or a plan limit was reached."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The referenced resource does not exist for this account."
+          },
+          "429": {
+            "description": "Rate limit exceeded at the API gateway - retry shortly."
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Read the Shopify shop tied to this workspace",
+        "tags": [
+          "integrations"
+        ],
+        "x-required-key": "secret"
+      },
+      "put": {
+        "description": "Called by the LIKYLY app for Shopify when a shop connects: the shop is tied to this\nworkspace (a shop tied to another workspace moves here, this workspace's previous shop is\nlet go). Secret key, plus the app's own secret in `X-Likyly-App-Secret`.",
+        "operationId": "shopify_link_put",
+        "parameters": [
+          {
+            "description": "The LIKYLY app for Shopify's own secret: only its server can tie a shop.",
+            "in": "header",
+            "name": "X-Likyly-App-Secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The LIKYLY app for Shopify's own secret: only its server can tie a shop.",
+              "title": "X-Likyly-App-Secret"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ShopifyLinkRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShopifyLink"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing, invalid or revoked `X-API-Key`."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The public key can't do this (secret key required), or a plan limit was reached."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The request is malformed - `detail` lists the offending fields."
+          },
+          "429": {
+            "description": "Rate limit exceeded at the API gateway - retry shortly."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "A service this call depends on is unavailable or not configured - retry later."
+          }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
+        "summary": "Tie a Shopify shop to this workspace",
+        "tags": [
+          "integrations"
+        ],
+        "x-required-key": "secret"
+      }
+    },
     "/items": {
       "get": {
         "description": "One page of the catalog, ordered by creation, or the items matching `search`. The total\nnumber of items in this catalog is in the `X-Total-Count` response header. The secret key,\na developer key with `catalog:read` or `sources:read`, or an assistant's OAuth token - never\nthe public key: it lives in web pages, and must not be able to export your whole catalog\n(recommendations already return the few items they recommend).",
@@ -22247,6 +22521,10 @@
     {
       "description": "Recommendation performance and plan usage, for an integration that holds the secret key or a developer key with the `analytics:read` scope (e.g. a CMS plugin's dashboard) - never the public key. The window is clamped to the plan (Free: 7 days, Pro: 90). Totals, the per-placement breakdown and the plan's usage are available on every plan; the daily trend with revenue and the top items need Pro.",
       "name": "analytics"
+    },
+    {
+      "description": "Ties between a workspace and a commerce platform's LIKYLY app. Today: the Shopify shop the LIKYLY app for Shopify connected to this workspace.",
+      "name": "integrations"
     },
     {
       "description": "Frozen Pinecone-based vector endpoints, kept for existing integrations only. Use `content` recommendations instead.",

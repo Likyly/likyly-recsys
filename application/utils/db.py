@@ -747,6 +747,25 @@ class RetentionRunModel(Base):
     __table_args__ = (Index("ix_retention_runs_started_at", "started_at"),)
 
 
+class PlatformLinkModel(Base):
+    """A shop of a commerce platform tied to a workspace by that platform's LIKYLY app - today the
+    Shopify app (PUT /integrations/shopify, called by the app's server with its own secret, after
+    Shopify authenticated the shop). One shop belongs to one workspace, one workspace has at most
+    one shop per platform. See migration 0010."""
+    __tablename__ = "platform_links"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    client_id = Column(Integer, ForeignKey("clients.id", ondelete="CASCADE"), nullable=False)
+    platform = Column(String(16), nullable=False)  # "shopify"
+    external_id = Column(String, nullable=False)  # the shop: "lola-bags.myshopify.com"
+    linked_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, server_default=text("now()"))
+
+    __table_args__ = (
+        Index("uq_platform_links_shop", "platform", "external_id", unique=True),
+        Index("uq_platform_links_client", "client_id", "platform", unique=True),
+    )
+
+
 class PlacementModel(Base):
     """A named, persistent recommendation configuration ("what to recommend, where, in what
     context, with what constraints") - the abstraction a developer configures once (by hand or
@@ -1044,7 +1063,9 @@ _ADMIN_EXTRA_COLUMNS = """
                 (SELECT COUNT(*) FROM data_sources WHERE client_id = c.id) AS data_source_count,
                 (SELECT COUNT(*) FROM placements WHERE client_id = c.id) AS placement_count,
                 COALESCE((SELECT array_agg(agent ORDER BY last_seen_at DESC) FROM client_integrations
-                          WHERE client_id = c.id), ARRAY[]::varchar[]) AS integrations"""
+                          WHERE client_id = c.id), ARRAY[]::varchar[]) AS integrations,
+                (SELECT external_id FROM platform_links
+                 WHERE client_id = c.id AND platform = 'shopify') AS shopify_shop"""
 
 
 def list_all_clients_with_usage() -> list[dict]:
@@ -1136,6 +1157,34 @@ def get_client_by_supabase_user_id(supabase_user_id: str) -> Optional[dict]:
         }
 
 
+def link_platform_shop(client_id: int, platform: str, external_id: str) -> dict:
+    """Ties the shop to this workspace: a shop linked to another workspace moves here (the
+    merchant reconnected with another account), and this workspace's previous shop on the
+    platform, if any, is let go."""
+    with SessionLocal() as session:
+        session.query(PlatformLinkModel).filter(
+            PlatformLinkModel.platform == platform,
+            or_(PlatformLinkModel.external_id == external_id, PlatformLinkModel.client_id == client_id),
+        ).delete(synchronize_session=False)
+        link = PlatformLinkModel(client_id=client_id, platform=platform, external_id=external_id)
+        session.add(link)
+        session.commit()
+        return {"shop": link.external_id, "linked_at": link.linked_at}
+
+
+def get_platform_link(client_id: int, platform: str) -> Optional[dict]:
+    with SessionLocal() as session:
+        link = session.query(PlatformLinkModel).filter_by(client_id=client_id, platform=platform).first()
+        return {"shop": link.external_id, "linked_at": link.linked_at} if link else None
+
+
+def unlink_platform_shop(client_id: int, platform: str) -> bool:
+    with SessionLocal() as session:
+        deleted = session.query(PlatformLinkModel).filter_by(client_id=client_id, platform=platform).delete()
+        session.commit()
+        return deleted > 0
+
+
 def get_client_self_by_id(client_id: int) -> Optional[dict]:
     """Same shape as get_client_by_supabase_user_id, keyed by id instead - for every
     self-service route once it has already resolved *which* of the account's workspaces
@@ -1152,6 +1201,7 @@ def get_client_self_by_id(client_id: int) -> Optional[dict]:
             "secret_key_rotated_at": client.secret_key_rotated_at,
             "public_key_rotated_at": client.public_key_rotated_at,
             "created_at": client.created_at,
+            "shopify_shop": (get_platform_link(client.id, "shopify") or {}).get("shop"),
         }
 
 

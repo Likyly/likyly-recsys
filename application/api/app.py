@@ -1,3 +1,4 @@
+import hmac
 import os
 import re
 # Some macOS Python installs don't wire the stdlib ssl module up to a trusted CA bundle,
@@ -60,7 +61,7 @@ from schemas import (
     RetentionStatus, RetentionRun,
     DailyUsage, ClientRename, ClientUsageSummary, WorkspaceRename, WorkspaceSummary, CatalogIndex,
     EventType, EventTypeCreate, EventTypeUpdate, ImportSummary, Item, ItemUpsert, ItemImportRequest, ItemDeleteRequest, BatchResult, ErrorResponse,
-    UserUpsert, UserImportRequest, CatalogEraseRequest, CatalogErased, Event, EventBatch, EventResult, EventBatchResult,
+    UserUpsert, UserImportRequest, CatalogEraseRequest, CatalogErased, ShopifyLink, ShopifyLinkRequest, Event, EventBatch, EventResult, EventBatchResult,
     RecommendationRequest, RecommendationResponse,
     DeveloperKey, DeveloperKeyCreate, DeveloperKeyCreated, SitePublicKey, SitePublicKeyCreate, SitePublicKeyCreated,
     IdentifyRequest, IdentifyResult,
@@ -92,6 +93,7 @@ from db import (
     touch_client_usage, list_all_clients_with_usage, get_client_usage_by_day,
     get_active_model_version, get_latest_model_version, count_products_in_catalog, ADMIN,
     count_users_in_catalog, count_trainings_today, list_data_sources, delete_catalog, erase_catalog_data,
+    link_platform_shop, get_platform_link, unlink_platform_shop,
     DEFAULT_ITEM_SORT,
     get_client_contact_email, create_upgrade_request, count_upgrade_requests_since,
     list_product_types_for_client, get_client_plan, set_client_plan,
@@ -245,6 +247,13 @@ tags_metadata = [
             "dashboard) - never the public key. The window is clamped to the plan (Free: 7 days, "
             "Pro: 90). Totals, the per-placement breakdown and the plan's usage are available on "
             "every plan; the daily trend with revenue and the top items need Pro."
+        ),
+    },
+    {
+        "name": "integrations",
+        "description": (
+            "Ties between a workspace and a commerce platform's LIKYLY app. Today: the Shopify "
+            "shop the LIKYLY app for Shopify connected to this workspace."
         ),
     },
     {
@@ -2112,6 +2121,63 @@ def users_import(payload: UserImportRequest, data_product_type: Catalog, client_
     outcome = upsert_users_batch(client_id, data_product_type, payload.users)
     log_event("users_import", client_id=client_id, product_type=data_product_type, received=outcome.received, succeeded=outcome.succeeded)
     return {"received": outcome.received, "succeeded": outcome.succeeded, "failed": len(outcome.errors), "errors": outcome.errors}
+
+
+# ---------------------------------------------------------------------------
+# Integrations: the Shopify shop tied to a workspace
+# ---------------------------------------------------------------------------
+
+SHOPIFY_APP_SECRET_ENV = "LIKYLY_SHOPIFY_APP_SECRET"
+
+
+def require_shopify_app(x_likyly_app_secret: Optional[str] = Header(None, alias="X-Likyly-App-Secret", description="The LIKYLY app for Shopify's own secret: only its server can tie a shop.")) -> None:
+    """Only the LIKYLY app for Shopify ties a shop: Shopify authenticated the shop to it, and it
+    proves who it is with a secret shared with LIKYLY (LIKYLY_SHOPIFY_APP_SECRET), never sent to
+    a browser. A merchant's own key is not enough - anyone could claim any shop with it."""
+    expected = os.environ.get(SHOPIFY_APP_SECRET_ENV, "")
+    if not expected:
+        raise HTTPException(status_code=503, detail="Shopify linking is not configured on this server")
+    if not x_likyly_app_secret or not hmac.compare_digest(x_likyly_app_secret.encode(), expected.encode()):
+        raise HTTPException(status_code=403, detail="Only the LIKYLY app for Shopify can tie a shop")
+
+
+@app.put(
+    "/integrations/shopify", tags=["integrations"], response_model=ShopifyLink, summary="Tie a Shopify shop to this workspace",
+    responses=_errors(401, 403, 422, 503),
+)
+def shopify_link_put(payload: ShopifyLinkRequest, client_id: int = Depends(get_current_client_id), _: None = Depends(require_shopify_app)):
+    """Called by the LIKYLY app for Shopify when a shop connects: the shop is tied to this
+    workspace (a shop tied to another workspace moves here, this workspace's previous shop is
+    let go). Secret key, plus the app's own secret in `X-Likyly-App-Secret`."""
+    link = link_platform_shop(client_id, "shopify", payload.shop)
+    log_event("shopify_link", client_id=client_id, shop=payload.shop)
+    return link
+
+
+@app.get(
+    "/integrations/shopify", tags=["integrations"], response_model=ShopifyLink, summary="Read the Shopify shop tied to this workspace",
+    responses=_errors(401, 403, 404),
+)
+def shopify_link_get(client_id: int = Depends(get_current_client_id)):
+    """The Shopify shop the LIKYLY app for Shopify tied to this workspace. `404` when none.
+    Secret key only."""
+    link = get_platform_link(client_id, "shopify")
+    if link is None:
+        raise HTTPException(status_code=404, detail="No Shopify shop is tied to this workspace")
+    return link
+
+
+@app.delete(
+    "/integrations/shopify", tags=["integrations"], response_model=Message, summary="Untie the Shopify shop from this workspace",
+    responses=_errors(401, 403),
+)
+def shopify_link_delete(client_id: int = Depends(get_current_client_id)):
+    """Lets the shop go: the app calls it when the merchant disconnects or the shop is erased.
+    Idempotent. Secret key only."""
+    removed = unlink_platform_shop(client_id, "shopify")
+    if removed:
+        log_event("shopify_unlink", client_id=client_id)
+    return {"message": "Shopify shop untied" if removed else "No Shopify shop was tied"}
 
 
 # ---------------------------------------------------------------------------

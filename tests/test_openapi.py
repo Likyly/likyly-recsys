@@ -124,7 +124,7 @@ def test_public_json_is_snake_case(spec):
     for name, schema in spec["components"]["schemas"].items():
         for prop_name in schema.get("properties", {}):
             assert re.fullmatch(r"[a-z][a-z0-9_]*", prop_name), f"{name}.{prop_name}"
-    header_names = {"X-API-Key", "X-Push-Secret", "X-Workspace-Id"}
+    header_names = {"X-API-Key", "X-Push-Secret", "X-Workspace-Id", "X-Likyly-App-Secret"}
     for path, _method, operation in operations(spec):
         for parameter in operation.get("parameters", []):
             assert re.fullmatch(r"[a-z][a-z0-9_]*", parameter["name"]) or parameter["name"] in header_names, f"{path}: {parameter['name']}"
