@@ -19,10 +19,11 @@ RUN python -m venv /srv/venv-docker
 
 # install the cpu-only torch (or any other torch-related packages)
 # you might modify it to install another version
-RUN /srv/venv-docker/bin/pip install --upgrade pip setuptools wheel
-RUN /srv/venv-docker/bin/pip install torch==2.15.0 --index-url https://download.pytorch.org/whl/cpu
+RUN /srv/venv-docker/bin/pip install --no-cache-dir --upgrade pip setuptools wheel
+# --no-cache-dir: pip's download cache would stay in this layer (hundreds of MB on the droplet's disk)
+RUN /srv/venv-docker/bin/pip install --no-cache-dir torch==2.15.0 --index-url https://download.pytorch.org/whl/cpu
 
-RUN /srv/venv-docker/bin/pip install --upgrade pip
+RUN /srv/venv-docker/bin/pip install --no-cache-dir --upgrade pip
 RUN /srv/venv-docker/bin/pip install -r requirements.txt --no-cache-dir
 
 

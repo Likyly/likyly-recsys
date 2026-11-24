@@ -253,6 +253,10 @@ jobs:
               name: licenses_recsys_model_data
               external: true
           COMPOSE
+          # Room for the new image first: images no container uses go before the pull (the
+          # running ones stay). Pulling next to every old image once filled the disk.
+          docker image prune -af
+          df -h /
           docker compose pull recsys-api audit-renderer
           # One-time migration: the running container still belongs to the old "licenses"
           # compose project and holds the recsys-api name. No-op afterwards.
