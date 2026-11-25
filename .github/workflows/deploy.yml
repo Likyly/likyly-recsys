@@ -255,7 +255,7 @@ jobs:
           COMPOSE
           # Room for the new image first: images no container uses go before the pull (the
           # running ones stay). Pulling next to every old image once filled the disk.
-          docker image prune -af
+          docker image prune -af || true
           df -h /
           docker compose pull recsys-api audit-renderer
           # One-time migration: the running container still belongs to the old "licenses"
@@ -266,6 +266,7 @@ jobs:
           docker compose up -d recsys-api audit-renderer
           docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}"
 
-          docker image prune -af
+          # Best effort: another prune already running must not mark a good deploy as failed.
+          docker image prune -af || true
           df -h /
           EOF
