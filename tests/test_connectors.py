@@ -333,3 +333,36 @@ def test_magento_chosen_categories_only(monkeypatch):
     connector.config = {**MAGENTO, "categories": ["Running"]}
     items = [connector.normalize_item(r, {}) for p in connector.full_sync() for r in p.raw_records]
     assert [i.deleted for i in items] == [False, True]  # category 9 is not a chosen one (not even named)
+
+
+# --- Shopify: model and colour, as the LIKYLY app for Shopify sends them ---------------------
+
+def _shopify_product(**fields):
+    return {"id": 1, "title": "GOYA", "handle": "goya-verde", "variants": [{"price": "89.00"}], **fields}
+
+
+def test_shopify_item_carries_its_model_and_handle_colour():
+    item = ShopifyConnector(SHOP, {"access_token": "shpat_x"}).normalize_item(_shopify_product(), {})
+    assert item.attributes["group_id"] == "goya"
+    assert item.attributes["color"] == "verde"
+
+
+def test_shopify_colour_option_wins_over_the_handle():
+    one = _shopify_product(title="Trail Runner 2", handle="trail-runner-2", options=[{"name": "Couleur", "values": ["Bleu marine"]}])
+    many = _shopify_product(title="Tote", handle="tote", options=[{"name": "Color", "values": ["Red", "Black"]}])
+    connector = ShopifyConnector(SHOP, {"access_token": "shpat_x"})
+    assert connector.normalize_item(one, {}).attributes == {"group_id": "trail-runner-2", "color": "Bleu marine"}
+    assert connector.normalize_item(many, {}).attributes == {"group_id": "tote", "colors": ["Red", "Black"]}
+
+
+def test_shopify_no_colour_when_the_handle_says_nothing_more():
+    connector = ShopifyConnector(SHOP, {"access_token": "shpat_x"})
+    for handle in ("goya", "goya-2", "sac-cuir"):  # same as the title, a number, nothing like the title
+        attributes = connector.normalize_item(_shopify_product(handle=handle), {}).attributes
+        assert "color" not in attributes and attributes["group_id"] == "goya"
+
+
+def test_shopify_tenant_mapping_keeps_its_own_colour():
+    item = ShopifyConnector(SHOP, {"access_token": "shpat_x"}).normalize_item(
+        _shopify_product(vendor="Noir"), {"attributes": {"color": "vendor"}})
+    assert item.attributes["color"] == "Noir" and item.attributes["group_id"] == "goya"

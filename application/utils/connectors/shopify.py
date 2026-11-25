@@ -22,6 +22,8 @@ POST /data-sources/{id}/push) is a natural upgrade once the infra's public domai
 a webhook secret, but polling with updated_at_min always works standalone, so this connector
 does not require it.
 """
+import re
+import unicodedata
 from datetime import datetime, timezone
 from typing import Any, Iterator, Optional
 
@@ -51,6 +53,44 @@ DEFAULT_MAPPING: dict[str, Any] = {
     "stock": "variants[0].inventory_quantity",
     "updated_at": "updated_at",
 }
+
+
+# The option that holds a product's colour, in the languages shops use (same list as the LIKYLY
+# app for Shopify, likyly-shopify/app/likyly/catalog.ts).
+_COLOR_OPTION = re.compile(r"^(colou?rs?|couleurs?|colores?|colori|farben?|kleur|teinte|coloris)$", re.I)
+
+
+def _words(text: Any) -> list[str]:
+    folded = unicodedata.normalize("NFKD", str(text or "")).encode("ascii", "ignore").decode("ascii")
+    return [w for w in re.split(r"[^a-z0-9]+", folded.lower()) if w]
+
+
+def group_id_of(title: Any) -> Optional[str]:
+    """The product's model: its title's words ("GOYA" and "Goya" -> "goya"). The colours of one
+    bag sold as separate products share it - the one_per_group placement rule uses it."""
+    return "-".join(_words(title)) or None
+
+
+def color_of(product: dict[str, Any]) -> dict[str, Any]:
+    """{"color": ...} from a colour option with one value, {"colors": [...]} when it has several,
+    else the end of the handle that isn't in the title ("goya-verde" titled "GOYA" -> "verde")."""
+    for option in product.get("options") or []:
+        if isinstance(option, dict) and _COLOR_OPTION.match(str(option.get("name") or "").strip()):
+            values = [v for v in option.get("values") or [] if v and v != "Default Title"]
+            if len(values) == 1:
+                return {"color": values[0]}
+            if values:
+                return {"colors": values}
+    title_words = set(_words(product.get("title")))
+    handle_words = [w for w in str(product.get("handle") or "").lower().split("-") if w]
+    ending: list[str] = []
+    for word in reversed(handle_words):
+        if word in title_words:
+            break
+        ending.insert(0, word)
+    if not ending or len(ending) == len(handle_words) or "".join(ending).isdigit():
+        return {}
+    return {"color": " ".join(ending)}
 
 
 class ShopifyConnector(Connector):
@@ -165,4 +205,11 @@ class ShopifyConnector(Connector):
             yield SyncPage(raw_records=page.raw_records, checkpoint={**page.checkpoint, **new_checkpoint_tail}, has_more=page.has_more)
 
     def normalize_item(self, raw: dict[str, Any], field_mapping: dict[str, Any]) -> NormalizedItem:
-        return apply_mapping(raw, {**DEFAULT_MAPPING, **field_mapping})
+        item = apply_mapping(raw, {**DEFAULT_MAPPING, **field_mapping})
+        # The model and colour, as the LIKYLY app for Shopify sends them - unless the tenant's
+        # own mapping already names these attributes.
+        derived: dict[str, Any] = {"group_id": group_id_of(raw.get("title")), **color_of(raw)}
+        for name, value in derived.items():
+            if value is not None and name not in item.attributes:
+                item.attributes[name] = value
+        return item

@@ -153,6 +153,15 @@ URL, or call the push endpoint from their own code when products change.
    - "exclude out-of-stock" -> `filters.in_stock_only: true`.
    - "exclude what's in the cart" -> `signals.optional` includes `"cart_item_ids"`,
      `business_rules.exclude_cart_items: true`.
+   - "one product per model", "not the other colours of the same bag" (a catalog where each
+     colour or size is its own product) -> `business_rules.one_per_group: true`: items sharing
+     a `group_id` property count once, and the models of the current item and of the cart are
+     left out (`group_by: "title"` when the items have no `group_id` but share a title). "each
+     in the colour closest to this product" -> add `closest_color: true` (the `color` property:
+     a hex code or a colour name, in five languages; `color_attribute` names another one). A
+     Shopify catalog synced by LIKYLY (the LIKYLY app or the `shopify` source) already carries
+     `group_id` and `color`; for another source, check a few items in a preview and add those
+     two properties where the project sends its items if they are missing.
    - "N items" -> `limit: N`.
    - Where on the site (product page, homepage, cart, ...) -> `context_type`.
 2. `preview_placement` with a couple of real item ids (and a fake session/user id) from the
