@@ -5095,6 +5095,24 @@
       },
       "PlacementBusinessRules": {
         "properties": {
+          "closest_color": {
+            "default": false,
+            "description": "With one_per_group: each model is shown in its variant whose colour is closest to the current item's (CIE Lab Delta E), when both colours are known - a hex code or a colour name in English, French, Spanish, Italian or German.",
+            "title": "Closest Color",
+            "type": "boolean"
+          },
+          "color_attribute": {
+            "default": "color",
+            "description": "The item property holding the colour (`color` by default; `color_hex` is read too).",
+            "examples": [
+              "color"
+            ],
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_.:-]+$",
+            "title": "Color Attribute",
+            "type": "string"
+          },
           "exclude_cart_items": {
             "default": false,
             "description": "Never recommend an item already in context.cart_item_ids.",
@@ -5111,6 +5129,24 @@
             "default": true,
             "description": "Never recommend an item the signed-in visitor (context.user_id) has already bought. Set it to false for products bought again and again (consumables, refills).",
             "title": "Exclude Purchased Items",
+            "type": "boolean"
+          },
+          "group_by": {
+            "default": "group_id",
+            "description": "The item property naming the model (`group_id` by default). `title` groups items with the same title (case and spaces ignored).",
+            "examples": [
+              "group_id"
+            ],
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_.:-]+$",
+            "title": "Group By",
+            "type": "string"
+          },
+          "one_per_group": {
+            "default": false,
+            "description": "One item per model: items sharing the same `group_by` property count once, in the ranked order, and the current item's model is left out (its other colours or sizes are already on its page). An item without the property is a model of its own.",
+            "title": "One Per Group",
             "type": "boolean"
           },
           "unknown_current_item": {

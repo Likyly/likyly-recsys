@@ -1805,6 +1805,51 @@ def fetch_item_properties(client_id: int, product_type: str, work_ids: list[int]
         return {r.work_id: r.properties for r in rows}
 
 
+_PRODUCT_RECORD_COLUMNS = (
+    ProductModel.work_id, ProductModel.title, ProductModel.description, ProductModel.genre_1,
+    ProductModel.author, ProductModel.year, ProductModel.url, ProductModel.price,
+)
+
+
+def _product_record(row) -> dict:
+    return {
+        "work_id": row.work_id, "title": row.title, "description": row.description, "genre_1": row.genre_1,
+        "author": row.author, "year": row.year, "url": row.url, "price": row.price, "score": None,
+    }
+
+
+def fetch_product_records(client_id: int, product_type: str, work_ids: list[int]) -> list[dict]:
+    """Engine-shaped records (what recommender.present_records takes) for these items."""
+    wanted = list({int(w) for w in work_ids})
+    if not wanted:
+        return []
+    with SessionLocal() as session:
+        rows = session.query(*_PRODUCT_RECORD_COLUMNS).filter(
+            ProductModel.client_id == client_id, ProductModel.product_type == product_type,
+            ProductModel.work_id.in_(wanted),
+        ).all()
+        return [_product_record(r) for r in rows]
+
+
+def fetch_group_records(client_id: int, product_type: str, group_by: str, groups: list[str], limit: int = 500) -> list[dict]:
+    """Every item of these models (placement rule one_per_group): items whose `group_by`
+    property - or title, for "title" - matches one of `groups` once lowercased with spaces
+    collapsed (placement_filters.normalize_group)."""
+    if not groups:
+        return []
+    if group_by == "title":
+        source = ProductModel.title
+    else:
+        source = ProductModel.properties[group_by].astext
+    key = func.lower(func.regexp_replace(func.btrim(source), r"\s+", " ", "g"))
+    with SessionLocal() as session:
+        rows = session.query(*_PRODUCT_RECORD_COLUMNS).filter(
+            ProductModel.client_id == client_id, ProductModel.product_type == product_type,
+            key.in_(list(set(groups))),
+        ).limit(limit).all()
+        return [_product_record(r) for r in rows]
+
+
 def count_products_in_catalog(client_id: int, product_type: str, search: Optional[str] = None) -> int:
     with SessionLocal() as session:
         query = session.query(ProductModel).filter_by(client_id=client_id, product_type=product_type)

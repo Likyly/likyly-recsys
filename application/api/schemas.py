@@ -1191,6 +1191,32 @@ class PlacementFilters(BaseModel):
 class PlacementBusinessRules(BaseModel):
     exclude_current_item: bool = Field(default=True, description="Never recommend the item named in context.current_item_id back to itself.")
     exclude_cart_items: bool = Field(default=False, description="Never recommend an item already in context.cart_item_ids.")
+    one_per_group: bool = Field(
+        default=False,
+        description=(
+            "One item per model: items sharing the same `group_by` property count once, in the "
+            "ranked order, and the current item's model is left out (its other colours or sizes "
+            "are already on its page). An item without the property is a model of its own."
+        ),
+    )
+    group_by: str = Field(
+        default="group_id", min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_.:-]+$",
+        description="The item property naming the model (`group_id` by default). `title` groups items with the same title (case and spaces ignored).",
+        examples=["group_id"],
+    )
+    closest_color: bool = Field(
+        default=False,
+        description=(
+            "With one_per_group: each model is shown in its variant whose colour is closest to "
+            "the current item's (CIE Lab Delta E), when both colours are known - a hex code or a "
+            "colour name in English, French, Spanish, Italian or German."
+        ),
+    )
+    color_attribute: str = Field(
+        default="color", min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_.:-]+$",
+        description="The item property holding the colour (`color` by default; `color_hex` is read too).",
+        examples=["color"],
+    )
     exclude_purchased_items: bool = Field(default=True, description="Never recommend an item the signed-in visitor (context.user_id) has already bought. Set it to false for products bought again and again (consumables, refills).")
     unknown_current_item: Literal["empty", "popular"] = Field(
         default="empty",

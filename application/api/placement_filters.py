@@ -6,8 +6,18 @@ attribute-based include/exclude rules plus a couple of behavioral ones, not a ru
 `filters` (attribute-based): category_in, category_not_in, in_stock_only, include_attributes,
 exclude_attributes.
 `business_rules` (behavioral): exclude_current_item (default True), exclude_cart_items.
+
+Variants (apply_variant_rules, after the filters): `one_per_group` shows one item per model -
+items sharing the same `group_by` property (default `group_id`; "title" groups items with the
+same title) count once, and the current item's model is left out. With it, `closest_color`
+shows, of each model, the variant whose colour (`color_attribute`, default `color`) is closest
+to the current item's. An item without the property is its own model; without a colour on
+either side, the ranked variant stays.
 """
-from typing import Any
+import re
+from typing import Any, Callable, Optional
+
+from colors import color_distance, parse_color
 
 
 def _properties(item: dict[str, Any]) -> dict[str, Any]:
@@ -66,4 +76,77 @@ def apply_filters(items: list[dict[str, Any]], *, placement: dict[str, Any], con
         if attribute:
             result = [i for i in result if _properties(i).get(attribute) not in values]
 
+    return result
+
+
+def normalize_group(value: Any) -> Optional[str]:
+    """The same model however it is written: case and spaces ignored. None when absent."""
+    if value is None or isinstance(value, (dict, list)):
+        return None
+    text = re.sub(r"\s+", " ", str(value)).strip().casefold()
+    return text or None
+
+
+def group_of(item: dict[str, Any], group_by: str) -> Optional[str]:
+    if group_by == "title":
+        return normalize_group(item.get("title"))
+    return normalize_group(_properties(item).get(group_by))
+
+
+def _color_of(item: dict[str, Any], color_attribute: str):
+    props = _properties(item)
+    return parse_color(props.get(color_attribute)) or parse_color(props.get("color_hex"))
+
+
+def apply_variant_rules(
+    items: list[dict[str, Any]], *, placement: dict[str, Any], current: Optional[dict[str, Any]],
+    variants_for: Callable[[list[str]], dict[str, list[dict[str, Any]]]],
+) -> list[dict[str, Any]]:
+    """One item per model, in the ranked order, never the current item's model; with
+    closest_color, each model shown in its variant closest to the current item's colour.
+    `current` is the current item (presented shape) or None; `variants_for(groups)` returns,
+    for each model, its items already filtered like `items` (in stock, not in the cart...)."""
+    rules = placement.get("business_rules") or {}
+    if not rules.get("one_per_group"):
+        return items
+    group_by = rules.get("group_by") or "group_id"
+    color_attribute = rules.get("color_attribute") or "color"
+    current_group = group_of(current, group_by) if current else None
+
+    kept: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in items:
+        group = group_of(item, group_by)
+        if group is not None and (group == current_group or group in seen):
+            continue
+        if group is not None:
+            seen.add(group)
+        kept.append(item)
+
+    target = _color_of(current, color_attribute) if current and rules.get("closest_color") else None
+    if target is None:
+        return kept
+    groups = [g for g in (group_of(i, group_by) for i in kept) if g is not None]
+    variants = variants_for(groups) if groups else {}
+    shown = {i["item_id"] for i in kept}
+    result = []
+    for item in kept:
+        group = group_of(item, group_by)
+        best, best_distance = item, None
+        own = _color_of(item, color_attribute)
+        if own is not None:
+            best_distance = color_distance(own, target)
+        for variant in variants.get(group, []) if group is not None else []:
+            color = _color_of(variant, color_attribute)
+            if color is None or variant["item_id"] in shown:
+                continue
+            distance = color_distance(color, target)
+            if best_distance is None or distance < best_distance:
+                best, best_distance = variant, distance
+        if best is not item:
+            shown.discard(item["item_id"])
+            shown.add(best["item_id"])
+            # Keeps the rank (score, explanation) the model earned; shows its closest variant.
+            best = {**best, "score": item.get("score"), "explanation": item.get("explanation")}
+        result.append(best)
     return result

@@ -15,7 +15,7 @@ import db  # noqa: E402
 
 import placement_engine as engine  # noqa: E402
 import rec_cache  # noqa: E402
-from placement_filters import apply_filters  # noqa: E402
+from placement_filters import apply_filters, apply_variant_rules, group_of  # noqa: E402
 
 
 class NotFoundError(Exception):
@@ -131,6 +131,41 @@ def _purchased(client_id: int, placement: dict[str, Any], context_dict: dict[str
     return db.get_purchased_work_ids(client_id, product_type, internal) if internal is not None else set()
 
 
+def _variant_rules(client_id: int, placement: dict[str, Any], context_dict: dict[str, Any], bought: set[int]):
+    """The one_per_group / closest_color step bound to this request, or None when the
+    placement doesn't ask for it: it needs the current item and each model's other items."""
+    from recommender import present_records
+
+    rules = placement.get("business_rules") or {}
+    if not rules.get("one_per_group"):
+        return None
+    product_type = placement["product_type"]
+    group_by = rules.get("group_by") or "group_id"
+    current = None
+    current_id = context_dict.get("current_item_id")
+    if current_id:
+        internal = db.resolve_internal_ids(client_id, product_type, db.KIND_ITEM, [current_id]).get(current_id)
+        if internal is not None:
+            records = db.fetch_product_records(client_id, product_type, [internal])
+            shown = present_records(client_id, product_type, records, legacy=False, include_similar_users=False)
+            current = shown[0] if shown else None
+
+    def variants_for(groups: list[str]) -> dict[str, list[dict]]:
+        records = [r for r in db.fetch_group_records(client_id, product_type, group_by, groups) if int(r["work_id"]) not in bought]
+        items = apply_filters(
+            present_records(client_id, product_type, records, legacy=False, include_similar_users=False),
+            placement=placement, context=context_dict,
+        )
+        by_group: dict[str, list[dict]] = {}
+        for item in items:
+            group = group_of(item, group_by)
+            if group is not None:
+                by_group.setdefault(group, []).append(item)
+        return by_group
+
+    return lambda items: apply_variant_rules(items, placement=placement, current=current, variants_for=variants_for)
+
+
 def _rank_and_fill(client_id: int, placement: dict[str, Any], context_dict: dict[str, Any], limit: int, *, blend_session: bool) -> tuple[engine.PlacementResult, list[dict]]:
     from recommender import present_records, rec_popular
 
@@ -148,10 +183,15 @@ def _rank_and_fill(client_id: int, placement: dict[str, Any], context_dict: dict
     bought = _purchased(client_id, placement, context_dict)
     if bought:
         result.records = [r for r in result.records if r.get("work_id") is None or int(r["work_id"]) not in bought]
-    presented = apply_filters(
+    candidates = apply_filters(
         present_records(client_id, product_type, result.records, legacy=False, include_similar_users=False),
         placement=placement, context=context_dict,
-    )[:limit]
+    )
+    # One item per model / its closest colour (business_rules.one_per_group, closest_color).
+    variants = _variant_rules(client_id, placement, context_dict, bought)
+    if variants:
+        candidates = variants(candidates)
+    presented = candidates[:limit]
 
     if len(presented) < limit and result.strategy_used != "popular":
         seen = {item["item_id"] for item in presented}
@@ -161,6 +201,9 @@ def _rank_and_fill(client_id: int, placement: dict[str, Any], context_dict: dict
             present_records(client_id, product_type, extra, legacy=False, include_similar_users=False),
             placement=placement, context=context_dict,
         )
+        if variants:
+            # Topped up items are models too: not one already shown, nor the current one.
+            extra = variants(presented + [item for item in extra if item["item_id"] not in seen])
         added = [item for item in extra if item["item_id"] not in seen][: limit - len(presented)]
         if added:
             presented += added
