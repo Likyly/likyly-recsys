@@ -141,14 +141,15 @@ def _variant_rules(client_id: int, placement: dict[str, Any], context_dict: dict
         return None
     product_type = placement["product_type"]
     group_by = rules.get("group_by") or "group_id"
-    current = None
+    def items_of(external_ids: list[str]) -> list[dict]:
+        internal = db.resolve_internal_ids(client_id, product_type, db.KIND_ITEM, external_ids)
+        records = db.fetch_product_records(client_id, product_type, [w for w in internal.values() if w is not None])
+        return present_records(client_id, product_type, records, legacy=False, include_similar_users=False)
+
     current_id = context_dict.get("current_item_id")
-    if current_id:
-        internal = db.resolve_internal_ids(client_id, product_type, db.KIND_ITEM, [current_id]).get(current_id)
-        if internal is not None:
-            records = db.fetch_product_records(client_id, product_type, [internal])
-            shown = present_records(client_id, product_type, records, legacy=False, include_similar_users=False)
-            current = shown[0] if shown else None
+    current = next(iter(items_of([current_id])), None) if current_id else None
+    # The cart's models are left out too: never another colour of a bag already in the cart.
+    cart = items_of([str(i) for i in context_dict.get("cart_item_ids") or []][:50])
 
     def variants_for(groups: list[str]) -> dict[str, list[dict]]:
         records = [r for r in db.fetch_group_records(client_id, product_type, group_by, groups) if int(r["work_id"]) not in bought]
@@ -163,7 +164,7 @@ def _variant_rules(client_id: int, placement: dict[str, Any], context_dict: dict
                 by_group.setdefault(group, []).append(item)
         return by_group
 
-    return lambda items: apply_variant_rules(items, placement=placement, current=current, variants_for=variants_for)
+    return lambda items: apply_variant_rules(items, placement=placement, current=current, variants_for=variants_for, cart=cart)
 
 
 def _rank_and_fill(client_id: int, placement: dict[str, Any], context_dict: dict[str, Any], limit: int, *, blend_session: bool) -> tuple[engine.PlacementResult, list[dict]]:

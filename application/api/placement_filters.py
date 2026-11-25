@@ -9,7 +9,7 @@ exclude_attributes.
 
 Variants (apply_variant_rules, after the filters): `one_per_group` shows one item per model -
 items sharing the same `group_by` property (default `group_id`; "title" groups items with the
-same title) count once, and the current item's model is left out. With it, `closest_color`
+same title) count once, and the models of the current item and of the cart are left out. With it, `closest_color`
 shows, of each model, the variant whose colour (`color_attribute`, default `color`) is closest
 to the current item's. An item without the property is its own model; without a colour on
 either side, the ranked variant stays.
@@ -101,23 +101,25 @@ def _color_of(item: dict[str, Any], color_attribute: str):
 def apply_variant_rules(
     items: list[dict[str, Any]], *, placement: dict[str, Any], current: Optional[dict[str, Any]],
     variants_for: Callable[[list[str]], dict[str, list[dict[str, Any]]]],
+    cart: Optional[list[dict[str, Any]]] = None,
 ) -> list[dict[str, Any]]:
     """One item per model, in the ranked order, never the current item's model; with
     closest_color, each model shown in its variant closest to the current item's colour.
-    `current` is the current item (presented shape) or None; `variants_for(groups)` returns,
-    for each model, its items already filtered like `items` (in stock, not in the cart...)."""
+    `current` is the current item (presented shape) or None; `cart` the cart's items, whose
+    models are left out too; `variants_for(groups)` returns, for each model, its items already
+    filtered like `items` (in stock, not in the cart...)."""
     rules = placement.get("business_rules") or {}
     if not rules.get("one_per_group"):
         return items
     group_by = rules.get("group_by") or "group_id"
     color_attribute = rules.get("color_attribute") or "color"
-    current_group = group_of(current, group_by) if current else None
+    excluded = {g for g in (group_of(i, group_by) for i in [current, *(cart or [])] if i) if g is not None}
 
     kept: list[dict[str, Any]] = []
     seen: set[str] = set()
     for item in items:
         group = group_of(item, group_by)
-        if group is not None and (group == current_group or group in seen):
+        if group is not None and (group in excluded or group in seen):
             continue
         if group is not None:
             seen.add(group)

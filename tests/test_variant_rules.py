@@ -36,6 +36,12 @@ def test_one_per_model_never_the_current_one():
     assert apply_variant_rules(ranked, placement={}, current=current, variants_for=lambda g: {}) == ranked
 
 
+def test_the_cart_models_are_left_out_too():
+    ranked = [item("goya-camel", "goya"), item("ibiza-red", "ibiza"), item("ranelagh-rose", "ranelagh")]
+    kept = apply_variant_rules(ranked, placement=rules(), current=None, variants_for=lambda g: {}, cart=[item("goya-verde", "goya")])
+    assert [i["item_id"] for i in kept] == ["ibiza-red", "ranelagh-rose"]
+
+
 def test_title_groups_items_with_the_same_title():
     ranked = [item("a", title="IBIZA"), item("b", title=" ibiza "), item("c", title="GOYA")]
     kept = apply_variant_rules(ranked, placement=rules(group_by="title"), current=item("x", title="Goya"), variants_for=lambda g: {})
@@ -87,3 +93,18 @@ def test_through_the_api_like_a_shop_with_one_product_per_colour(http, tenant):
         assert "ibiza-verde-oscuro" in ids  # closest to green, and in stock (kaki is out)
         assert "ranelagh-rojo" in ids
         assert any(i.startswith("castellana-") for i in ids)
+
+
+def test_cart_block_never_offers_another_colour_of_a_bag_in_the_cart(http, tenant):
+    for item_id, title, color, stock in BAGS:
+        http.put(f"/items/{item_id}", params=Q, headers=tenant.secret, json={"title": title, "properties": {"color": color, "stock": stock}})
+    create_pdp_placement(
+        http, tenant, slug="cart-models", context_type="cart", strategy="popular", limit=4,
+        signals={"required": [], "optional": ["cart_item_ids"]},
+        business_rules={"exclude_cart_items": True, "one_per_group": True, "group_by": "title"},
+    )
+    response = http.post("/placements/cart-models/recommend", headers=tenant.public, json={"context": {"cart_item_ids": ["goya-verde", "ranelagh-rojo"]}})
+    assert response.status_code == 200, response.text
+    titles = [i["title"] for i in response.json()["items"]]
+    assert titles and not {"GOYA", "RANELAGH"} & set(titles)
+    assert len(titles) == len(set(titles))

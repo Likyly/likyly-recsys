@@ -1195,8 +1195,9 @@ class PlacementBusinessRules(BaseModel):
         default=False,
         description=(
             "One item per model: items sharing the same `group_by` property count once, in the "
-            "ranked order, and the current item's model is left out (its other colours or sizes "
-            "are already on its page). An item without the property is a model of its own."
+            "ranked order, and the models of the current item and of the cart's items are left out "
+            "(their other colours or sizes are already on the page). An item without the property "
+            "is a model of its own."
         ),
     )
     group_by: str = Field(
