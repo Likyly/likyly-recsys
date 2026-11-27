@@ -34,7 +34,7 @@ from modelData import (  # noqa: E402
     get_cosine_similarities_cached, load_model, predict_items_from_user_api,
 )
 from db import (  # noqa: E402
-    KIND_ITEM, KIND_USER, PURCHASE, co_purchased_work_ids, count_user_signal_interactions, fetch_item_properties,
+    KIND_ITEM, KIND_USER, PURCHASE, co_purchased_work_ids, co_purchased_with_any, count_user_signal_interactions, fetch_item_properties,
     find_similar_by_embedding, get_active_model_version, get_dominant_event_type,
     get_recent_viewed_work_ids, get_recent_viewed_work_ids_for_session, resolve_external_ids,
     resolve_internal_ids,
@@ -259,6 +259,28 @@ def rec_also_bought(client_id: int, product_type: str, work_id: int, count: int)
     return records
 
 
+def rec_bought_with_cart(client_id: int, product_type: str, work_ids: list[int], count: int) -> list[dict]:
+    """Cross-selling from a cart: the items the buyers of the cart's products also bought, most
+    buyers first. [] when nobody bought anything with them yet (what comes next in the plan -
+    items close to the cart - takes over)."""
+    data_works = get_data(product_type, product_id=None, count=None, client_id=client_id)
+    catalog = data_works.set_index('work_id', drop=False)
+    cart = [w for w in work_ids if w in catalog.index]
+    if not cart:
+        return []
+    pairs = [(w, n) for w, n in co_purchased_with_any(client_id, product_type, cart) if w in catalog.index][:count]
+    if not pairs:
+        return []
+    records = _records(catalog.loc[[w for w, _ in pairs]].reset_index(drop=True))
+    for record, (_, buyers) in zip(records, pairs):
+        record['score'] = float(buyers)
+        record['explanation'] = {
+            "reason": f"Acheté avec un produit du panier par {buyers} client{'s' if buyers > 1 else ''}",
+            "co_purchase_count": buyers,
+        }
+    return records
+
+
 def rec_hybrid(client_id: int, product_type: str, user_id: Optional[int], work_id: int, count: int, alpha: float = 0.5) -> list[dict]:
     """Content candidates for the anchor, re-ranked by blending in the collaborative signal:
     score = alpha * collaborative + (1 - alpha) * content. Degrades to pure content ranking
@@ -450,6 +472,7 @@ class RecommendationResult:
 def recommend_auto(
     client_id: int, product_type: str, *, user_id: Optional[str], session_id: Optional[str],
     item_id: Optional[str], viewed_item_ids: list[str], count: int, blend_session: bool = False,
+    cart_item_ids: Optional[list[str]] = None,
 ) -> RecommendationResult:
     """Resolve the caller's ids (read-only: nothing is created for an id we've never seen),
     plan, then run the plan. An id LIKYLY doesn't know (an item not in the catalog, a user
@@ -467,6 +490,15 @@ def recommend_auto(
         mapping = resolve_internal_ids(client_id, product_type, KIND_ITEM, viewed_item_ids)
         viewed = [mapping[v] for v in viewed_item_ids if v in mapping and mapping[v] in catalog_ids]
 
+    # A cart and no product on the page (a cart page): cross-selling - what the buyers of the
+    # cart's products also bought, then items close to the cart (session over its items).
+    cart: list[int] = []
+    if cart_item_ids and anchor is None:
+        mapping = resolve_internal_ids(client_id, product_type, KIND_ITEM, list(cart_item_ids))
+        cart = [mapping[c] for c in cart_item_ids if c in mapping and mapping[c] in catalog_ids]
+        if cart and not viewed:
+            viewed = cart
+
     history: list[int] = []
     if not viewed:
         if internal_user is not None:
@@ -483,6 +515,11 @@ def recommend_auto(
 
     exclude = set(viewed) | ({anchor} if anchor is not None else set())
     attempted: list[str] = []
+    if cart:
+        attempted.append("also_bought")
+        records = rec_bought_with_cart(client_id, product_type, cart, count)
+        if records:
+            return RecommendationResult("also_bought", records, attempted)
     # Pro: an anonymous visitor on a product page who already browsed this session gets the
     # current product's neighbours mixed with what their session points to (see blend_content_session).
     if blend_session and internal_user is None and anchor is not None and [h for h in history if h != anchor]:

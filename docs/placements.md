@@ -67,6 +67,11 @@ cart_item_ids, locale, custom_context`.
   user) viewed, else `popular`. The current item is never the anchor but still excluded by the
   business rules: a "Recommended for you" block on a product page stays personal instead of
   showing products similar to the one displayed.
+- **Cart pages**: with `strategy: "auto"`, a context carrying `cart_item_ids` and no
+  `current_item_id` cross-sells - first what the buyers of the cart's products also bought
+  (`strategy_used: "also_bought"`), then items close to the cart (`session` over its items),
+  then the usual plan. Add `business_rules.exclude_cart_items: true` so the cart's own
+  products never come back.
 - **`auto`**: calls `recommend_auto` exactly as `POST /getRec` does - `user_id` + `item_id` ->
   `hybrid`; `item_id` alone -> `content`; a session with tracked history (or an explicit
   session) -> `session`; a known user with a trained model -> `collaborative`; nothing

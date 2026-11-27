@@ -1551,6 +1551,14 @@ def co_purchased_work_ids(client_id: int, product_type: str, work_id: int, limit
     """"Customers who bought this also bought": the other items bought by the buyers of
     `work_id`, as (work_id, buyers), most buyers first. A buyer is the identified customer, or the
     session of an anonymous purchase."""
+    return co_purchased_with_any(client_id, product_type, [work_id], limit)
+
+
+def co_purchased_with_any(client_id: int, product_type: str, work_ids: list[int], limit: int = 100) -> list[tuple[int, int]]:
+    """The items bought by the buyers of any of `work_ids` (a cart), the cart's own items left
+    out, as (work_id, buyers), most buyers first."""
+    if not work_ids:
+        return []
     buyer = case(
         (InteractionModel.user_id.isnot(None), literal("u") + cast(InteractionModel.user_id, String)),
         else_=literal("s") + InteractionModel.session_id,
@@ -1561,11 +1569,11 @@ def co_purchased_work_ids(client_id: int, product_type: str, work_id: int, limit
         InteractionModel.event_type == PURCHASE,
         or_(InteractionModel.user_id.isnot(None), InteractionModel.session_id.isnot(None)),
     )
-    buyers_of_it = select(buyer).where(*scope, InteractionModel.work_id == work_id)
+    buyers_of_it = select(buyer).where(*scope, InteractionModel.work_id.in_(work_ids))
     buyers = func.count(func.distinct(buyer)).label("buyers")
     query = (
         select(InteractionModel.work_id, buyers)
-        .where(*scope, InteractionModel.work_id != work_id, buyer.in_(buyers_of_it))
+        .where(*scope, InteractionModel.work_id.notin_(work_ids), buyer.in_(buyers_of_it))
         .group_by(InteractionModel.work_id)
         .order_by(buyers.desc(), InteractionModel.work_id)
         .limit(limit)

@@ -146,6 +146,7 @@ def run_placement(placement: dict[str, Any], context: dict[str, Any], count: int
         result = rec.recommend_auto(
             client_id, product_type, user_id=context.get("user_id"), session_id=_effective_session_id(context),
             item_id=context.get("current_item_id"), viewed_item_ids=[], count=count, blend_session=blend_session,
+            cart_item_ids=[str(i) for i in context.get("cart_item_ids") or []][:50],
         )
         return PlacementResult(result.strategy, result.records, result.attempted)
     if strategy == "personalized":
@@ -170,6 +171,7 @@ def run_placement(placement: dict[str, Any], context: dict[str, Any], count: int
             result = rec.recommend_auto(
                 client_id, product_type, user_id=context.get("user_id"), session_id=_effective_session_id(context),
                 item_id=context.get("current_item_id") if fallback == "auto" else None, viewed_item_ids=[], count=count,
+                cart_item_ids=[str(i) for i in context.get("cart_item_ids") or []][:50] if fallback == "auto" else None,
             )
             records, strategy_used = result.records, result.strategy
             attempted += result.attempted

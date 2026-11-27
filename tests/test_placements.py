@@ -326,6 +326,29 @@ def test_also_bought_ranks_what_the_buyers_of_this_product_bought(http, seeded):
     assert lonely["strategy_used"] == "content"
 
 
+def test_cart_cross_sells_what_was_bought_with_the_cart(http, seeded):
+    """A cart page (cart_item_ids, no current item) with strategy auto: first what the buyers of
+    the cart's products also bought, then items close to the cart; never a product of the cart."""
+    create_pdp_placement(http, seeded, slug="cart", context_type="cart", strategy="auto", limit=4,
+                         signals={"required": [], "optional": ["cart_item_ids", "session_id"]},
+                         business_rules={"exclude_cart_items": True})
+    for buyer, items in {"b1": ["SKU-NIKE-001", "SKU-VANS-004"], "b2": ["SKU-ASICS-003", "SKU-VANS-004"], "b3": ["SKU-NIKE-001", "SKU-CONVERSE-002"]}.items():
+        for item in items:
+            http.post("/events/purchase", params=Q, headers=seeded.public, json={"user_id": buyer, "item_id": item})
+
+    cart = ["SKU-NIKE-001", "SKU-ASICS-003"]
+    result = recommend(http, seeded, {"cart_item_ids": cart, "session_id": "s-cart"}, slug="cart")
+    ids = [i["item_id"] for i in result["items"]]
+    assert result["strategy_used"] == "also_bought"
+    assert ids[0] == "SKU-VANS-004"  # bought by 2 buyers of the cart's products
+    assert "SKU-CONVERSE-002" in ids and not set(cart) & set(ids)
+
+    # Nothing bought with it yet: items close to the cart, still never the cart's own.
+    lonely = recommend(http, seeded, {"cart_item_ids": ["SKU-SALOMON-010"], "session_id": "s-cart-2"}, slug="cart")
+    assert lonely["strategy_used"] == "session"
+    assert "SKU-SALOMON-010" not in [i["item_id"] for i in lonely["items"]]
+
+
 # ---------------------------------------------------------------------------
 # get_placement_requirements / preview_placement debug shape
 # ---------------------------------------------------------------------------

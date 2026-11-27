@@ -158,6 +158,11 @@ URL, or call the push endpoint from their own code when products change.
    - "exclude out-of-stock" -> `filters.in_stock_only: true`.
    - "exclude what's in the cart" -> `signals.optional` includes `"cart_item_ids"`,
      `business_rules.exclude_cart_items: true`.
+   - "complete the cart", "cross-sell on the cart page" -> `strategy: "auto"`, `context_type:
+     "cart"`, `signals.optional: ["cart_item_ids", "session_id", "user_id"]`,
+     `business_rules.exclude_cart_items: true`, and send the cart's product ids in
+     `cart_item_ids`: LIKYLY shows what the buyers of those products also bought, then products
+     close to the cart.
    - "one product per model", "not the other colours of the same bag" (a catalog where each
      colour or size is its own product) -> `business_rules.one_per_group: true`: items sharing
      a `group_id` property count once, and the models of the current item and of the cart are
