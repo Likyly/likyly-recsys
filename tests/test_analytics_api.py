@@ -201,6 +201,9 @@ def test_purchases_and_revenue_are_attributed_per_placement(http, pro):
     assert detail["revenue"] == {"purchases": 4, "revenue": 82.5}
     assert detail["window_days"] == 30
     assert sum(point["recommendations_served"] for point in detail["timeseries"]) == 3
+    # The trend carries the money too: summed over the days, it is the total.
+    assert sum(point["purchases"] for point in detail["timeseries"]) == 4
+    assert round(sum(point["revenue"] for point in detail["timeseries"]), 2) == 82.5
 
 
 def test_revenue_says_its_currency_only_when_the_purchases_agree(http, pro):

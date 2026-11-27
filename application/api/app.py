@@ -107,7 +107,7 @@ from db import (
     set_oauth_workspace_grant, get_oauth_workspace_grant,
     create_site_public_key, list_site_public_keys, revoke_site_public_key, TooManyPublicKeysError,
     link_session_to_user,
-    recommendation_performance_summary, recommendation_performance_timeseries,
+    recommendation_performance_summary, recommendation_trend,
     recommendation_performance_by_strategy, recommendation_performance_by_placement_with_revenue,
     recommendation_attributed_revenue_by_day, recommendation_top_items,
     purchase_tracking_status,
@@ -1119,12 +1119,7 @@ async def get_my_analytics_detail(
     prev_until = datetime.combine(prev_end_date, datetime.max.time(), tzinfo=timezone.utc)
     previous, _ = _performance_totals(client_id, prev_since, prev_until, placement)
 
-    points = {p["date"]: p for p in recommendation_performance_timeseries(client_id, since, until=until, placement=placement)}
-    timeseries = []
-    for day in sorted(set(points) | set(revenue_by_day)):
-        point = points.get(day) or {"date": day, "recommendations_served": 0, "impressions": 0, "clicks": 0, "ctr": 0.0}
-        money = revenue_by_day.get(day, {"purchases": 0, "revenue": 0.0})
-        timeseries.append({**point, "purchases": money["purchases"], "revenue": money["revenue"]})
+    timeseries = recommendation_trend(client_id, since, until, placement=placement)
 
     return {
         "start": start_date.isoformat(), "end": end_date.isoformat(), "placement": placement,

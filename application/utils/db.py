@@ -3255,6 +3255,20 @@ def recommendation_performance_by_placement_with_revenue(client_id: int, since, 
     return result
 
 
+def recommendation_trend(client_id: int, since, until, placement: Optional[str] = None) -> list[dict[str, Any]]:
+    """The day-by-day trend with money: one point per day that had any activity or any
+    attributed purchase - served, impressions, clicks, CTR, plus purchases and revenue. What the
+    console's and the key's /analytics/detail both draw."""
+    points = {p["date"]: p for p in recommendation_performance_timeseries(client_id, since, until=until, placement=placement)}
+    money = recommendation_attributed_revenue_by_day(client_id, since, until, placement=placement)
+    trend = []
+    for day in sorted(set(points) | set(money)):
+        point = points.get(day) or {"date": day, "recommendations_served": 0, "impressions": 0, "clicks": 0, "ctr": 0.0}
+        day_money = money.get(day, {"purchases": 0, "revenue": 0.0})
+        trend.append({**point, "purchases": day_money["purchases"], "revenue": day_money["revenue"]})
+    return trend
+
+
 def recommendation_attributed_revenue_by_day(client_id: int, since, until, placement: Optional[str] = None) -> dict[str, dict[str, Any]]:
     """ISO day -> {"purchases", "revenue"} for purchases carrying a recommendation_id in
     [since, until] - the revenue line of the Pro trend. With `placement`, only purchases credited

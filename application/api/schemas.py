@@ -1579,7 +1579,7 @@ class AnalyticsPlacementsOut(AnalyticsWindow):
 class AnalyticsKeyDetailOut(AnalyticsWindow):
     """Day-by-day trend and total attributed revenue - Pro plan and above."""
     currency: Optional[str] = Field(default=None, description="Currency of the revenue figures: the `properties.currency` the attributed purchases send (e.g. \"USD\"), when they all send the same one. null when they send none or several - LIKYLY converts nothing.")
-    timeseries: List[AnalyticsTimeseriesPoint] = Field(description="One point per day that had any activity.")
+    timeseries: List[AnalyticsDetailTimeseriesPoint] = Field(description="One point per day that had any activity or any attributed purchase, with that day's attributed purchases and revenue.")
     revenue: AnalyticsRevenue = Field(description="Purchases carrying a `recommendation_id`, and their `properties.price` x `quantity` total.")
 
 

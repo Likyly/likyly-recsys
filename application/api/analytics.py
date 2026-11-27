@@ -126,14 +126,15 @@ def analytics_placements(start: Optional[date] = START, end: Optional[date] = EN
 
 @router.get("/detail", response_model=AnalyticsKeyDetailOut, summary="Recommendation performance - daily trend and revenue", responses=_errors(401, 403, 422))
 def analytics_detail(start: Optional[date] = START, end: Optional[date] = END, client_id: int = Depends(require_scope(SCOPE))):
-    """A day-by-day trend (recommendations served, impressions, clicks, CTR) and the total
-    revenue attributed to recommendations (purchases carrying a `recommendation_id`). Pro plan
-    and above: 403 on Free. Window: last 30 days by default, clamped to the plan."""
+    """A day-by-day trend (recommendations served, impressions, clicks, CTR, and the purchases
+    and revenue attributed to recommendations that day) and the total attributed revenue
+    (purchases carrying a `recommendation_id`). Pro plan and above: 403 on Free. Window: last 30
+    days by default, clamped to the plan."""
     _require_detail(client_id, "detailed performance data (trend, by placement, revenue)")
     since, until, echo = _window(client_id, start, end, default_days=30)
     return {
         **echo, "currency": db.attributed_purchase_currency(client_id, since, until),
-        "timeseries": db.recommendation_performance_timeseries(client_id, since, until=until),
+        "timeseries": db.recommendation_trend(client_id, since, until),
         "revenue": db.recommendation_attributed_revenue(client_id, since, until=until),
     }
 

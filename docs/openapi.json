@@ -1359,9 +1359,9 @@
             "type": "string"
           },
           "timeseries": {
-            "description": "One point per day that had any activity.",
+            "description": "One point per day that had any activity or any attributed purchase, with that day's attributed purchases and revenue.",
             "items": {
-              "$ref": "#/components/schemas/AnalyticsTimeseriesPoint"
+              "$ref": "#/components/schemas/AnalyticsDetailTimeseriesPoint"
             },
             "title": "Timeseries",
             "type": "array"
@@ -1837,39 +1837,6 @@
           "ctr"
         ],
         "title": "AnalyticsSummaryOut",
-        "type": "object"
-      },
-      "AnalyticsTimeseriesPoint": {
-        "properties": {
-          "clicks": {
-            "title": "Clicks",
-            "type": "integer"
-          },
-          "ctr": {
-            "title": "Ctr",
-            "type": "number"
-          },
-          "date": {
-            "title": "Date",
-            "type": "string"
-          },
-          "impressions": {
-            "title": "Impressions",
-            "type": "integer"
-          },
-          "recommendations_served": {
-            "title": "Recommendations Served",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "date",
-          "recommendations_served",
-          "impressions",
-          "clicks",
-          "ctr"
-        ],
-        "title": "AnalyticsTimeseriesPoint",
         "type": "object"
       },
       "AnalyticsTopItem": {
@@ -10567,7 +10534,7 @@
     },
     "/analytics/detail": {
       "get": {
-        "description": "A day-by-day trend (recommendations served, impressions, clicks, CTR) and the total\nrevenue attributed to recommendations (purchases carrying a `recommendation_id`). Pro plan\nand above: 403 on Free. Window: last 30 days by default, clamped to the plan.",
+        "description": "A day-by-day trend (recommendations served, impressions, clicks, CTR, and the purchases\nand revenue attributed to recommendations that day) and the total attributed revenue\n(purchases carrying a `recommendation_id`). Pro plan and above: 403 on Free. Window: last 30\ndays by default, clamped to the plan.",
         "operationId": "analytics_detail",
         "parameters": [
           {
