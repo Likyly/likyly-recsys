@@ -68,6 +68,13 @@ export async function main(argv = process.argv.slice(2)) {
       console.log(JSON.stringify({ code: r.code, url: r.url }, null, 2));
       return 0;
     }
+    // In a terminal: the drawn screen (code in a box, already copied, o opens the Shopify page).
+    if (process.stdin.isTTY && process.stdout.isTTY && !process.env.NO_COLOR) {
+      const { showPixel } = await import("./ui/pixel.jsx");
+      await showPixel(r);
+      return 0;
+    }
+    // Read by an assistant or piped: the code alone first, then where it goes.
     const copied = process.stdout.isTTY && copyToClipboard(r.code);
     console.log(r.code);
     console.log(
@@ -150,7 +157,10 @@ async function preview(opts) {
   // An assistant (no terminal) can't answer the store password prompt, and a window popping up
   // outside the developer's session is not what they asked for: the command to run, nothing more.
   if (!tty && !opts.newWindow) {
-    console.log(`${paint("1", "LIKYLY preview")} not started: run it in your terminal (it may ask for the store password)\n    cd ${opts.dir}\n    ${plan.command}`);
+    const { copyToClipboard } = await import("./ui/system.mjs");
+    // Not from the test suite: it would overwrite the developer's clipboard on every run.
+    const copied = !process.env.NODE_TEST_CONTEXT && copyToClipboard(`cd ${opts.dir} && ${plan.command}`);
+    console.log(`${paint("1", "LIKYLY preview")} not started: run it in your terminal (it may ask for the store password)${copied ? " - the command is in your clipboard, paste it there" : ""}\n    cd ${opts.dir}\n    ${plan.command}`);
     for (const note of plan.notes) console.log(`  ${paint("2", "·")} ${note}`);
     return 0;
   }
