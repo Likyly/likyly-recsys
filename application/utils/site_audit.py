@@ -1127,10 +1127,10 @@ METHODS = {
     "agent_ready": "Présence du fichier /.well-known/ucp sur le site.",
 }
 STOCK_METHODS = {
-    "shopify": "Stock lu sur la fiche publique Shopify de chaque produit recommandé (/products/….js).",
-    "woocommerce": "Stock lu dans le code WooCommerce de chaque carte produit (en stock / en rupture).",
+    "shopify": "Disponibilité lue sur la fiche publique Shopify de chaque produit recommandé (/products/….js) : commandable ou non. C'est ce que la boutique affiche à ses clients, pas le stock réel de son entrepôt.",
+    "woocommerce": "Disponibilité lue dans le code WooCommerce de chaque carte produit (en stock / en rupture), telle que la boutique l'affiche : pas le stock réel de son entrepôt.",
 }
-STOCK_METHOD_DEFAULT = "Mentions « épuisé », « rupture », « sold out » cherchées sur chaque carte produit."
+STOCK_METHOD_DEFAULT = ("Mentions « épuisé », « rupture », « sold out » cherchées sur chaque carte produit. Sans ces mentions, on ne conclut pas : la disponibilité n'est notée que lorsque la boutique la publie (Shopify, WooCommerce).")
 METHODS_EN = {
     "self_reco": "Address and name of the product shown compared with every item of the blocks.",
     "similar_block": "Block compared on a second item page of the site and on a reload of the page: the same products elsewhere = fixed collection, other products on reload = random.",
@@ -1142,10 +1142,10 @@ METHODS_EN = {
     "agent_ready": "Whether the site publishes the /.well-known/ucp file.",
 }
 STOCK_METHODS_EN = {
-    "shopify": "Stock read on the public Shopify page of each recommended product (/products/….js).",
-    "woocommerce": "Stock read in the WooCommerce code of each product card (in stock / out of stock).",
+    "shopify": "Availability read on the public Shopify page of each recommended product (/products/….js): orderable or not. It's what the store shows its customers, not the real stock in its warehouse.",
+    "woocommerce": "Availability read in the WooCommerce code of each product card (in stock / out of stock), as the store shows it: not the real stock in its warehouse.",
 }
-STOCK_METHOD_DEFAULT_EN = "Words like “sold out” or “out of stock” (in English and French) looked for on each product card."
+STOCK_METHOD_DEFAULT_EN = ("Words like “sold out” or “out of stock” (in English and French) looked for on each product card. Without them, we don't conclude: availability is only scored when the store publishes it (Shopify, WooCommerce).")
 
 
 def _plural(n: int, one: str, many: str) -> str:
@@ -1157,13 +1157,13 @@ ITEM_THE = {"product": "le produit", "book": "le livre", "event": "l'événement
 BEHAVIOR_TITLE = {"product": "« Les clients ont aussi acheté »", "book": "« Les lecteurs ont aussi aimé »", "article": "« Les lecteurs ont aussi lu »", "event": "« Les spectateurs ont aussi réservé »"}
 BEHAVIOR_LABEL = {"product": "Recommandations basées sur les achats", "book": "Recommandations basées sur les lectures", "article": "Recommandations basées sur les lectures", "event": "Recommandations basées sur les réservations"}
 BEHAVIOR_SOURCE = {"product": "acheté", "book": "aimé", "article": "lu", "event": "réservé"}
-UNAVAILABLE_LABEL = {"product": "Stock des produits recommandés", "book": "Stock des livres recommandés", "event": "Disponibilité des événements recommandés"}
+UNAVAILABLE_LABEL = {"product": "Disponibilité des produits recommandés", "book": "Disponibilité des livres recommandés", "event": "Disponibilité des événements recommandés"}
 ITEM_WORD_EN = {"product": ("product", "products"), "book": ("book", "books"), "event": ("event", "events"), "article": ("article", "articles")}
 ITEM_THE_EN = {"product": "the product", "book": "the book", "event": "the event", "article": "the article"}
 BEHAVIOR_TITLE_EN = {"product": "“Customers also bought”", "book": "“Readers also liked”", "article": "“Readers also read”", "event": "“Audiences also booked”"}
 BEHAVIOR_LABEL_EN = {"product": "Recommendations based on purchases", "book": "Recommendations based on reading", "article": "Recommendations based on reading", "event": "Recommendations based on bookings"}
 BEHAVIOR_SOURCE_EN = {"product": "bought", "book": "liked", "article": "read", "event": "booked"}
-UNAVAILABLE_LABEL_EN = {"product": "Stock of recommended products", "book": "Stock of recommended books", "event": "Availability of recommended events"}
+UNAVAILABLE_LABEL_EN = {"product": "Availability of recommended products", "book": "Availability of recommended books", "event": "Availability of recommended events"}
 
 
 def _quote(blocks: list[Block]) -> str:
@@ -1419,7 +1419,7 @@ def build_kpis(page: PageFacts, ucp: Optional[bool], stock_checked: bool = False
     flagged = [i for b in readable for i in b.items if i.unavailable]
     knows_stock = stock_checked or page.cms == "woocommerce"
     if label is None:
-        kpis.append(Kpi("unavailable", t("Stock des éléments recommandés", "Stock of recommended items"), 5, UNKNOWN,
+        kpis.append(Kpi("unavailable", t("Disponibilité des éléments recommandés", "Availability of recommended items"), 5, UNKNOWN,
                         t("Sans objet : pas de stock pour ce type de page", "Not applicable: no stock for this kind of page"), ""))
     elif flagged:
         kpis.append(Kpi("unavailable", label, 5, FAIL,
@@ -1430,11 +1430,15 @@ def build_kpis(page: PageFacts, ucp: Optional[bool], stock_checked: bool = False
                           "Out of stock (or sold out, for an event): the visitor clicks, and can't buy. The link works, the product is what's missing."),
                         t("Filtrez les éléments en rupture dans chaque bloc.", "Filter out-of-stock items out of every block.")))
     elif readable and knows_stock:
-        kpis.append(Kpi("unavailable", label, 5, PASS, t("Tout ce qui est recommandé est disponible", "Everything recommended is available"),
-                        t("Chaque suggestion peut être achetée.", "Every suggestion can be bought.")))
+        kpis.append(Kpi("unavailable", label, 5, PASS, t("La boutique affiche comme disponible tout ce qui est recommandé", "The store shows everything recommended as available"),
+                        t("Selon ce que la boutique affiche à ses clients, chaque suggestion peut être commandée. On ne voit pas son stock réel : "
+                          "un produit vendu même en rupture (précommande, réassort) compte comme disponible.",
+                          "According to what the store shows its customers, every suggestion can be ordered. We can't see its real stock: "
+                          "a product sold even when out of stock (pre-order, restock) counts as available.")))
     else:
         kpis.append(Kpi("unavailable", label, 5, UNKNOWN, t("Impossible de savoir si les recommandations sont disponibles", "No way to tell whether the recommendations are available"),
-                        t("Ni la page ni le site n'indiquent si les éléments recommandés sont en stock.", "Neither the page nor the site says whether the recommended items are in stock.")))
+                        t("Ni la page ni le site n'indiquent si les éléments recommandés peuvent être commandés : ce contrôle n'est pas noté.",
+                          "Neither the page nor the site says whether the recommended items can be ordered: this check isn't scored.")))
 
     # 7. Block size, counted on what the page shows.
     size_label = t("Nombre de recommandations par bloc", "Recommendations per block")

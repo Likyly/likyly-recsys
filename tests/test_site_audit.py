@@ -73,7 +73,7 @@ def test_woocommerce_product_page_errors_are_found():
     assert result["blocks"][0]["verified"] is None and result["compared_with"] is None
     assert kpi(result, "behavior_block")["status"] == "fail"
     assert kpi(result, "duplicates")["status"] == "fail"
-    assert kpi(result, "unavailable")["status"] == "fail" and kpi(result, "unavailable")["label"] == "Stock des produits recommandés"
+    assert kpi(result, "unavailable")["status"] == "fail" and kpi(result, "unavailable")["label"] == "Disponibilité des produits recommandés"
     assert "Sac à dos" in kpi(result, "unavailable")["summary"]
     assert kpi(result, "personalization")["status"] == "fail"
     assert kpi(result, "structured_data")["status"] == "pass"
@@ -347,7 +347,7 @@ def test_teaser_then_full_report_and_email(http, audits):
     assert all(k["method"] and k["about"] for k in teaser["kpis"])  # every check says what it is and how it is measured, before the email too
     assert kpi(teaser, "self_reco")["about"] == "Le produit affiché ne doit jamais apparaître dans ses propres recommandations."
     assert "UCP (Universal Commerce Protocol)" in kpi(teaser, "agent_ready")["about"]
-    assert kpi(teaser, "unavailable")["method"].startswith("Stock lu dans le code WooCommerce")
+    assert kpi(teaser, "unavailable")["method"].startswith("Disponibilité lue dans le code WooCommerce")
     assert "blocks" not in teaser and "next_step" not in teaser and teaser["block_count"] == 1
     assert teaser["report_url"].endswith(f"/audit/r/{token}")
     assert http.get(f"/audits/{token}").json()["unlocked"] is False
@@ -429,8 +429,8 @@ def test_the_audit_is_worded_in_english_when_asked():
     assert result["page_type"]["label"] == "Product page"
     assert kpi(result, "self_reco")["label"] == "Self-recommendation"
     assert kpi(result, "self_reco")["summary"].startswith("The product shown is recommended on its own page, in “Produits apparentés”")
-    assert kpi(result, "unavailable")["label"] == "Stock of recommended products"
-    assert kpi(result, "unavailable")["method"].startswith("Stock read in the WooCommerce code")
+    assert kpi(result, "unavailable")["label"] == "Availability of recommended products"
+    assert kpi(result, "unavailable")["method"].startswith("Availability read in the WooCommerce code")
     assert result["next_step"]["cta"] == "Discover the extension" and result["next_step"]["href"] == "/wordpress"
     for k in result["kpis"]:  # the page's own words (block titles, product names) stay as they are
         for field in ("label", "about", "method", "advice"):
