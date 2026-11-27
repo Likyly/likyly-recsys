@@ -23,7 +23,8 @@ const subscribed = {};
 const analytics = { subscribe: (n, f) => { subscribed[n] = f; } };
 // What the merchant pastes: subscribe first, queue, load the file later.
 const q = [];
-["product_added_to_cart", "checkout_completed"].forEach((n) => analytics.subscribe(n, (e) => q.push(e)));
+analytics.subscribe("product_added_to_cart", (e) => q.push(e));
+analytics.subscribe("checkout_completed", (e) => q.push(e));
 const checkout = { name: "checkout_completed", id: "e1", timestamp: "2026-11-27T10:00:00Z", data: { checkout: {
   order: { id: "gid://shopify/Order/555" }, currencyCode: "EUR",
   lineItems: [

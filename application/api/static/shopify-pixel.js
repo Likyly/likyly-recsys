@@ -4,13 +4,16 @@
  * in Shopify admin > Settings > Customer events > Add custom pixel:
  *
  *   const q = [];
- *   ["product_added_to_cart", "checkout_completed"].forEach((n) => analytics.subscribe(n, (e) => q.push(e)));
+ *   analytics.subscribe("product_added_to_cart", (e) => q.push(e));
+ *   analytics.subscribe("checkout_completed", (e) => q.push(e));
  *   const s = document.createElement("script");
  *   s.src = "https://api.likyly.com/pixel/shopify.js";
  *   s.onload = () => Likyly.pixel("pk_...", { analytics, browser, init, queue: q });
  *   document.head.appendChild(s);
  *
- * The queue keeps what Shopify published before this file arrived: no order is lost.
+ * The queue keeps what Shopify published before this file arrived: no order is lost. The two
+ * subscribe calls stay written out with their event names: Shopify reads the pasted code to
+ * know which events the pixel listens to (a loop over the names reads as "none").
  * Each purchase carries the recommendation the visitor clicked when the LIKYLY block kept it
  * (localStorage likyly_rec); otherwise LIKYLY finds the visitor's last click on the product.
  * Sent: product ids, quantities, prices, the order id, the anonymous visitor id of the LIKYLY

@@ -1421,6 +1421,8 @@ test("pixel: the short Shopify custom pixel loads LIKYLY's script, which sends t
   sandbox.self = sandbox;
   const code = shopifyCustomPixel("pk_test_1", "https://api.example");
   assert.ok(code.split("\n").length <= 9, "a few lines to paste");
+  // Shopify reads the pasted code for the events it listens to: the names must be written out.
+  for (const name of ["product_added_to_cart", "checkout_completed"]) assert.match(code, new RegExp(`analytics\\.subscribe\\("${name}"`));
   vm.createContext(sandbox);
   vm.runInContext(code, sandbox);
   assert.deepEqual(Object.keys(handlers).sort(), ["checkout_completed", "product_added_to_cart"]);

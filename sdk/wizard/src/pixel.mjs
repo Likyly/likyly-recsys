@@ -35,7 +35,8 @@ export function shopifyCustomPixel(key, apiUrl = API_URL) {
   const options = api === API_URL ? "{ analytics, browser, init, queue: q }" : `{ analytics, browser, init, queue: q, api: ${JSON.stringify(api)} }`;
   return `// LIKYLY - add to cart and purchases, for the revenue of the recommendations.
 const q = [];
-["product_added_to_cart", "checkout_completed"].forEach((n) => analytics.subscribe(n, (e) => q.push(e)));
+analytics.subscribe("product_added_to_cart", (e) => q.push(e));
+analytics.subscribe("checkout_completed", (e) => q.push(e));
 const s = document.createElement("script");
 s.src = ${JSON.stringify(api + "/pixel/shopify.js")};
 s.onload = () => Likyly.pixel(${JSON.stringify(key)}, ${options});
