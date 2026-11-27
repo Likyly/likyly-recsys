@@ -349,6 +349,23 @@ def test_cart_cross_sells_what_was_bought_with_the_cart(http, seeded):
     assert "SKU-SALOMON-010" not in [i["item_id"] for i in lonely["items"]]
 
 
+def test_pinned_products_come_first_through_the_same_rules(http, seeded):
+    """business_rules.pinned_item_ids: the merchant's products put forward lead, in their order;
+    the current item, the cart and unknown ids are left out; LIKYLY's choice fills the rest."""
+    create_pdp_placement(http, seeded, slug="pinned", business_rules={
+        "exclude_current_item": True, "exclude_cart_items": True,
+        "pinned_item_ids": ["SKU-SALOMON-010", "SKU-NIKE-001", "SKU-NOPE-999", "SKU-VANS-004", "SKU-ADIDAS-007"],
+    })
+    result = recommend(http, seeded, {"current_item_id": "SKU-NIKE-001", "cart_item_ids": ["SKU-VANS-004"]}, slug="pinned")
+    ids = [i["item_id"] for i in result["items"]]
+    assert ids[:2] == ["SKU-SALOMON-010", "SKU-ADIDAS-007"]  # pinned, in order; Nike is the page, Vans in the cart
+    assert len(ids) == 4 and len(set(ids)) == 4 and "SKU-NIKE-001" not in ids and "SKU-VANS-004" not in ids
+    assert result["items"][0]["explanation"]["reason"] == "Mis en avant par la boutique"
+
+    too_many = http.patch("/placements/pinned", headers=seeded.secret, json={"business_rules": {"pinned_item_ids": [f"S{i}" for i in range(13)]}})
+    assert too_many.status_code == 422
+
+
 # ---------------------------------------------------------------------------
 # get_placement_requirements / preview_placement debug shape
 # ---------------------------------------------------------------------------

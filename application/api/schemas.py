@@ -1241,6 +1241,16 @@ class PlacementBusinessRules(BaseModel):
         description="The item property holding the colour (`color` by default; `color_hex` is read too).",
         examples=["color"],
     )
+    pinned_item_ids: List[str] = Field(
+        default_factory=list, max_length=12,
+        description=(
+            "Products the merchant puts forward: shown first, in this order, before what LIKYLY "
+            "chose - when they pass the same filters and rules (in stock, not the current item, "
+            "not in the cart, not already bought by the visitor). Up to 12; an id not in the "
+            "catalog is skipped."
+        ),
+        examples=[["SKU-42", "SKU-7"]],
+    )
     exclude_purchased_items: bool = Field(default=True, description="Never recommend an item the signed-in visitor (context.user_id) has already bought. Set it to false for products bought again and again (consumables, refills).")
     unknown_current_item: Literal["empty", "popular"] = Field(
         default="empty",

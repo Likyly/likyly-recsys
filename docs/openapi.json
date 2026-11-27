@@ -5151,6 +5151,21 @@
             "title": "One Per Group",
             "type": "boolean"
           },
+          "pinned_item_ids": {
+            "description": "Products the merchant puts forward: shown first, in this order, before what LIKYLY chose - when they pass the same filters and rules (in stock, not the current item, not in the cart, not already bought by the visitor). Up to 12; an id not in the catalog is skipped.",
+            "examples": [
+              [
+                "SKU-42",
+                "SKU-7"
+              ]
+            ],
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 12,
+            "title": "Pinned Item Ids",
+            "type": "array"
+          },
           "unknown_current_item": {
             "default": "empty",
             "description": "On a product page (context_type product_page, or current_item_id required), when context.current_item_id is not in the catalog (not synced yet, refused by the plan's product limit, another catalog's id): 'empty' (default) returns no items (strategy_used 'none') rather than the most popular items, unrelated to the page; 'popular' shows those.",

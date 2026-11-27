@@ -155,6 +155,9 @@ URL, or call the push endpoint from their own code when products change.
      visitor viewed during the visit, signed in or not), best sellers for a first visit - and,
      unlike `auto`, never products similar to the one on the page (so it doesn't repeat a
      "similar products" block on a product page).
+   - "put these products forward", "always show X first" -> `business_rules.pinned_item_ids:
+     ["<id>", ...]` (up to 12, in order): shown first when they pass the same rules (in stock,
+     not the current product, not in the cart), LIKYLY's choice fills the rest.
    - "exclude out-of-stock" -> `filters.in_stock_only: true`.
    - "exclude what's in the cart" -> `signals.optional` includes `"cart_item_ids"`,
      `business_rules.exclude_cart_items: true`.

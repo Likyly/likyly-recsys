@@ -167,6 +167,27 @@ def _variant_rules(client_id: int, placement: dict[str, Any], context_dict: dict
     return lambda items: apply_variant_rules(items, placement=placement, current=current, variants_for=variants_for, cart=cart)
 
 
+def _pinned(client_id: int, placement: dict[str, Any], context_dict: dict[str, Any], bought: set[int]) -> list[dict]:
+    """The merchant's products put forward (business_rules.pinned_item_ids), in their order,
+    through the same filters and rules as the rest: out of stock, the current item, the cart and
+    what the visitor bought stay out."""
+    from recommender import present_records
+
+    ids = [str(i) for i in (placement.get("business_rules") or {}).get("pinned_item_ids") or []][:12]
+    if not ids:
+        return []
+    product_type = placement["product_type"]
+    internal = db.resolve_internal_ids(client_id, product_type, db.KIND_ITEM, ids)
+    records = [r for r in db.fetch_product_records(client_id, product_type, [w for w in internal.values() if w is not None]) if int(r["work_id"]) not in bought]
+    items = apply_filters(present_records(client_id, product_type, records, legacy=False, include_similar_users=False), placement=placement, context=context_dict)
+    by_id = {item["item_id"]: item for item in items}
+    pinned = []
+    for item_id in ids:
+        if item_id in by_id:
+            pinned.append({**by_id[item_id], "pinned": True, "explanation": {"reason": "Mis en avant par la boutique"}})
+    return pinned
+
+
 def _rank_and_fill(client_id: int, placement: dict[str, Any], context_dict: dict[str, Any], limit: int, *, blend_session: bool) -> tuple[engine.PlacementResult, list[dict]]:
     from recommender import present_records, rec_popular
 
@@ -192,6 +213,11 @@ def _rank_and_fill(client_id: int, placement: dict[str, Any], context_dict: dict
     variants = _variant_rules(client_id, placement, context_dict, bought)
     if variants:
         candidates = variants(candidates)
+    # The merchant's products put forward come first; LIKYLY's choice fills the rest.
+    pinned = _pinned(client_id, placement, context_dict, bought)
+    if pinned:
+        pinned_ids = {item["item_id"] for item in pinned}
+        candidates = pinned + [item for item in candidates if item["item_id"] not in pinned_ids]
     presented = candidates[:limit]
 
     if len(presented) < limit and result.strategy_used != "popular":
