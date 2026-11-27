@@ -62,7 +62,7 @@ from schemas import (
     RetentionStatus, RetentionRun,
     DailyUsage, ClientRename, ClientUsageSummary, WorkspaceRename, WorkspaceSummary, CatalogIndex,
     EventType, EventTypeCreate, EventTypeUpdate, ImportSummary, Item, ItemUpsert, ItemImportRequest, ItemDeleteRequest, BatchResult, ErrorResponse,
-    UserUpsert, UserImportRequest, CatalogEraseRequest, CatalogErased, ShopifyLink, ShopifyLinkRequest, Event, EventBatch, EventResult, EventBatchResult,
+    UserUpsert, UserImportRequest, CatalogEraseRequest, CatalogErased, ShopifyLink, ShopifyLinkRequest, ShopifyConnectRequest, ShopifyConnectApproved, ShopifyConnectClaim, Event, EventBatch, EventResult, EventBatchResult,
     RecommendationRequest, RecommendationResponse,
     DeveloperKey, DeveloperKeyCreate, DeveloperKeyCreated, SitePublicKey, SitePublicKeyCreate, SitePublicKeyCreated,
     IdentifyRequest, IdentifyResult,
@@ -94,7 +94,7 @@ from db import (
     touch_client_usage, list_all_clients_with_usage, get_client_usage_by_day,
     get_active_model_version, get_latest_model_version, count_products_in_catalog, ADMIN,
     count_users_in_catalog, count_trainings_today, list_data_sources, delete_catalog, erase_catalog_data,
-    link_platform_shop, get_platform_link, unlink_platform_shop,
+    link_platform_shop, get_platform_link, unlink_platform_shop, approve_platform_connect, claim_platform_connect,
     DEFAULT_ITEM_SORT,
     get_client_contact_email, create_upgrade_request, count_upgrade_requests_since,
     list_product_types_for_client, get_client_plan, set_client_plan,
@@ -2167,6 +2167,42 @@ def shopify_link_put(payload: ShopifyLinkRequest, client_id: int = Depends(get_c
     link = link_platform_shop(client_id, "shopify", payload.shop)
     log_event("shopify_link", client_id=client_id, shop=payload.shop)
     return link
+
+
+@app.post(
+    "/clients/me/integrations/shopify/connect", tags=["selfServiceClient"], response_model=ShopifyConnectApproved,
+    summary="Approve tying a Shopify shop to my workspace", responses=_errors(401, 404, 409, 422),
+)
+async def shopify_connect_approve(payload: ShopifyConnectRequest, supabase_user_id: str = Depends(get_current_supabase_user_id), x_workspace_id: WorkspaceIdHeader = None):
+    """The merchant, signed in on likyly.com, approves the connection the LIKYLY app for Shopify
+    started (its link carries the shop and a one-time `state`). The app then finishes it on its
+    own (POST /integrations/shopify/claim): no key to copy."""
+    client_id = await _resolve_my_client_id(supabase_user_id, x_workspace_id)
+    try:
+        approve_platform_connect(client_id, "shopify", payload.shop, payload.state)
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error))
+    log_event("shopify_connect_approved", client_id=client_id, shop=payload.shop)
+    me = get_client_self_by_id(client_id) or {}
+    return {"shop": payload.shop, "workspace": me.get("display_name") or me.get("name")}
+
+
+@app.post(
+    "/integrations/shopify/claim", tags=["integrations"], response_model=ShopifyConnectClaim,
+    summary="Finish a one-click Shopify connection", responses=_errors(403, 409, 422, 503),
+)
+def shopify_connect_claim(payload: ShopifyConnectRequest, _: None = Depends(require_shopify_app)):
+    """Called by the LIKYLY app for Shopify only (its own secret in `X-Likyly-App-Secret`, no API
+    key): `pending` until the merchant approved on likyly.com, then, once, the shop is tied to the
+    workspace and the app gets a public key and a secret key made for this shop."""
+    try:
+        result = claim_platform_connect("shopify", payload.shop, payload.state)
+    except TooManyPublicKeysError as error:
+        raise HTTPException(status_code=409, detail=str(error))
+    if result is None:
+        return {"status": "pending"}
+    log_event("shopify_connect_claimed", client_id=result["client_id"], shop=payload.shop)
+    return {"status": "connected", "public_key": result["public_key"], "secret_key": result["secret_key"], "workspace": result["workspace"]}
 
 
 @app.get(

@@ -68,7 +68,9 @@ def test_security_is_declared_for_every_protected_operation(spec):
     # The push ingress isn't authenticated with a tenant API key at all - it's a per-source
     # shared secret (X-Push-Secret), issued when a webhook/push data source is created. It
     # deliberately carries neither security scheme.
-    no_api_key = {"/data-sources/{data_source_id}/push"}
+    # Same for the Shopify app's claim of a one-click connection: the app's own secret
+    # (X-Likyly-App-Secret), before it has any key of the workspace.
+    no_api_key = {"/data-sources/{data_source_id}/push", "/integrations/shopify/claim"}
     for path, method, operation in operations(spec):
         if path in ("/openapi.json", "/docs") or path in no_api_key:
             continue

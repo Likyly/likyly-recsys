@@ -751,7 +751,8 @@ class PlatformLinkModel(Base):
     """A shop of a commerce platform tied to a workspace by that platform's LIKYLY app - today the
     Shopify app (PUT /integrations/shopify, called by the app's server with its own secret, after
     Shopify authenticated the shop). One shop belongs to one workspace, one workspace has at most
-    one shop per platform. See migration 0010."""
+    one shop per platform. See migrations 0010 and 0011 (key_hash: the secret key the app got by
+    one-click connection, valid while the shop stays tied)."""
     __tablename__ = "platform_links"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -759,11 +760,28 @@ class PlatformLinkModel(Base):
     platform = Column(String(16), nullable=False)  # "shopify"
     external_id = Column(String, nullable=False)  # the shop: "lola-bags.myshopify.com"
     linked_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, server_default=text("now()"))
+    key_hash = Column(String, nullable=True)
+    key_hint = Column(String, nullable=True)
 
     __table_args__ = (
         Index("uq_platform_links_shop", "platform", "external_id", unique=True),
         Index("uq_platform_links_client", "client_id", "platform", unique=True),
+        Index("uq_platform_links_key", "key_hash", unique=True, postgresql_where=text("key_hash IS NOT NULL")),
     )
+
+
+class PlatformConnectRequestModel(Base):
+    """A merchant's "tie this shop to my workspace", approved on likyly.com and claimed once by
+    the platform's LIKYLY app (migration 0011). Keyed by the hash of the app's one-time state."""
+    __tablename__ = "platform_connect_requests"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    platform = Column(String(16), nullable=False)
+    state_hash = Column(String, nullable=False, unique=True)
+    external_id = Column(String, nullable=False)
+    client_id = Column(Integer, ForeignKey("clients.id", ondelete="CASCADE"), nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, server_default=text("now()"))
+    claimed_at = Column(DateTime(timezone=True), nullable=True)
 
 
 class PlacementModel(Base):
@@ -987,6 +1005,15 @@ def get_client_and_scope_by_api_key(raw_key: str) -> Optional[tuple[int, str]]:
         if site_key:
             _touch_public_key(session, site_key.id)
             return site_key.client_id, "public"
+        # The secret key a platform's LIKYLY app got for its shop: valid while the shop is tied.
+        link = (
+            session.query(PlatformLinkModel)
+            .join(ClientModel, ClientModel.id == PlatformLinkModel.client_id)
+            .filter(PlatformLinkModel.key_hash == key_hash, ClientModel.is_active.is_(True))
+            .first()
+        )
+        if link:
+            return link.client_id, "secret"
         return None
 
 
@@ -1162,6 +1189,9 @@ def link_platform_shop(client_id: int, platform: str, external_id: str) -> dict:
     merchant reconnected with another account), and this workspace's previous shop on the
     platform, if any, is let go."""
     with SessionLocal() as session:
+        same = session.query(PlatformLinkModel).filter_by(client_id=client_id, platform=platform, external_id=external_id).first()
+        if same:  # already tied here: kept as it is (with the key the app got by connection)
+            return {"shop": same.external_id, "linked_at": same.linked_at}
         session.query(PlatformLinkModel).filter(
             PlatformLinkModel.platform == platform,
             or_(PlatformLinkModel.external_id == external_id, PlatformLinkModel.client_id == client_id),
@@ -1170,6 +1200,62 @@ def link_platform_shop(client_id: int, platform: str, external_id: str) -> dict:
         session.add(link)
         session.commit()
         return {"shop": link.external_id, "linked_at": link.linked_at}
+
+
+# How long a merchant's approval waits for the app to claim it.
+PLATFORM_CONNECT_TTL = timedelta(minutes=30)
+
+
+def approve_platform_connect(client_id: int, platform: str, external_id: str, state: str) -> None:
+    """The signed-in merchant ties `external_id` to this workspace, for the app that made `state`.
+    Approving the same state again (another workspace picked) replaces it until it is claimed."""
+    state_hash = hash_api_key(state)
+    with SessionLocal() as session:
+        row = session.query(PlatformConnectRequestModel).filter_by(state_hash=state_hash).first()
+        if row and row.claimed_at is not None:
+            raise ValueError("This connection was already completed: start it again from the app")
+        if row is None:
+            row = PlatformConnectRequestModel(platform=platform, state_hash=state_hash, external_id=external_id, client_id=client_id)
+            session.add(row)
+        else:
+            row.client_id, row.external_id, row.created_at = client_id, external_id, utcnow()
+        session.commit()
+
+
+def claim_platform_connect(platform: str, external_id: str, state: str) -> Optional[dict]:
+    """The app's side: None while the merchant hasn't approved (or the state is unknown, expired,
+    already used, or for another shop); else the shop is tied to the workspace and gets a public
+    key and a secret key of its own - {client_id, public_key, secret_key, workspace}. Once."""
+    state_hash = hash_api_key(state)
+    with SessionLocal() as session:
+        row = session.query(PlatformConnectRequestModel).filter_by(state_hash=state_hash, platform=platform).with_for_update().first()
+        if (
+            row is None or row.claimed_at is not None or row.external_id != external_id
+            or row.created_at < utcnow() - PLATFORM_CONNECT_TTL
+        ):
+            return None
+        row.claimed_at = utcnow()
+        client_id = row.client_id
+        client = session.get(ClientModel, client_id)
+        workspace = (client.display_name or client.name) if client else None
+        session.commit()
+    name = f"{platform.capitalize()} · {external_id}"
+    # The previous keys this shop got by connection make way for the new ones.
+    with SessionLocal() as session:
+        session.query(PublicKeyModel).filter_by(client_id=client_id, name=name, revoked_at=None).update({"revoked_at": utcnow()})
+        session.commit()
+    _, public_key = create_site_public_key(client_id, name)
+    secret_key = generate_api_key("sk")
+    link_platform_shop(client_id, platform, external_id)
+    with SessionLocal() as session:
+        session.query(PlatformLinkModel).filter_by(client_id=client_id, platform=platform, external_id=external_id).update(
+            {"key_hash": hash_api_key(secret_key), "key_hint": key_hint(secret_key)}
+        )
+        session.commit()
+    return {
+        "client_id": client_id, "public_key": public_key, "secret_key": secret_key,
+        "workspace": workspace,
+    }
 
 
 def get_platform_link(client_id: int, platform: str) -> Optional[dict]:

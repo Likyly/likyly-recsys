@@ -7130,6 +7130,118 @@
         "title": "RetentionStatus",
         "type": "object"
       },
+      "ShopifyConnectApproved": {
+        "properties": {
+          "shop": {
+            "description": "The shop now waiting for the app to finish the connection.",
+            "examples": [
+              "lola-bags.myshopify.com"
+            ],
+            "title": "Shop",
+            "type": "string"
+          },
+          "workspace": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The workspace the shop will be tied to.",
+            "title": "Workspace"
+          }
+        },
+        "required": [
+          "shop"
+        ],
+        "title": "ShopifyConnectApproved",
+        "type": "object"
+      },
+      "ShopifyConnectClaim": {
+        "properties": {
+          "public_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A public key made for this shop's storefront.",
+            "title": "Public Key"
+          },
+          "secret_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A secret key for the app only, valid while the shop stays tied to the workspace. Shown once.",
+            "title": "Secret Key"
+          },
+          "status": {
+            "description": "`connected` (keys below), or `pending` while the merchant hasn't approved on likyly.com.",
+            "examples": [
+              "connected"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "workspace": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The workspace the shop is tied to.",
+            "title": "Workspace"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "ShopifyConnectClaim",
+        "type": "object"
+      },
+      "ShopifyConnectRequest": {
+        "properties": {
+          "shop": {
+            "description": "The shop's permanent Shopify domain, as Shopify authenticated it to the app.",
+            "examples": [
+              "lola-bags.myshopify.com"
+            ],
+            "pattern": "^[a-z0-9][a-z0-9-]{0,99}\\.myshopify\\.com$",
+            "title": "Shop",
+            "type": "string"
+          },
+          "state": {
+            "description": "The one-time value the LIKYLY app for Shopify put in the connection link (random, at least 32 characters).",
+            "examples": [
+              "c3VwZXItc2VjcmV0LW9uZS10aW1lLXN0YXRlLXZhbHVl"
+            ],
+            "maxLength": 128,
+            "minLength": 32,
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "shop",
+          "state"
+        ],
+        "title": "ShopifyConnectRequest",
+        "type": "object"
+      },
       "ShopifyLink": {
         "properties": {
           "linked_at": {
@@ -14251,6 +14363,122 @@
         ]
       }
     },
+    "/clients/me/integrations/shopify/connect": {
+      "post": {
+        "description": "The merchant, signed in on likyly.com, approves the connection the LIKYLY app for Shopify\nstarted (its link carries the shop and a one-time `state`). The app then finishes it on its\nown (POST /integrations/shopify/claim): no key to copy.",
+        "operationId": "shopify_connect_approve",
+        "parameters": [
+          {
+            "description": "Which of this account's workspaces this call is about. Omitted: the primary (oldest) one.",
+            "in": "header",
+            "name": "X-Workspace-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Which of this account's workspaces this call is about. Omitted: the primary (oldest) one.",
+              "title": "X-Workspace-Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ShopifyConnectRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShopifyConnectApproved"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing, invalid or revoked `X-API-Key`."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The referenced resource does not exist for this account."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not possible in the current state - `detail` says what is missing (e.g. no model to retrain yet)."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The request is malformed - `detail` lists the offending fields."
+          },
+          "429": {
+            "description": "Rate limit exceeded at the API gateway - retry shortly."
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Approve tying a Shopify shop to my workspace",
+        "tags": [
+          "selfServiceClient"
+        ]
+      }
+    },
     "/clients/me/models/status": {
       "get": {
         "description": "Website equivalent of `GET /models/status`: the active model version and today's quota usage for one catalog\n(`auto_retrain_skip_reason` in the caller's language, French by default).",
@@ -19863,6 +20091,101 @@
           "integrations"
         ],
         "x-required-key": "secret"
+      }
+    },
+    "/integrations/shopify/claim": {
+      "post": {
+        "description": "Called by the LIKYLY app for Shopify only (its own secret in `X-Likyly-App-Secret`, no API\nkey): `pending` until the merchant approved on likyly.com, then, once, the shop is tied to the\nworkspace and the app gets a public key and a secret key made for this shop.",
+        "operationId": "shopify_connect_claim",
+        "parameters": [
+          {
+            "description": "The LIKYLY app for Shopify's own secret: only its server can tie a shop.",
+            "in": "header",
+            "name": "X-Likyly-App-Secret",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The LIKYLY app for Shopify's own secret: only its server can tie a shop.",
+              "title": "X-Likyly-App-Secret"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ShopifyConnectRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShopifyConnectClaim"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The public key can't do this (secret key required), or a plan limit was reached."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not possible in the current state - `detail` says what is missing (e.g. no model to retrain yet)."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The request is malformed - `detail` lists the offending fields."
+          },
+          "429": {
+            "description": "Rate limit exceeded at the API gateway - retry shortly."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "A service this call depends on is unavailable or not configured - retry later."
+          }
+        },
+        "summary": "Finish a one-click Shopify connection",
+        "tags": [
+          "integrations"
+        ]
       }
     },
     "/items": {

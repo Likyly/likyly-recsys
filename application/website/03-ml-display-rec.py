@@ -14,10 +14,6 @@ import solara
 
 import numpy as np
 import pandas as pd
-import torch
-import torch.serialization
-from spotlight.factorization.explicit import ExplicitFactorizationModel
-torch.serialization.add_safe_globals([ExplicitFactorizationModel])
 
 
 # Declare reactive variables at the top level. Components using these variables
@@ -90,18 +86,15 @@ def Page():
 
 
     ############################################################################
-    ## Check of torch model file
+    ## Check for a trained model
     ############################################################################
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    relative_path_model = "../../model/" + products_type_selected + '_users_rating_model.pth'
-    model_path = os.path.abspath(os.path.join(current_dir,     relative_path_model))
-    sys.path.insert(0,  model_path)
+    try:
+        users_rating_model = load_model(products_type_selected)
+        model_exists = True
+    except FileNotFoundError:
+        model_exists = False
 
-    if os.path.exists(model_path):
-
-        # Load Model
-        #load_model(rec_type, work_type)
-        users_rating_model = torch.load(model_path, weights_only=False)
+    if model_exists:
 
         ############################################################################
         ## Rec Sys

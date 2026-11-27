@@ -310,6 +310,26 @@ class ShopifyLinkRequest(BaseModel):
     )
 
 
+class ShopifyConnectRequest(ShopifyLinkRequest):
+    state: str = Field(
+        min_length=32, max_length=128, pattern=r"^[A-Za-z0-9_-]+$",
+        description="The one-time value the LIKYLY app for Shopify put in the connection link (random, at least 32 characters).",
+        examples=["c3VwZXItc2VjcmV0LW9uZS10aW1lLXN0YXRlLXZhbHVl"],
+    )
+
+
+class ShopifyConnectApproved(BaseModel):
+    shop: str = Field(description="The shop now waiting for the app to finish the connection.", examples=["lola-bags.myshopify.com"])
+    workspace: Optional[str] = Field(default=None, description="The workspace the shop will be tied to.")
+
+
+class ShopifyConnectClaim(BaseModel):
+    status: str = Field(description="`connected` (keys below), or `pending` while the merchant hasn't approved on likyly.com.", examples=["connected"])
+    public_key: Optional[str] = Field(default=None, description="A public key made for this shop's storefront.")
+    secret_key: Optional[str] = Field(default=None, description="A secret key for the app only, valid while the shop stays tied to the workspace. Shown once.")
+    workspace: Optional[str] = Field(default=None, description="The workspace the shop is tied to.")
+
+
 class ShopifyLink(BaseModel):
     shop: str = Field(description="The shop's permanent Shopify domain.", examples=["lola-bags.myshopify.com"])
     linked_at: datetime = Field(description="When the LIKYLY app for Shopify tied the shop to this workspace.")
