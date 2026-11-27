@@ -217,7 +217,14 @@ def _rank_and_fill(client_id: int, placement: dict[str, Any], context_dict: dict
     pinned = _pinned(client_id, placement, context_dict, bought)
     if pinned:
         pinned_ids = {item["item_id"] for item in pinned}
-        candidates = pinned + [item for item in candidates if item["item_id"] not in pinned_ids]
+        rules = placement.get("business_rules") or {}
+        # One item per model holds for them too: a pinned item takes its model's place.
+        group_by = rules.get("group_by") or "group_id"
+        pinned_groups = {group_of(item, group_by) for item in pinned} - {None} if rules.get("one_per_group") else set()
+        candidates = pinned + [
+            item for item in candidates
+            if item["item_id"] not in pinned_ids and (not pinned_groups or group_of(item, group_by) not in pinned_groups)
+        ]
     presented = candidates[:limit]
 
     if len(presented) < limit and result.strategy_used != "popular":

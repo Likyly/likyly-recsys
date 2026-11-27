@@ -108,3 +108,18 @@ def test_cart_block_never_offers_another_colour_of_a_bag_in_the_cart(http, tenan
     titles = [i["title"] for i in response.json()["items"]]
     assert titles and not {"GOYA", "RANELAGH"} & set(titles)
     assert len(titles) == len(set(titles))
+
+
+def test_a_pinned_bag_takes_its_model_place(http, tenant):
+    """One item per model holds for the merchant's products put forward too."""
+    for item_id, title, color, stock in BAGS:
+        http.put(f"/items/{item_id}", params=Q, headers=tenant.secret, json={"title": title, "properties": {"color": color, "stock": stock}})
+    create_pdp_placement(
+        http, tenant, slug="pinned-models", strategy="popular", limit=4, filters={"in_stock_only": True},
+        business_rules={"one_per_group": True, "group_by": "title", "closest_color": True, "pinned_item_ids": ["castellana-burgundy"]},
+    )
+    response = http.post("/placements/pinned-models/recommend", headers=tenant.public, json={"context": {"current_item_id": "goya-verde"}})
+    ids = [i["item_id"] for i in response.json()["items"]]
+    titles = [i["title"] for i in response.json()["items"]]
+    assert ids[0] == "castellana-burgundy"
+    assert len(titles) == len(set(titles)) and "castellana-marron" not in ids
