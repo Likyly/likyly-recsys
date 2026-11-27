@@ -1330,6 +1330,10 @@ class PlacementContext(BaseModel):
     anonymous_id: Optional[str] = Field(default=None, description="Stable anonymous visitor id - used like session_id when session_id is omitted.")
     session_id: Optional[str] = Field(default=None, max_length=255, description="Anonymous browsing session.")
     cart_item_ids: List[ExternalId] = Field(default_factory=list, max_length=200)
+    exclude_item_ids: List[ExternalId] = Field(
+        default_factory=list, max_length=200,
+        description="Products already shown on the page (by another recommendation block, a featured list...): left out of this answer, products put forward included - two blocks of one page never show the same product.",
+    )
     locale: Optional[str] = None
     custom_context: dict[str, Any] = Field(default_factory=dict)
 

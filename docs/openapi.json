@@ -5262,6 +5262,25 @@
             "title": "Custom Context",
             "type": "object"
           },
+          "exclude_item_ids": {
+            "description": "Products already shown on the page (by another recommendation block, a featured list...): left out of this answer, products put forward included - two blocks of one page never show the same product.",
+            "items": {
+              "anyOf": [
+                {
+                  "maxLength": 255,
+                  "type": "string"
+                },
+                {
+                  "deprecated": true,
+                  "type": "integer"
+                }
+              ],
+              "description": "Your own identifier, as a string. Integers are still accepted for backward compatibility and are converted to their decimal string."
+            },
+            "maxItems": 200,
+            "title": "Exclude Item Ids",
+            "type": "array"
+          },
           "locale": {
             "anyOf": [
               {

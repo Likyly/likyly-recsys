@@ -158,6 +158,9 @@ URL, or call the push endpoint from their own code when products change.
    - "put these products forward", "always show X first" -> `business_rules.pinned_item_ids:
      ["<id>", ...]` (up to 12, in order): shown first when they pass the same rules (in stock,
      not the current product, not in the cart), LIKYLY's choice fills the rest.
+   - Several recommendation blocks on one page: request them one after the other and send, in
+     each request's `exclude_item_ids`, the ids the blocks above already show - a product never
+     appears twice on the page.
    - "exclude out-of-stock" -> `filters.in_stock_only: true`.
    - "exclude what's in the cart" -> `signals.optional` includes `"cart_item_ids"`,
      `business_rules.exclude_cart_items: true`.

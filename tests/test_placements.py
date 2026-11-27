@@ -366,6 +366,16 @@ def test_pinned_products_come_first_through_the_same_rules(http, seeded):
     assert too_many.status_code == 422
 
 
+def test_products_already_on_the_page_are_left_out(http, seeded):
+    """context.exclude_item_ids: what another block of the page shows never comes back, products
+    put forward included, and the answer is still filled up to the limit."""
+    create_pdp_placement(http, seeded, slug="second-block", business_rules={"pinned_item_ids": ["SKU-VANS-004"]})
+    shown = ["SKU-VANS-004", "SKU-ADIDAS-007"]
+    result = recommend(http, seeded, {"current_item_id": "SKU-NIKE-001", "exclude_item_ids": shown}, slug="second-block")
+    ids = [i["item_id"] for i in result["items"]]
+    assert len(ids) == 4 and not set(shown) & set(ids)
+
+
 # ---------------------------------------------------------------------------
 # get_placement_requirements / preview_placement debug shape
 # ---------------------------------------------------------------------------

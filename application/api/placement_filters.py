@@ -51,6 +51,11 @@ def apply_filters(items: list[dict[str, Any]], *, placement: dict[str, Any], con
         excluded = set(context["cart_item_ids"])
         result = [i for i in result if i["item_id"] not in excluded]
 
+    # Already on the page (another block): never twice on one page.
+    if context.get("exclude_item_ids"):
+        shown = {str(i) for i in context["exclude_item_ids"]}
+        result = [i for i in result if i["item_id"] not in shown]
+
     # An explicit filters.category_in wins; otherwise a category_id in the context implicitly
     # scopes results to it (e.g. a category-page placement with no configured category_in) -
     # never both at once, so a placement author's own choice always takes priority.

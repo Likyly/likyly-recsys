@@ -717,7 +717,7 @@ PLACEMENT_CONTEXT_TYPES = {
 # optional unless a placement's own `signals.required` names it.
 PLACEMENT_CONTEXT_SIGNALS = {
     "current_item_id", "category_id", "collection_id", "user_id", "anonymous_id",
-    "session_id", "cart_item_ids", "locale", "custom_context",
+    "session_id", "cart_item_ids", "exclude_item_ids", "locale", "custom_context",
 }
 
 # What a Placement's `strategy` field may be set to - the five real engines
