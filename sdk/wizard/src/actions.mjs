@@ -82,6 +82,7 @@ export function applyStarter(opts, project) {
   const rel = relative(opts.dir, starter.path);
   const what = project.starter.template === "magento-module" ? "Module" : "Starter file";
   if (starter.status === "created") return [ok(`${what} ${rel}`)];
+  if (starter.status === "updated") return [ok(`${what} ${rel}: brought up to date (previous copy in ${relative(opts.dir, starter.backup)})`)];
   if (starter.status === "completed") return [ok(`${what} ${rel}: missing files added, the others left as is`)];
   return [info(`${rel} already in place, left as is`)];
 }
