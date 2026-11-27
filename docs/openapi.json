@@ -3504,7 +3504,7 @@
                 "type": "null"
               }
             ],
-            "description": "The recommendation_id of the recommendation call that surfaced this item - enables attribution.",
+            "description": "The recommendation_id of the recommendation call that surfaced this item - enables attribution. Left out on an add_to_cart or a purchase, LIKYLY takes the one of this visitor's last click on this item (same session_id or user_id, 30 days) and adds properties.attribution = \"click\".",
             "examples": [
               "rec_01K5Z3W8Q9M2X7T4N6V1B0C8DF"
             ],
@@ -3753,7 +3753,7 @@
                 "type": "null"
               }
             ],
-            "description": "The recommendation_id of the recommendation call that surfaced this item - enables attribution.",
+            "description": "The recommendation_id of the recommendation call that surfaced this item - enables attribution. Left out on an add_to_cart or a purchase, LIKYLY takes the one of this visitor's last click on this item (same session_id or user_id, 30 days) and adds properties.attribution = \"click\".",
             "examples": [
               "rec_01K5Z3W8Q9M2X7T4N6V1B0C8DF"
             ],

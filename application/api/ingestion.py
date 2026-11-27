@@ -21,7 +21,7 @@ if _utils_dir not in sys.path:
 
 
 from db import (  # noqa: E402
-    DEFAULT_EVENT_TIER, DEFAULT_ITEM_SORT, EVENT_TYPE_ALIASES, KIND_ITEM, KIND_USER, count_products_for_client,
+    ADD_TO_CART, DEFAULT_EVENT_TIER, DEFAULT_ITEM_SORT, EVENT_TYPE_ALIASES, PURCHASE, last_clicks_for, utcnow, KIND_ITEM, KIND_USER, count_products_for_client,
     delete_product_profile, delete_user_data, fetch_products, fetch_user_rows,
     get_client_event_type_weights, get_client_plan, get_plan_limits, insert_interactions,
     list_product_types_for_client, plan_limit_message, product_exists, resolve_external_ids, resolve_internal_ids, upsert_client_event_type,
@@ -387,6 +387,31 @@ def ensure_event_types(client_id: int, event_types: set[str]) -> dict[str, float
     return weights
 
 
+# The events a click on a recommendation leads to.
+_ATTRIBUTED_TYPES = {ADD_TO_CART, PURCHASE}
+
+
+def _attribute_to_last_click(client_id: int, product_type: str, rows: list[dict[str, Any]]) -> None:
+    """An add to cart or a purchase sent without a recommendation_id gets the one of the last
+    click this visitor (same session_id or same user_id) made on this item in the 30 days
+    before, if any - LIKYLY already recorded that click, with its recommendation_id. A
+    recommendation_id sent with the event is always kept as it is. A row filled here says so:
+    properties.attribution = "click"."""
+    wanted = [
+        {"index": n, "work_id": row["work_id"], "user_id": row["user_id"], "session_id": row["session_id"],
+         "occurred_at": row["occurred_at"] or utcnow()}
+        for n, row in enumerate(rows)
+        if row["event_type"] in _ATTRIBUTED_TYPES and not row["recommendation_id"]
+    ]
+    if not wanted:
+        return
+    for n, (recommendation_id, placement) in last_clicks_for(client_id, product_type, wanted).items():
+        row = rows[n]
+        row["recommendation_id"] = recommendation_id
+        row["placement"] = row["placement"] or placement
+        row["properties"] = {**(row["properties"] or {}), "attribution": "click"}
+
+
 def record_events(client_id: int, product_type: str, events: list[tuple[str, Event]]) -> EventOutcome:
     """The one path every event takes - purchase/view routes, the generic route, the batch
     route, the CSV import. Resolves public ids to internal ones (creating the mapping for an
@@ -420,6 +445,7 @@ def record_events(client_id: int, product_type: str, events: list[tuple[str, Eve
         }
         for event_type, event in events
     ]
+    _attribute_to_last_click(client_id, product_type, rows)
     accepted = insert_interactions(rows)
     carries_signal = accepted > 0 and any(weights.get(event_type, 0) > 0 for event_type, _ in events)
     return EventOutcome(accepted, len(events) - accepted, carries_signal)

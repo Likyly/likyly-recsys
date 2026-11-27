@@ -301,3 +301,60 @@ class TestAutoRetrain:
         assert started == []
         monkeypatch.setattr(api, "model_available", lambda *a, **k: True)
         assert http.get("/generateModel", params=Q, headers=seeded.secret).status_code == 200
+
+
+class TestAttributionToTheLastClick:
+    """An add to cart or a purchase sent without a recommendation_id takes the one of the
+    visitor's last click on that item (30 days) - the click LIKYLY already recorded."""
+
+    def _click(self, http, tenant, rec, who, at="2026-11-20T10:00:00Z", item="SKU-NIKE-001", placement="product_page"):
+        body = {**who, "item_id": item, "recommendation_id": rec, "placement": placement, "occurred_at": at}
+        assert track(http, tenant, "click", body).status_code == 200
+
+    def _last(self, tenant, event_type):
+        return [r for r in interactions_of(tenant) if r.event_type == event_type][-1]
+
+    def test_purchase_of_the_same_session_gets_the_click_recommendation(self, http, seeded):
+        self._click(http, seeded, "rec_old", {"session_id": "s1"}, at="2026-11-19T10:00:00Z")
+        self._click(http, seeded, "rec_new", {"session_id": "s1"}, at="2026-11-20T10:00:00Z", placement="cart")
+        track(http, seeded, "purchase", {"session_id": "s1", "item_id": "SKU-NIKE-001", "occurred_at": "2026-11-21T10:00:00Z", "properties": {"price": 89}})
+        row = self._last(seeded, "purchase")
+        assert (row.recommendation_id, row.placement) == ("rec_new", "cart")
+        assert row.properties == {"price": 89, "attribution": "click"}
+
+    def test_signed_in_customer_on_another_device(self, http, seeded):
+        self._click(http, seeded, "rec_phone", {"user_id": "u1", "session_id": "phone"})
+        track(http, seeded, "add_to_cart", {"user_id": "u1", "session_id": "laptop", "item_id": "SKU-NIKE-001", "occurred_at": "2026-11-20T12:00:00Z"})
+        assert self._last(seeded, "add_to_cart").recommendation_id == "rec_phone"
+
+    def test_a_recommendation_sent_with_the_purchase_is_kept(self, http, seeded):
+        self._click(http, seeded, "rec_click", {"session_id": "s1"})
+        track(http, seeded, "purchase", {"session_id": "s1", "item_id": "SKU-NIKE-001", "recommendation_id": "rec_sent", "occurred_at": "2026-11-21T10:00:00Z"})
+        row = self._last(seeded, "purchase")
+        assert row.recommendation_id == "rec_sent" and row.properties is None
+
+    @pytest.mark.parametrize("purchase", [
+        {"session_id": "someone-else", "item_id": "SKU-NIKE-001", "occurred_at": "2026-11-21T10:00:00Z"},  # another visitor
+        {"session_id": "s1", "item_id": "SKU-VANS-004", "occurred_at": "2026-11-21T10:00:00Z"},  # another product
+        {"session_id": "s1", "item_id": "SKU-NIKE-001", "occurred_at": "2026-12-25T10:00:00Z"},  # more than 30 days later
+        {"session_id": "s1", "item_id": "SKU-NIKE-001", "occurred_at": "2026-11-19T10:00:00Z"},  # before the click
+    ])
+    def test_no_click_no_recommendation(self, http, seeded, purchase):
+        self._click(http, seeded, "rec_1", {"session_id": "s1"})
+        track(http, seeded, "purchase", purchase)
+        assert self._last(seeded, "purchase").recommendation_id is None
+
+    def test_views_are_never_attributed(self, http, seeded):
+        self._click(http, seeded, "rec_1", {"session_id": "s1"})
+        track(http, seeded, "view", {"session_id": "s1", "item_id": "SKU-NIKE-001", "occurred_at": "2026-11-21T10:00:00Z"})
+        assert self._last(seeded, "view").recommendation_id is None
+
+    def test_batch_attributes_each_line(self, http, seeded):
+        self._click(http, seeded, "rec_a", {"session_id": "s1"}, item="SKU-NIKE-001")
+        events = [
+            {"event_type": "purchase", "session_id": "s1", "item_id": item, "event_id": f"purchase_o1_{item}", "occurred_at": "2026-11-21T10:00:00Z"}
+            for item in ("SKU-NIKE-001", "SKU-VANS-004")
+        ]
+        assert http.post("/events/batch", params=Q, json={"events": events}, headers=seeded.public).status_code == 200
+        by_item = {r.work_id: r.recommendation_id for r in interactions_of(seeded) if r.event_type == "purchase"}
+        assert sorted(v or "" for v in by_item.values()) == ["", "rec_a"]

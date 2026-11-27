@@ -31,7 +31,7 @@ _IGNORED_AGENTS = {"api", "website", "console"}
 
 # What each agent is, for the back-office ("SDK", "CMS", "Outil").
 AGENT_KINDS = {
-    "wordpress": "cms", "drupal": "cms", "prestashop": "cms", "magento": "cms", "shopify": "cms",
+    "wordpress": "cms", "drupal": "cms", "prestashop": "cms", "magento": "cms", "shopify": "cms", "shopify-pixel": "cms",
     "wizard": "tool", "mcp": "tool", "cli": "tool",
 }
 

@@ -362,7 +362,7 @@ def test_the_stored_trace_is_enough_to_compute_ctr_conversion_and_attributed_rev
             track(http, seeded, "impression", {"session_id": "s1", "item_id": item["item_id"], "recommendation_id": body["recommendation_id"]})
     track(http, seeded, "click", {"session_id": "s1", "item_id": home["items"][0]["item_id"], "recommendation_id": home["recommendation_id"]})
     track(http, seeded, "purchase", {"session_id": "s1", "item_id": home["items"][0]["item_id"], "recommendation_id": home["recommendation_id"], "properties": {"revenue": 120.5}})
-    track(http, seeded, "purchase", {"session_id": "s1", "item_id": "SKU-VANS-004", "properties": {"revenue": 999}})  # not attributed: no recommendation_id
+    track(http, seeded, "purchase", {"session_id": "s2", "item_id": "SKU-VANS-004", "properties": {"revenue": 999}})  # not attributed: no recommendation_id, no click by this visitor
 
     with db.engine.connect() as conn:
         rows = [dict(r._mapping) for r in conn.execute(text(ATTRIBUTION_SQL), {"client_id": seeded.client_id})]

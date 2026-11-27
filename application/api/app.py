@@ -1,5 +1,6 @@
 import hmac
 import os
+import pathlib
 import re
 # Some macOS Python installs don't wire the stdlib ssl module up to a trusted CA bundle,
 # so urllib-based HTTPS calls (PyJWKClient fetching Supabase's JWKS, below) fail with
@@ -754,6 +755,20 @@ def _errors(*codes: int) -> dict:
 @app.get("/", summary="API root", description="Liveness message; also a cheap way to check the API is reachable.", tags=["models"], include_in_schema=False)
 async def root():
     return {"message": "LIKYLY recommendations API - content-based (TF-IDF + pgvector semantic embeddings) and collaborative filtering (implicit ALS) recommendations"}
+
+# The Shopify custom pixel's code, kept here so the merchant pastes a few lines that load it
+# (see static/shopify-pixel.js) and gets every fix without pasting again. Public, no key.
+_SHOPIFY_PIXEL_JS = (pathlib.Path(__file__).parent / "static" / "shopify-pixel.js").read_text(encoding="utf-8")
+
+
+@app.get("/pixel/shopify.js", include_in_schema=False)
+async def shopify_pixel_script():
+    return Response(
+        _SHOPIFY_PIXEL_JS,
+        media_type="application/javascript; charset=utf-8",
+        headers={"Cache-Control": "public, max-age=3600", "Access-Control-Allow-Origin": "*"},
+    )
+
 
 # Scalar, not Swagger UI (docs_url=None above): a static, account-less page that reads the
 # same openapi.json and renders an interactive reference with "Try it" - the public, no-login

@@ -1894,6 +1894,43 @@ def erase_catalog_data(client_id: int, product_type: str) -> dict[str, int]:
         return counts
 
 
+# How far back a click can explain an add to cart or a purchase (the same 30 days as the
+# storefront's own memory of clicks, likyly_rec).
+CLICK_ATTRIBUTION_WINDOW = timedelta(days=30)
+
+
+def last_clicks_for(client_id: int, product_type: str, wanted: list[dict[str, Any]]) -> dict[int, tuple[str, Optional[str]]]:
+    """For each wanted {index, work_id, user_id, session_id, occurred_at}: the recommendation of
+    the last click this visitor (same session or same user) made on this item in the 30 days
+    before - {index: (recommendation_id, placement)}. One query, LATERAL per wanted row."""
+    found: dict[int, tuple[str, Optional[str]]] = {}
+    wanted = [w for w in wanted if w.get("user_id") is not None or w.get("session_id")]
+    for start in range(0, len(wanted), 500):
+        chunk = wanted[start:start + 500]
+        params: dict[str, Any] = {"cid": client_id, "pt": product_type, "click": CLICK, "window": CLICK_ATTRIBUTION_WINDOW}
+        rows = []
+        for n, w in enumerate(chunk):
+            rows.append(f"(CAST(:i{n} AS integer), CAST(:w{n} AS integer), CAST(:u{n} AS integer), CAST(:s{n} AS text), CAST(:t{n} AS timestamptz))")
+            params.update({f"i{n}": w["index"], f"w{n}": w["work_id"], f"u{n}": w.get("user_id"), f"s{n}": w.get("session_id"), f"t{n}": w["occurred_at"]})
+        statement = text(f"""
+            SELECT w.idx, c.recommendation_id, c.placement
+            FROM (VALUES {", ".join(rows)}) AS w(idx, work_id, user_id, session_id, at)
+            CROSS JOIN LATERAL (
+                SELECT i.recommendation_id, i.placement FROM interactions i
+                WHERE i.client_id = :cid AND i.product_type = :pt AND i.event_type = :click
+                  AND i.work_id = w.work_id AND i.recommendation_id IS NOT NULL
+                  AND ((w.session_id IS NOT NULL AND i.session_id = w.session_id)
+                       OR (w.user_id IS NOT NULL AND i.user_id = w.user_id))
+                  AND i.occurred_at <= w.at AND i.occurred_at > w.at - CAST(:window AS interval)
+                ORDER BY i.occurred_at DESC LIMIT 1
+            ) c
+        """)
+        with SessionLocal() as session:
+            for idx, recommendation_id, placement in session.execute(statement, params):
+                found[idx] = (recommendation_id, placement)
+    return found
+
+
 def insert_interactions(rows: list[dict[str, Any]]) -> int:
     """Bulk insert; returns how many rows were actually written. A row whose (client_id,
     event_id) already exists is skipped silently (ON CONFLICT DO NOTHING against the partial

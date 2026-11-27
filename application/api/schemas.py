@@ -414,7 +414,7 @@ class Event(BaseModel):
     item_id: Optional[ExternalId] = Field(default=None, description="The item the interaction is about. Required.", examples=["item_456"])
     user_id: Optional[ExternalId] = Field(default=None, description="Identified user. At least one of user_id / session_id is required.", examples=["user_123"])
     session_id: Optional[str] = Field(default=None, min_length=1, max_length=255, description="Anonymous visitor / browsing session.", examples=["sess_abc"])
-    recommendation_id: Optional[str] = Field(default=None, max_length=128, description="The recommendation_id of the recommendation call that surfaced this item - enables attribution.", examples=["rec_01K5Z3W8Q9M2X7T4N6V1B0C8DF"])
+    recommendation_id: Optional[str] = Field(default=None, max_length=128, description="The recommendation_id of the recommendation call that surfaced this item - enables attribution. Left out on an add_to_cart or a purchase, LIKYLY takes the one of this visitor's last click on this item (same session_id or user_id, 30 days) and adds properties.attribution = \"click\".", examples=["rec_01K5Z3W8Q9M2X7T4N6V1B0C8DF"])
     placement: Optional[str] = Field(default=None, max_length=128, description="Free-form label of where this happened.", examples=["homepage"])
     quantity: int = Field(default=1, ge=0, le=1_000_000, description="Magnitude in whatever unit fits the event type (units bought, seconds watched, ...). Scales the event's weight in training.")
     occurred_at: Optional[datetime] = Field(default=None, description="When it happened (ISO 8601). Defaults to the server's time; a time without a zone is read as UTC.", examples=["2026-09-24T10:30:00Z"])

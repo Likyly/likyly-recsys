@@ -51,8 +51,8 @@ def test_counts_what_the_attributed_revenue_needs(http, workspace):
     _event(http, workspace["public"], "add_to_cart", recommendation_id=rec)
     # Counted in the revenue: recommendation_id and a numeric price.
     _event(http, workspace["public"], "purchase", recommendation_id=rec, event_id="p1", properties={"price": 49.9, "currency": "EUR"})
-    # Received, but not attributable: no recommendation_id.
-    _event(http, workspace["public"], "purchase", event_id="p2", properties={"price": 20})
+    # Received, but not attributable: no recommendation_id, and this visitor clicked nothing.
+    _event(http, workspace["public"], "purchase", event_id="p2", session_id="sess_2", properties={"price": 20})
     # Attributed, but adds nothing: the price is a string.
     _event(http, workspace["public"], "purchase", recommendation_id=rec, event_id="p3", properties={"price": "19.90"})
 
