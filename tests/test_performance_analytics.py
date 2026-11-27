@@ -75,7 +75,7 @@ def test_summary_reflects_seeded_activity(http, workspace):
     assert body["ctr"] == 1.0
 
 
-def test_free_plan_summary_window_is_clamped_to_seven_days(http, workspace):
+def test_free_plan_summary_window_is_clamped_to_thirty_days(http, workspace):
     db.set_client_plan(workspace["client_id"], db.PLAN_FREE)
     today = date.today()
     start = today - timedelta(days=89)
@@ -83,7 +83,7 @@ def test_free_plan_summary_window_is_clamped_to_seven_days(http, workspace):
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["end"] == today.isoformat()
-    assert date.fromisoformat(body["start"]) == today - timedelta(days=6)  # pushed forward to a 7-day span
+    assert date.fromisoformat(body["start"]) == today - timedelta(days=29)  # pushed forward to a 30-day span
 
 
 def test_pro_plan_summary_window_can_go_up_to_ninety_days(http, workspace):
@@ -117,11 +117,15 @@ def test_a_past_date_range_is_honored_not_just_the_last_n_days(http, workspace):
     assert body["recommendations_served"] == 0  # nothing happened in Jan 2020 for this brand-new tenant
 
 
-def test_detail_is_forbidden_on_free_plan(http, workspace):
+def test_detail_with_revenue_is_free(http, workspace):
     db.set_client_plan(workspace["client_id"], db.PLAN_FREE)
+    _create_placement(http, workspace["secret"])
+    _seed_activity(http, workspace["public"], "pdp-related")
     response = http.get("/clients/me/analytics/detail", headers=workspace["auth"])
-    assert response.status_code == 403
-    assert "plan limit" in response.json()["detail"].lower()
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["revenue"] == {"purchases": 1, "revenue": 29.9}
+    assert body["admin_view"] is False
 
 
 def test_detail_reports_timeseries_by_placement_and_revenue_on_pro(http, workspace):
@@ -207,9 +211,8 @@ def test_requires_a_session(http):
 
 
 def test_an_admin_sees_the_real_pro_detail_of_a_free_workspace(http, workspace, monkeypatch):
-    """Free workspaces get example figures in the console (the page's job); a LIKYLY admin
-    (app_metadata.is_admin) gets the real figures with Pro's depth, purchases and revenue
-    included, flagged admin_view - and Pro's window on the summary."""
+    """A LIKYLY admin (app_metadata.is_admin) looking at a Free workspace gets Pro's depth -
+    Pro's 90-day window instead of Free's 30 - flagged admin_view."""
     _create_placement(http, workspace["secret"])
     _seed_activity(http, workspace["public"], "pdp-related")
     assert db.get_client_plan(workspace["client_id"]) == "free"
@@ -224,7 +227,7 @@ def test_an_admin_sees_the_real_pro_detail_of_a_free_workspace(http, workspace, 
 
     today = date.today()
     summary = http.get("/clients/me/analytics/summary", headers=workspace["auth"], params={"start": (today - timedelta(days=59)).isoformat(), "end": today.isoformat()}).json()
-    assert summary["start"] == (today - timedelta(days=59)).isoformat(), "Pro's 90-day window, not Free's 7"
+    assert summary["start"] == (today - timedelta(days=59)).isoformat(), "Pro's 90-day window, not Free's 30"
 
 
 def test_a_pro_workspace_is_not_an_admin_view(http, workspace):

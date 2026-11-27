@@ -2,9 +2,9 @@
 // the purchases and revenue they led to - read from LIKYLY's analytics with the project's
 // developer key. A plain API call, no AI involved: the numbers are LIKYLY's, never a guess.
 //
-// The plan decides what comes back: every plan has the totals and the per-block breakdown
-// (purchases and revenue included) over its window (Free: 7 days); Pro adds up to 90 days, the
-// day-by-day trend and the products recommendations worked best on.
+// Every plan gets the totals, the per-block breakdown (purchases and revenue included), the
+// day-by-day trend and the products recommendations worked best on; the plan sets how far back
+// (Free: 30 days, Pro: up to 90).
 
 import { CREDENTIALS_FILE, KEY_ENV } from "./mcp.mjs";
 import { readDeveloperKey } from "./cache.mjs";

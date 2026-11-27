@@ -43,7 +43,7 @@ ${blue("Commands")}
                  key (never its value), plan, and every Free and Pro limit side by side with
                  what you use (uses your developer key; --json for data)
   impact [days]  what the recommendations bring: served, seen, clicked, the purchases and
-                 revenue they led to (uses your developer key; Free: 7 days, Pro: up to 90
+                 revenue they led to (uses your developer key; Free: 30 days, Pro: up to 90
                  days with the daily trend and the top products; --json for data)
   cache clear [placement]
                  empty LIKYLY's recommendation cache: one placement, or all of them

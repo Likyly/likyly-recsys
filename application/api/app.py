@@ -245,9 +245,9 @@ tags_metadata = [
         "description": (
             "Recommendation performance and plan usage, for an integration that holds the secret "
             "key or a developer key with the `analytics:read` scope (e.g. a CMS plugin's "
-            "dashboard) - never the public key. The window is clamped to the plan (Free: 7 days, "
-            "Pro: 90). Totals, the per-placement breakdown and the plan's usage are available on "
-            "every plan; the daily trend with revenue and the top items need Pro."
+            "dashboard) - never the public key. The window is clamped to the plan (Free: 30 days, "
+            "Pro: 90). Every plan gets everything: totals, the per-placement breakdown, the daily "
+            "trend with revenue, the top items and the plan's usage."
         ),
     },
     {
@@ -547,7 +547,10 @@ def _analytics_plan(client_id: int, authorization: Optional[str]) -> tuple[str, 
     workspace's analytics with Pro's depth - the real figures, purchases and revenue included -
     whatever its plan; everyone else gets their workspace's plan."""
     plan = get_client_plan(client_id)
-    if get_plan_limits(plan)["analytics_detail"]:
+    limits, pro = get_plan_limits(plan), get_plan_limits(PLAN_PRO)
+    window, pro_window = limits["analytics_window_days"], pro["analytics_window_days"]
+    # A plan with Pro's depth (detail and at least Pro's history) is shown as it is.
+    if limits["analytics_detail"] and (window is None or (pro_window is not None and window >= pro_window)):
         return plan, False
     try:
         admin = bool(_decode_supabase_jwt(authorization).get("app_metadata", {}).get("is_admin"))
@@ -1056,7 +1059,7 @@ async def get_my_analytics_summary(
 ):
     """Recommendations served, impressions, clicks and CTR - the "Performance" page's summary
     cards, always available on any plan. The [start, end] range is server-clamped to this
-    workspace's plan (Free: 7-day span, Pro: 90) regardless of what was asked for - never trust
+    workspace's plan (Free: 30-day span, Pro: 90) regardless of what was asked for - never trust
     the client's requested range beyond the plan's own cap, same principle as every other limit
     here. A LIKYLY admin gets Pro's window (see _analytics_plan)."""
     client_id = await _resolve_my_client_id(supabase_user_id, x_workspace_id)
@@ -1099,9 +1102,10 @@ async def get_my_analytics_detail(
     """The depth behind the summary - totals with attributed purchases and revenue, the same
     totals over the period just before (same length) to compare, a day-by-day trend, a
     per-placement breakdown with revenue, and the items recommendations worked best on.
-    Revenue = purchases that carry a recommendation_id. Pro only: 403 on Free, same
-    plan_limit_message wording as every other gated feature - except for a LIKYLY admin, who
-    gets the real figures with `admin_view: true` (see _analytics_plan)."""
+    Revenue = purchases that carry a recommendation_id. Every plan (403 only for a plan without
+    `analytics_detail`, with the same plan_limit_message wording as every other gated feature);
+    a LIKYLY admin looking at a Free workspace gets Pro's longer window, with `admin_view: true`
+    (see _analytics_plan)."""
     client_id = await _resolve_my_client_id(supabase_user_id, x_workspace_id)
     plan, admin_view = _analytics_plan(client_id, authorization)
     limits = get_plan_limits(plan)

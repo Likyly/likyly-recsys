@@ -91,13 +91,13 @@ def test_analytics_read_is_a_mintable_scope(http, monkeypatch):
 
 # --- window and plan gating -----------------------------------------------------------------
 
-def test_free_window_is_clamped_to_seven_days_and_says_so(http, seeded):
+def test_free_window_is_clamped_to_thirty_days_and_says_so(http, seeded):
     db.set_client_plan(seeded.client_id, db.PLAN_FREE)
     today = date.today()
     body = http.get("/analytics/summary", headers=seeded.secret, params={"start": (today - timedelta(days=60)).isoformat(), "end": today.isoformat()}).json()
     assert body["end"] == today.isoformat()
-    assert body["start"] == (today - timedelta(days=6)).isoformat()
-    assert (body["plan"], body["window_days"], body["max_window_days"]) == ("free", 7, 7)
+    assert body["start"] == (today - timedelta(days=29)).isoformat()
+    assert (body["plan"], body["window_days"], body["max_window_days"]) == ("free", 30, 30)
 
 
 def test_pro_window_goes_up_to_ninety_days(http, pro):
@@ -119,12 +119,13 @@ def test_bad_date_is_422(http, pro):
 
 
 @pytest.mark.parametrize("path", ["/analytics/detail", "/analytics/items"])
-def test_detail_and_items_are_pro_only(http, seeded, path):
+def test_the_revenue_dashboard_is_free(http, seeded, path):
+    """The daily trend with revenue and the best products: what other recommendation apps
+    charge for, free here (Pro keeps the longer history)."""
     db.set_client_plan(seeded.client_id, db.PLAN_FREE)
     response = http.get(path, headers=seeded.secret)
-    assert response.status_code == 403
-    assert response.json()["detail"].startswith("Free plan limit reached:")
-    assert db.UPGRADE_URL in response.json()["detail"]
+    assert response.status_code == 200, response.text
+    assert response.json()["max_window_days"] == 30
 
 
 def test_placements_summary_and_plan_are_available_on_free(http, seeded):
@@ -149,8 +150,8 @@ def test_plan_reports_limits_and_usage(http, seeded):
     db.set_client_plan(seeded.client_id, db.PLAN_FREE)
     body = http.get("/analytics/plan", headers=seeded.secret).json()
     assert (body["plan"], body["plan_name"]) == ("free", "Free")
-    assert body["limits"]["product_limit"] == 50 and body["limits"]["analytics_detail"] is False
-    assert body["limits"]["analytics_window_days"] == 7
+    assert body["limits"]["product_limit"] == 50 and body["limits"]["analytics_detail"] is True
+    assert body["limits"]["analytics_window_days"] == 30
     assert body["usage"]["product_count"] == 8 and body["usage"]["product_limit"] == 50
     assert body["usage"]["index_count"] == 1 and body["usage"]["index_limit"] == 1
     assert body["upgrade_url"] == db.UPGRADE_URL

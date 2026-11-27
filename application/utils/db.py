@@ -97,8 +97,11 @@ PLAN_LIMITS: dict[str, dict[str, Optional[int]]] = {
         "auto_retrain_daily_limit": 1,
         "manual_sync_daily_limit": 1,
         "workspace_limit": 1,
-        "analytics_window_days": 7,
-        "analytics_detail": False,
+        # The revenue dashboard (daily trend, revenue per block, best products) is free: what
+        # most recommendation apps charge for, and the proof LIKYLY pays for itself. Pro keeps
+        # the longer history (and the catalog size, workspaces...).
+        "analytics_window_days": 30,
+        "analytics_detail": True,
     },
     PLAN_PRO: {
         "product_limit": 500,
@@ -3002,7 +3005,7 @@ def recommendation_performance_summary(client_id: int, since, until=None, placem
 
 
 def recommendation_performance_timeseries(client_id: int, since, until=None, placement: Optional[str] = None) -> list[dict[str, Any]]:
-    """One row per calendar day with any activity in [since, until] - the Pro-only trend."""
+    """One row per calendar day with any activity in [since, until] - the daily trend."""
     with SessionLocal() as session:
         rec_query = session.query(
             func.date_trunc("day", RecommendationModel.created_at).label("day"),
@@ -3050,7 +3053,7 @@ def recommendation_performance_timeseries(client_id: int, since, until=None, pla
 
 
 def recommendation_performance_by_placement(client_id: int, since, until=None) -> list[dict[str, Any]]:
-    """One row per placement with any activity in [since, until] - the Pro-only breakdown."""
+    """One row per placement with any activity in [since, until] - the per-placement breakdown."""
     with SessionLocal() as session:
         rec_query = session.query(
             RecommendationModel.placement, func.count(RecommendationModel.recommendation_id).label("served"),

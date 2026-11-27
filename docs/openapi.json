@@ -1063,7 +1063,7 @@
         "type": "object"
       },
       "AnalyticsDetailOut": {
-        "description": "Pro-only - the depth Free's summary doesn't include. `placement` (when given) narrows\ntotals, previous and timeseries; by_placement and top_items always cover every placement.",
+        "description": "The depth behind the summary, every plan. `placement` (when given) narrows\ntotals, previous and timeseries; by_placement and top_items always cover every placement.",
         "properties": {
           "admin_view": {
             "default": false,
@@ -1221,7 +1221,7 @@
         "type": "object"
       },
       "AnalyticsItemsOut": {
-        "description": "Top recommended items, by clicks then purchases - Pro plan and above.",
+        "description": "Top recommended items, by clicks then purchases - every plan.",
         "properties": {
           "currency": {
             "anyOf": [
@@ -1301,7 +1301,7 @@
         "type": "object"
       },
       "AnalyticsKeyDetailOut": {
-        "description": "Day-by-day trend and total attributed revenue - Pro plan and above.",
+        "description": "Day-by-day trend and total attributed revenue - every plan.",
         "properties": {
           "currency": {
             "anyOf": [
@@ -10534,7 +10534,7 @@
     },
     "/analytics/detail": {
       "get": {
-        "description": "A day-by-day trend (recommendations served, impressions, clicks, CTR, and the purchases\nand revenue attributed to recommendations that day) and the total attributed revenue\n(purchases carrying a `recommendation_id`). Pro plan and above: 403 on Free. Window: last 30\ndays by default, clamped to the plan.",
+        "description": "A day-by-day trend (recommendations served, impressions, clicks, CTR, and the purchases\nand revenue attributed to recommendations that day) and the total attributed revenue\n(purchases carrying a `recommendation_id`). Every plan. Window: last 30\ndays by default, clamped to the plan.",
         "operationId": "analytics_detail",
         "parameters": [
           {
@@ -10632,7 +10632,7 @@
     },
     "/analytics/items": {
       "get": {
-        "description": "The items recommendations worked best on: per item, how many recommendation responses\nincluded it, and the impressions, clicks, purchases and revenue of events carrying a\n`recommendation_id` - ordered by clicks, then purchases. `title` comes from the catalog.\nPro plan and above: 403 on Free. Window: last 30 days by default, clamped to the plan.",
+        "description": "The items recommendations worked best on: per item, how many recommendation responses\nincluded it, and the impressions, clicks, purchases and revenue of events carrying a\n`recommendation_id` - ordered by clicks, then purchases. `title` comes from the catalog.\nEvery plan. Window: last 30 days by default, clamped to the plan.",
         "operationId": "analytics_items",
         "parameters": [
           {
@@ -10890,7 +10890,7 @@
     },
     "/analytics/summary": {
       "get": {
-        "description": "Recommendations served, impressions, clicks and CTR over the window - every plan. The\nwindow defaults to the last 7 days and is clamped to the plan (Free: 7 days, Pro: 90);\n`start`, `end`, `window_days` and `plan` in the answer say what was actually used.",
+        "description": "Recommendations served, impressions, clicks and CTR over the window - every plan. The\nwindow defaults to the last 7 days and is clamped to the plan (Free: 30 days, Pro: 90);\n`start`, `end`, `window_days` and `plan` in the answer say what was actually used.",
         "operationId": "analytics_summary",
         "parameters": [
           {
@@ -11439,7 +11439,7 @@
     },
     "/clients/me/analytics/detail": {
       "get": {
-        "description": "The depth behind the summary - totals with attributed purchases and revenue, the same\ntotals over the period just before (same length) to compare, a day-by-day trend, a\nper-placement breakdown with revenue, and the items recommendations worked best on.\nRevenue = purchases that carry a recommendation_id. Pro only: 403 on Free, same\nplan_limit_message wording as every other gated feature - except for a LIKYLY admin, who\ngets the real figures with `admin_view: true` (see _analytics_plan).",
+        "description": "The depth behind the summary - totals with attributed purchases and revenue, the same\ntotals over the period just before (same length) to compare, a day-by-day trend, a\nper-placement breakdown with revenue, and the items recommendations worked best on.\nRevenue = purchases that carry a recommendation_id. Every plan (403 only for a plan without\n`analytics_detail`, with the same plan_limit_message wording as every other gated feature);\na LIKYLY admin looking at a Free workspace gets Pro's longer window, with `admin_view: true`\n(see _analytics_plan).",
         "operationId": "get_my_analytics_detail",
         "parameters": [
           {
@@ -11601,7 +11601,7 @@
     },
     "/clients/me/analytics/summary": {
       "get": {
-        "description": "Recommendations served, impressions, clicks and CTR - the \"Performance\" page's summary\ncards, always available on any plan. The [start, end] range is server-clamped to this\nworkspace's plan (Free: 7-day span, Pro: 90) regardless of what was asked for - never trust\nthe client's requested range beyond the plan's own cap, same principle as every other limit\nhere. A LIKYLY admin gets Pro's window (see _analytics_plan).",
+        "description": "Recommendations served, impressions, clicks and CTR - the \"Performance\" page's summary\ncards, always available on any plan. The [start, end] range is server-clamped to this\nworkspace's plan (Free: 30-day span, Pro: 90) regardless of what was asked for - never trust\nthe client's requested range beyond the plan's own cap, same principle as every other limit\nhere. A LIKYLY admin gets Pro's window (see _analytics_plan).",
         "operationId": "get_my_analytics_summary",
         "parameters": [
           {
@@ -22887,7 +22887,7 @@
       "name": "placements"
     },
     {
-      "description": "Recommendation performance and plan usage, for an integration that holds the secret key or a developer key with the `analytics:read` scope (e.g. a CMS plugin's dashboard) - never the public key. The window is clamped to the plan (Free: 7 days, Pro: 90). Totals, the per-placement breakdown and the plan's usage are available on every plan; the daily trend with revenue and the top items need Pro.",
+      "description": "Recommendation performance and plan usage, for an integration that holds the secret key or a developer key with the `analytics:read` scope (e.g. a CMS plugin's dashboard) - never the public key. The window is clamped to the plan (Free: 30 days, Pro: 90). Every plan gets everything: totals, the per-placement breakdown, the daily trend with revenue, the top items and the plan's usage.",
       "name": "analytics"
     },
     {

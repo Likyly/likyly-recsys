@@ -695,8 +695,8 @@ header; a last column "You use" from "used" (empty when absent):
 | | Free ◆ | Pro | You use |
 |---|---|---|---|
 | Products in the catalog | 50 | 500 | 8 |
-| Performance history | 7 days | 90 days | |
-| Daily trend, revenue detail, top products | ◇ no | ◆ yes | |
+| Performance history | 30 days | 90 days | |
+| Daily trend, revenue detail, top products | ◆ yes | ◆ yes | |
 
 Every row of "limits", with its "label": a null value is "no limit", "unit" adds days, an
 "included" row is ◆ yes / ◇ no. When "comparedOnlyOwnPlan" is true, say under the table that

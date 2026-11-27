@@ -1523,7 +1523,7 @@ class AnalyticsDetailPlacementRow(AnalyticsPlacementRow):
 
 
 class AnalyticsDetailOut(BaseModel):
-    """Pro-only - the depth Free's summary doesn't include. `placement` (when given) narrows
+    """The depth behind the summary, every plan. `placement` (when given) narrows
     totals, previous and timeseries; by_placement and top_items always cover every placement."""
     start: str
     end: str
@@ -1577,7 +1577,7 @@ class AnalyticsPlacementsOut(AnalyticsWindow):
 
 
 class AnalyticsKeyDetailOut(AnalyticsWindow):
-    """Day-by-day trend and total attributed revenue - Pro plan and above."""
+    """Day-by-day trend and total attributed revenue - every plan."""
     currency: Optional[str] = Field(default=None, description="Currency of the revenue figures: the `properties.currency` the attributed purchases send (e.g. \"USD\"), when they all send the same one. null when they send none or several - LIKYLY converts nothing.")
     timeseries: List[AnalyticsDetailTimeseriesPoint] = Field(description="One point per day that had any activity or any attributed purchase, with that day's attributed purchases and revenue.")
     revenue: AnalyticsRevenue = Field(description="Purchases carrying a `recommendation_id`, and their `properties.price` x `quantity` total.")
@@ -1597,7 +1597,7 @@ class AnalyticsTopItem(BaseModel):
 
 
 class AnalyticsItemsOut(AnalyticsWindow):
-    """Top recommended items, by clicks then purchases - Pro plan and above."""
+    """Top recommended items, by clicks then purchases - every plan."""
     currency: Optional[str] = Field(default=None, description="Currency of the revenue figures: the `properties.currency` the attributed purchases send (e.g. \"USD\"), when they all send the same one. null when they send none or several - LIKYLY converts nothing.")
     items: List[AnalyticsTopItem]
 

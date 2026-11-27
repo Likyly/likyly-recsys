@@ -1,8 +1,8 @@
 """GET /analytics/* - recommendation performance and plan usage for an integration that holds
 the secret key (or a developer key with the `analytics:read` scope), e.g. the WordPress plugin's
 dashboard. Same numbers as the console's /clients/me/analytics/* (Supabase session), same plan
-rules: the requested window is clamped to the plan (Free: 7 days, Pro: 90), the per-placement
-breakdown is available on every plan, the trend/revenue detail and the top items are Pro only.
+rules: the requested window is clamped to the plan (Free: 30 days, Pro: 90). Every plan has
+everything: totals, the per-placement breakdown, the daily trend with revenue and the top items.
 
 Never the public key (scoped_auth.require_scope refuses it with a 403): these are business
 numbers, not something a web page should be able to read.
@@ -103,7 +103,7 @@ def _require_detail(client_id: int, what: str) -> None:
 @router.get("/summary", response_model=AnalyticsKeySummaryOut, summary="Recommendation performance - totals", responses=_errors(401, 403, 422))
 def analytics_summary(start: Optional[date] = START, end: Optional[date] = END, client_id: int = Depends(require_scope(SCOPE))):
     """Recommendations served, impressions, clicks and CTR over the window - every plan. The
-    window defaults to the last 7 days and is clamped to the plan (Free: 7 days, Pro: 90);
+    window defaults to the last 7 days and is clamped to the plan (Free: 30 days, Pro: 90);
     `start`, `end`, `window_days` and `plan` in the answer say what was actually used."""
     since, until, echo = _window(client_id, start, end, default_days=7)
     return {**echo, **db.recommendation_performance_summary(client_id, since, until=until)}
@@ -128,7 +128,7 @@ def analytics_placements(start: Optional[date] = START, end: Optional[date] = EN
 def analytics_detail(start: Optional[date] = START, end: Optional[date] = END, client_id: int = Depends(require_scope(SCOPE))):
     """A day-by-day trend (recommendations served, impressions, clicks, CTR, and the purchases
     and revenue attributed to recommendations that day) and the total attributed revenue
-    (purchases carrying a `recommendation_id`). Pro plan and above: 403 on Free. Window: last 30
+    (purchases carrying a `recommendation_id`). Every plan. Window: last 30
     days by default, clamped to the plan."""
     _require_detail(client_id, "detailed performance data (trend, by placement, revenue)")
     since, until, echo = _window(client_id, start, end, default_days=30)
@@ -148,7 +148,7 @@ def analytics_items(
     """The items recommendations worked best on: per item, how many recommendation responses
     included it, and the impressions, clicks, purchases and revenue of events carrying a
     `recommendation_id` - ordered by clicks, then purchases. `title` comes from the catalog.
-    Pro plan and above: 403 on Free. Window: last 30 days by default, clamped to the plan."""
+    Every plan. Window: last 30 days by default, clamped to the plan."""
     _require_detail(client_id, "top recommended items")
     since, until, echo = _window(client_id, start, end, default_days=30)
     return {
