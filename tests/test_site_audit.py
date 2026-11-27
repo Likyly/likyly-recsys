@@ -168,6 +168,19 @@ def test_a_pour_toi_block_is_proven_fixed_on_another_product_page():
     assert result["grade"] == "E" and result["score"] <= site_audit.SELF_RECO_SCORE_CAP
 
 
+def test_another_colour_of_the_model_shown_is_a_self_recommendation():
+    # Lola Bags: on the camel GOYA's page, "POUR TOI" offers the chocolate GOYA - the same bag to the visitor.
+    url = "https://sacs.example/fr/products/goya-camel"
+    page = (FIXED_SECTION_PAGE
+            .replace('href="https://sacs.example/fr/products/castellana-burgundy"', f'href="{url}"')
+            .replace("<h1>CASTELLANA</h1>", "<h1>GOYA</h1>").replace('"name":"CASTELLANA"', '"name":"GOYA"')
+            .replace("castellana-burgundy", "filles-du-calvaire-bleu").replace(">CASTELLANA<", ">FILLES DU CALVAIRE<"))
+    result = run_audit(url, fake_fetch({url: (200, page)}))
+    self_reco = kpi(result, "self_reco")
+    assert self_reco["status"] == "fail" and "dans une autre couleur ou variante" in self_reco["summary"]
+    assert result["score"] <= site_audit.SELF_RECO_SCORE_CAP
+
+
 ARTICLE = """<html lang="fr"><head><meta name="generator" content="WordPress 6.8">
 <script type="application/ld+json">{"@graph":[{"@type":"WebSite"},{"@type":"BlogPosting","headline":"Bien choisir son vélo","image":"a.jpg","datePublished":"2026-01-02"}]}</script>
 </head><body class="single-post"><article><h1>Bien choisir son vélo</h1><p>Texte…</p></article>

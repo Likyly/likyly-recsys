@@ -1229,13 +1229,16 @@ def build_kpis(page: PageFacts, ucp: Optional[bool], stock_checked: bool = False
                               "It's the most visible mistake, the first one to fix."),
                             t(f"Excluez toujours {the} affiché de ses propres recommandations.", f"Always exclude {the} shown from its own recommendations.")))
         elif twins:
-            kpis.append(Kpi("self_reco", self_label, 25, WARN,
-                            t(f"Le même modèle, sous un autre lien (autre couleur ou variante), est recommandé dans {_quote(twins)}",
-                              f"The same model, under another link (another color or variant), is recommended in {_quote(twins)}"),
-                            t(f"Ce n'est pas exactement {the} affiché, mais pour le visiteur c'est le même : une place de suggestion utilisée pour rien.",
-                              f"It isn't exactly {the} shown, but to the visitor it's the same: a suggestion slot used for nothing."),
-                            t("Excluez aussi les variantes du même modèle, ou regroupez-les en une seule fiche.",
-                              "Exclude the variants of the same model too, or group them into a single page.")))
+            # Another colour of the very model shown: to the visitor it's the same item - as serious as the item itself.
+            kpis.append(Kpi("self_reco", self_label, 25, FAIL,
+                            t(f"{The} affiché est recommandé sur sa propre page, dans une autre couleur ou variante, dans {_quote(twins)}",
+                              f"{The} shown is recommended on its own page, in another color or variant, in {_quote(twins)}"),
+                            t(f"Le visiteur regarde déjà ce modèle : le lui reproposer dans une autre couleur gâche une place du bloc et montre que la sélection "
+                              "ne tient pas compte de la page. Pour lui, c'est le même produit.",
+                              "The visitor is already looking at this model: offering it again in another color wastes a slot of the block and shows the selection "
+                              "ignores the page. To them, it's the same product."),
+                            t(f"Excluez {the} affiché et toutes ses variantes (couleurs, tailles) de ses propres recommandations.",
+                              f"Exclude {the} shown and all its variants (colors, sizes) from its own recommendations.")))
         else:
             kpis.append(Kpi("self_reco", self_label, 25, PASS,
                             t(f"{The} affiché n'est pas dans ses propres recommandations", f"{The} shown isn't in its own recommendations"),
