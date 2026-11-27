@@ -82,7 +82,7 @@ export async function main(argv = process.argv.slice(2)) {
         "LIKYLY · Purchases from Shopify's checkout",
         `  ${copied ? "✓ The code above is in your clipboard." : "· Copy the code above."}`,
         `  1. Open ${r.url}`,
-        "  2. Add custom pixel → name it LIKYLY → paste the code → Save → Connect.",
+        "  2. Add custom pixel → name it LIKYLY → paste the code → Save → Connect (until Connect is clicked, Shopify sends the pixel nothing).",
         "  3. Customer privacy: \"Not required\" to test right away; \"Required\" sends only for visitors who accept analytics.",
         `  4. Test from the store's address (${r.store ? `https://${r.store}` : "<store>.myshopify.com"}, or the preview link shopify theme dev prints),`,
         "     not 127.0.0.1: the click is kept in the browser of that address, and the checkout runs there.",

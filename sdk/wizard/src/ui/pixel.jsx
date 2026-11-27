@@ -91,6 +91,12 @@ export function PixelScreen({ code, url, store, copied, interactive, onOpen, onC
           <Text color={C.muted}> → </Text>
           <Text bold>Connect</Text>
         </Text>
+        <Text>
+          <Text color={C.amber} bold>
+            ! Don&apos;t forget Connect
+          </Text>
+          <Text color={C.muted}>: until it is clicked, Shopify sends the pixel nothing (no add to cart, no purchase).</Text>
+        </Text>
         <Text color={C.muted}>
           Customer privacy: &quot;Not required&quot; to test right away; &quot;Required&quot; sends only for visitors who accept analytics.
         </Text>
