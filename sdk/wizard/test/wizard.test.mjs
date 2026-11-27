@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { detectProject, detectEditors, findProjectsBelow, installedEditors, EDITORS } from "../src/frameworks.mjs";
@@ -1400,11 +1400,13 @@ test("Magento: a store already connected only gets its module enabled, no new In
   assert.ok(!calls.includes("likyly:integration"));
 });
 
-test("pixel: the Shopify custom pixel sends the purchase with its price and the recommendation it was clicked in", async () => {
+test("pixel: the short Shopify custom pixel loads LIKYLY's script, which sends the purchase with its price and the recommendation it was clicked in", async () => {
   const { shopifyCustomPixel } = await import("../src/pixel.mjs");
   const vm = await import("node:vm");
+  const hosted = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../../application/api/static/shopify-pixel.js"), "utf8");
   const handlers = {};
   const sent = [];
+  const loaded = [];
   const storage = {
     likyly_anonymous_id: "anon_1",
     likyly_rec: JSON.stringify({ 111: ["rec_A", "pdp-you-may-also-like", Date.now()], 333: ["rec_old", "pdp", Date.now() - 40 * 864e5] }),
@@ -1414,12 +1416,19 @@ test("pixel: the Shopify custom pixel sends the purchase with its price and the 
     browser: { localStorage: { getItem: async (k) => storage[k] ?? null } },
     init: { data: { customer: null } },
     fetch: async (url, init) => (sent.push({ url, headers: init.headers, body: JSON.parse(init.body) }), { ok: true }),
-    Date, JSON, Number, Math, Object, String, Array,
+    document: { createElement: () => ({}), head: { appendChild: (el) => loaded.push(el) } },
   };
-  vm.runInNewContext(shopifyCustomPixel("pk_test_1", "https://api.example"), sandbox);
+  sandbox.self = sandbox;
+  const code = shopifyCustomPixel("pk_test_1", "https://api.example");
+  assert.ok(code.split("\n").length <= 9, "a few lines to paste");
+  vm.createContext(sandbox);
+  vm.runInContext(code, sandbox);
   assert.deepEqual(Object.keys(handlers).sort(), ["checkout_completed", "product_added_to_cart"]);
+  assert.equal(loaded[0].src, "https://api.example/pixel/shopify.js");
 
-  await handlers.checkout_completed({
+  // The order arrives before the script: it waits in the queue.
+  handlers.checkout_completed({
+    name: "checkout_completed",
     id: "e1",
     timestamp: "2026-11-16T15:00:00Z",
     data: {
@@ -1434,6 +1443,10 @@ test("pixel: the Shopify custom pixel sends the purchase with its price and the 
       },
     },
   });
+  assert.equal(sent.length, 0);
+  vm.runInContext(hosted, sandbox);
+  loaded[0].onload();
+  await new Promise((r) => setTimeout(r, 20));
   assert.equal(sent.length, 1);
   assert.equal(sent[0].url, "https://api.example/events/batch");
   assert.equal(sent[0].headers["X-API-Key"], "pk_test_1");
@@ -1443,11 +1456,12 @@ test("pixel: the Shopify custom pixel sends the purchase with its price and the 
     properties: { order_id: "9001", price: 599, revenue: 599, currency: "USD" },
     session_id: "anon_1", recommendation_id: "rec_A", placement: "pdp-you-may-also-like",
   });
-  assert.equal(notClicked.recommendation_id, undefined, "bought without a click in a block: not attributed");
+  assert.equal(notClicked.recommendation_id, undefined, "bought without a click kept by the block: LIKYLY looks for the click itself");
   assert.deepEqual([notClicked.quantity, notClicked.properties.price, notClicked.properties.revenue], [2, 30, 60]);
   assert.equal(tooOld.recommendation_id, undefined, "a click older than 30 days no longer counts");
 
-  await handlers.product_added_to_cart({ id: "e2", timestamp: "t", data: { cartLine: { quantity: 1, merchandise: { price: { amount: 599, currencyCode: "USD" }, product: { id: "gid://shopify/Product/111" } } } } });
+  handlers.product_added_to_cart({ name: "product_added_to_cart", id: "e2", timestamp: "t", data: { cartLine: { quantity: 1, merchandise: { price: { amount: 599, currencyCode: "USD" }, product: { id: "gid://shopify/Product/111" } } } } });
+  await new Promise((r) => setTimeout(r, 20));
   assert.equal(sent[1].body.events[0].event_type, "add_to_cart");
   assert.equal(sent[1].body.events[0].recommendation_id, "rec_A");
 });
