@@ -1171,8 +1171,11 @@ class PushPayload(BaseModel):
 # selection). See application/api/placement_engine.py and docs/placements.md.
 # ---------------------------------------------------------------------------
 
-PlacementStrategy = Literal["auto", "content", "session", "collaborative", "hybrid", "popular", "also_bought"]
-PlacementFallbackStrategy = Literal["content", "session", "collaborative", "hybrid", "popular", "also_bought", "auto"]
+# "personalized": the visitor, never the page - collaborative for a known customer with a trained
+# model, else what this visitor (signed in or not) viewed, else popular; the current item is
+# never the anchor (a "Recommended for you" on a product page doesn't turn into "similar").
+PlacementStrategy = Literal["auto", "personalized", "content", "session", "collaborative", "hybrid", "popular", "also_bought"]
+PlacementFallbackStrategy = Literal["content", "session", "collaborative", "hybrid", "popular", "also_bought", "auto", "personalized"]
 PlacementContextType = Literal[
     "product_page", "listing_page", "category_page", "homepage", "cart", "account",
     "content_page", "custom",

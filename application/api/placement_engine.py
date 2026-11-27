@@ -38,7 +38,7 @@ from db import (  # noqa: E402
 import recommender as rec  # noqa: E402
 
 NAMED_STRATEGIES = ("content", "session", "collaborative", "hybrid", "popular", "also_bought")
-ALL_STRATEGIES = NAMED_STRATEGIES + ("auto",)
+ALL_STRATEGIES = NAMED_STRATEGIES + ("auto", "personalized")
 
 
 @dataclass
@@ -148,6 +148,14 @@ def run_placement(placement: dict[str, Any], context: dict[str, Any], count: int
             item_id=context.get("current_item_id"), viewed_item_ids=[], count=count, blend_session=blend_session,
         )
         return PlacementResult(result.strategy, result.records, result.attempted)
+    if strategy == "personalized":
+        # The visitor only: their customer history and model, else this visit's views, else
+        # popular. The current item stays out as an anchor (business rules still exclude it).
+        result = rec.recommend_auto(
+            client_id, product_type, user_id=context.get("user_id"), session_id=_effective_session_id(context),
+            item_id=None, viewed_item_ids=[], count=count,
+        )
+        return PlacementResult(result.strategy, result.records, result.attempted)
 
     signals = resolve_context_signals(client_id, product_type, context)
     attempted = [strategy]
@@ -158,10 +166,10 @@ def run_placement(placement: dict[str, Any], context: dict[str, Any], count: int
     fallback = placement.get("fallback_strategy")
     if not records and fallback:
         attempted.append(fallback)
-        if fallback == "auto":
+        if fallback in ("auto", "personalized"):
             result = rec.recommend_auto(
                 client_id, product_type, user_id=context.get("user_id"), session_id=_effective_session_id(context),
-                item_id=context.get("current_item_id"), viewed_item_ids=[], count=count,
+                item_id=context.get("current_item_id") if fallback == "auto" else None, viewed_item_ids=[], count=count,
             )
             records, strategy_used = result.records, result.strategy
             attempted += result.attempted

@@ -150,6 +150,11 @@ URL, or call the push endpoint from their own code when products change.
      `strategy_used: "none"`) - say so if a preview with a real id comes back empty, and check
      that the product is in the catalog (`get_catalog_stats`, the sync's rejected items); set
      `"popular"` only if the developer prefers popular items there.
+   - "recommended for you", "personalized", "for each visitor" -> `strategy: "personalized"`:
+     the visitor's own history (a signed-in customer's purchases and views, else what this
+     visitor viewed during the visit, signed in or not), best sellers for a first visit - and,
+     unlike `auto`, never products similar to the one on the page (so it doesn't repeat a
+     "similar products" block on a product page).
    - "exclude out-of-stock" -> `filters.in_stock_only: true`.
    - "exclude what's in the cart" -> `signals.optional` includes `"cart_item_ids"`,
      `business_rules.exclude_cart_items: true`.

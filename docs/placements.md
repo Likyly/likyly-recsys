@@ -35,7 +35,7 @@ choice given a name.
 | `product_type` | Catalog namespace to recommend from - omit it when the account has one catalog. |
 | `limit` | Default result count (a `/recommend` call can override it). |
 | `audience` | `all` \| `anonymous` \| `identified` - documents intent. |
-| `strategy` | `auto` \| `content` \| `session` \| `collaborative` \| `hybrid` \| `popular` \| `also_bought`. |
+| `strategy` | `auto` \| `personalized` \| `content` \| `session` \| `collaborative` \| `hybrid` \| `popular` \| `also_bought`. |
 | `signals` | `{required: [...], optional: [...]}` - see below. |
 | `fallback_strategy` | Tried if `strategy` returns nothing. `popular` is always the final safety net regardless. |
 | `filters` | Attribute-based inclusion rules - `category_in`, `category_not_in`, `in_stock_only`, `include_attributes`, `exclude_attributes`. |
@@ -62,6 +62,11 @@ cart_item_ids, locale, custom_context`.
 
 ### Strategy resolution
 
+- **`personalized`**: the visitor, never the page - `recommend_auto` without the current item:
+  collaborative for a known `user_id` with a trained model, else what this `session_id` (or
+  user) viewed, else `popular`. The current item is never the anchor but still excluded by the
+  business rules: a "Recommended for you" block on a product page stays personal instead of
+  showing products similar to the one displayed.
 - **`auto`**: calls `recommend_auto` exactly as `POST /getRec` does - `user_id` + `item_id` ->
   `hybrid`; `item_id` alone -> `content`; a session with tracked history (or an explicit
   session) -> `session`; a known user with a trained model -> `collaborative`; nothing

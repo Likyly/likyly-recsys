@@ -4986,7 +4986,8 @@
                   "hybrid",
                   "popular",
                   "also_bought",
-                  "auto"
+                  "auto",
+                  "personalized"
                 ],
                 "type": "string"
               },
@@ -5028,6 +5029,7 @@
           "strategy": {
             "enum": [
               "auto",
+              "personalized",
               "content",
               "session",
               "collaborative",
@@ -5361,7 +5363,8 @@
                   "hybrid",
                   "popular",
                   "also_bought",
-                  "auto"
+                  "auto",
+                  "personalized"
                 ],
                 "type": "string"
               },
@@ -5423,6 +5426,7 @@
             "default": "auto",
             "enum": [
               "auto",
+              "personalized",
               "content",
               "session",
               "collaborative",
@@ -5764,7 +5768,8 @@
                   "hybrid",
                   "popular",
                   "also_bought",
-                  "auto"
+                  "auto",
+                  "personalized"
                 ],
                 "type": "string"
               },
@@ -5784,6 +5789,7 @@
           "strategy": {
             "enum": [
               "auto",
+              "personalized",
               "content",
               "session",
               "collaborative",
@@ -5919,7 +5925,8 @@
                   "hybrid",
                   "popular",
                   "also_bought",
-                  "auto"
+                  "auto",
+                  "personalized"
                 ],
                 "type": "string"
               },
@@ -5997,7 +6004,8 @@
                   "hybrid",
                   "popular",
                   "also_bought",
-                  "auto"
+                  "auto",
+                  "personalized"
                 ],
                 "type": "string"
               },
