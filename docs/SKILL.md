@@ -256,7 +256,13 @@ commit only the files you changed (not their pending work), push the branch and 
    `likyly.events.productView` on the product page's own render/mount, `.addToCart` at the
    project's actual add-to-cart handler, `.purchase` (with an `eventId`) at its actual
    checkout-complete point. For a native Shopify/WooCommerce store, prefer the platform's own
-   order-completed webhook/event over guessing at custom checkout code.
+   order-completed webhook/event over guessing at custom checkout code. Send the add to cart and
+   the purchase with the **same visitor as the clicks** (the same `sessionId` from
+   `LikylySession`, and the `userId` when signed in): LIKYLY ties them to the recommendation
+   the visitor clicked on that product (30 days) by itself - no recommendation id to keep or
+   carry through the cart. A purchase sent from the server for a guest needs the visitor's
+   anonymous id kept on the order at checkout. A `recommendationId` the code already has may be
+   sent too: it comes first.
 7. If the project has real login, call `likyly.events.identify` (or `LikylySession.identify`)
    right after it succeeds, so the visitor's pre-login session history gets attached to them.
 
